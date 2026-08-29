@@ -9,6 +9,15 @@ set -a
 source .env
 set +a
 
+unexport_sensitive_environment() {
+  local key
+  for key in \
+    MIGRATION_DB_USER MIGRATION_DB_PASSWORD VPS_PASSWORD VPS_HOST_FINGERPRINT \
+    VPS_SSH_HOST_FINGERPRINT SSHPASS; do
+    export -n "$key" 2>/dev/null || true
+  done
+}
+
 for key in DB_HOST DB_NAME DB_USER DB_PASSWORD; do
   [[ -n "${!key:-}" ]] || { echo "Missing required environment key: $key" >&2; exit 1; }
 done
@@ -21,6 +30,7 @@ case "$db_host_lower" in
     ;;
 esac
 
+unexport_sensitive_environment
 export ENVIRONMENT=development
 export SCHEDULER_ENABLED=false
 
