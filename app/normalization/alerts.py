@@ -5,14 +5,17 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.domain.enums import RunStatus
 from app.domain.ids import stable_eden_id
+from app.normalization.raw_content import decoded_raw_json
 from app.repositories.models import (
     AlertDocument,
     AlertRevision,
+    DeadLetter,
     IngestionRun,
     ProvenanceEdge,
     RawRecord,
@@ -152,6 +155,37 @@ def _countries(body: dict[str, Any], defaults: tuple[str, ...]) -> tuple[str, ..
     )
 
 
+def _add_dead_letter(
+    session: Session,
+    raw: RawRecord,
+    error_code: str,
+    detail: str,
+) -> None:
+    existing = session.scalar(
+        select(DeadLetter).where(
+            DeadLetter.raw_record_id == raw.raw_record_id,
+            DeadLetter.error_code == error_code,
+            DeadLetter.reprocess_status.in_(("pending", "retrying")),
+        )
+    )
+    error_detail = f"ValueError: {detail[:1900]}"
+    if existing is None:
+        session.add(
+            DeadLetter(
+                raw_record_id=raw.raw_record_id,
+                error_code=error_code,
+                error_detail=error_detail,
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+                reprocess_status="pending",
+                reprocessed_at=None,
+            )
+        )
+        return
+    existing.error_detail = error_detail
+    existing.reprocess_status = "pending"
+    existing.reprocessed_at = None
+
+
 def _normalize_alert_run(
     session_factory: sessionmaker[Session],
     run_id: str,
@@ -167,8 +201,14 @@ def _normalize_alert_run(
             .order_by(RawRecord.raw_record_id)
         ).all()
         for raw in records:
-            body = raw.body_json
+            body = decoded_raw_json(raw)
             if not isinstance(body, dict):
+                _add_dead_letter(
+                    session,
+                    raw,
+                    "alert_body_invalid",
+                    "raw record does not contain a structured alert",
+                )
                 continue
             canonical_url = body.get("canonical_url")
             title = body.get("title")
@@ -187,13 +227,31 @@ def _normalize_alert_run(
                     source_type,
                 )
             ):
+                _add_dead_letter(
+                    session,
+                    raw,
+                    "alert_schema_drift",
+                    "required official notice fields are missing",
+                )
                 continue
             try:
                 published_at = _database_time(datetime.fromisoformat(published_at_raw))
             except ValueError:
+                _add_dead_letter(
+                    session,
+                    raw,
+                    "alert_datetime_invalid",
+                    "published_at is not an ISO datetime",
+                )
                 continue
             countries = _countries(body, default_countries)
             if not countries:
+                _add_dead_letter(
+                    session,
+                    raw,
+                    "alert_country_missing",
+                    "notice does not target a supported market country",
+                )
                 continue
             content_hash = hashlib.sha256(f"{title}\n{original_body}".encode()).hexdigest()
             canonical_url_hash = str(
@@ -217,6 +275,14 @@ def _normalize_alert_run(
             )
             if not languages and source_id == KETA_SOURCE_ID:
                 languages = {"ko"}
+            declared_language = body.get("language")
+            language_original = (
+                str(declared_language)
+                if declared_language in {"ko", "en", "ja", "zh-CN", "zh-TW"}
+                else next(iter(languages))
+                if len(languages) == 1
+                else "und"
+            )
             for country in countries:
                 alert_id = stable_eden_id(
                     "alert",
@@ -267,6 +333,7 @@ def _normalize_alert_run(
                         revision_number=revision_number,
                         title_original=title,
                         body_original=original_body,
+                        language_original=language_original,
                         content_hash=content_hash,
                         source_updated_at=_database_time(raw.source_updated_at),
                         ingested_at=_database_time(raw.ingested_at),
@@ -294,9 +361,24 @@ def _normalize_alert_run(
                     .on_duplicate_key_update(provenance_id=ProvenanceEdge.provenance_id)
                 )
                 normalized_count += 1
-        session.query(IngestionRun).filter(IngestionRun.run_id == run_id).update(
-            {"normalized_count": normalized_count}
+        run = session.get(IngestionRun, run_id)
+        if run is None:
+            raise ValueError(f"ingestion run does not exist: {run_id}")
+        dead_letter_count = (
+            session.scalar(
+                select(func.count())
+                .select_from(DeadLetter)
+                .join(RawRecord, RawRecord.raw_record_id == DeadLetter.raw_record_id)
+                .where(
+                    RawRecord.run_id == run_id,
+                    DeadLetter.reprocess_status == "pending",
+                )
+            )
+            or 0
         )
+        run.normalized_count = normalized_count
+        if dead_letter_count:
+            run.status = RunStatus.PARTIAL if normalized_count else RunStatus.FAILED
     return normalized_count
 
 

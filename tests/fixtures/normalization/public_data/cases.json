@@ -1,0 +1,24 @@
+{
+  "valid": {
+    "body": {
+      "items": {
+        "item": [
+          {"baseYm": "202607", "value": "0"},
+          {"baseYm": "202608", "value": "12.5"}
+        ]
+      },
+      "totalCount": 2
+    }
+  },
+  "empty": {
+    "body": {"items": "", "totalCount": 0}
+  },
+  "schema_drift": {
+    "body": {"records": [{"baseYm": "202608", "value": "1"}]}
+  },
+  "mixed_rows": [
+    {"baseYm": "202608", "tarSjrnDsIxVal": "10"},
+    {"baseYm": "bad-date", "tarSjrnDsIxVal": "15"},
+    {"baseYm": "202608", "tarSjrnDsIxVal": "20"}
+  ]
+}

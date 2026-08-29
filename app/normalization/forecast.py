@@ -12,15 +12,16 @@ from app.normalization.public_data import (
     _bounded_index,
     _database_time,
     _date,
+    _decimal,
     _document,
     _finish_run,
     _provenance,
     _resolve_area_id,
     _run_records,
+    _strict_public_data_items,
     _text,
 )
 from app.repositories.models import Area, ForecastInput, PlaceLocalization, RawRecord
-from app.sources.public_data import public_data_items
 
 VISITOR_FORECAST_SOURCE = "SRC_KTO_VISITOR_FORECAST"
 WEATHER_SOURCE = "SRC_KMA_FORECAST"
@@ -62,7 +63,9 @@ def _upsert_forecast_input(
         "festivals": festivals,
         "holiday": holiday,
         "observed_at": _database_time(raw.observed_at),
-        "source_updated_at": forecast_date,
+        # forecast_date is the target date and can be in the future. Audit timestamps
+        # must describe the source observation itself so snapshots remain causal.
+        "source_updated_at": _database_time(raw.source_updated_at),
         "ingested_at": _database_time(raw.ingested_at),
         "calculated_at": datetime.now(UTC).replace(tzinfo=None),
         "source_id": source_id,
@@ -97,64 +100,81 @@ def _upsert_forecast_input(
     return existing.input_id
 
 
-def normalize_visitor_forecast_run(
-    session_factory: sessionmaker[Session], run_id: str
-) -> int:
+def normalize_visitor_forecast_run(session_factory: sessionmaker[Session], run_id: str) -> int:
     normalized = 0
-    with session_factory.begin() as session:
+    with session_factory() as session:
+        place_name_cache: dict[str, str | None] = {}
         for raw in _run_records(session, run_id, VISITOR_FORECAST_SOURCE):
             try:
-                for row in public_data_items(_document(raw)):
-                    place_name = _text(row, "tAtsNm")
-                    place_id = (
-                        session.scalar(
-                            select(PlaceLocalization.eden_place_id)
-                            .where(
-                                PlaceLocalization.language == "ko",
-                                PlaceLocalization.title == place_name,
-                            )
-                            .order_by(PlaceLocalization.eden_place_id)
-                            .limit(1)
-                        )
-                        if place_name
-                        else None
-                    )
-                    concentration = _bounded_index(row, "cnctrRate")
-                    _upsert_forecast_input(
-                        session,
-                        raw,
-                        source_id=VISITOR_FORECAST_SOURCE,
-                        area_id=_resolve_area_id(
-                            session, VISITOR_FORECAST_SOURCE, row
-                        ),
-                        place_id=place_id,
-                        forecast_date=_date(
-                            _text(row, "baseYmd", required=True) or "", ("%Y%m%d",)
-                        ),
-                        source_forecast={
-                            "place_name": place_name,
-                            "concentration_rate": float(concentration),
-                            "expected_visitors": None,
-                        },
-                    )
-                    normalized += 1
+                rows = _strict_public_data_items(_document(raw))
             except Exception as exc:
                 _add_dead_letter(session, raw, "visitor_forecast_schema", exc)
+                session.commit()
+                continue
+            for row in rows:
+                try:
+                    with session.begin_nested():
+                        place_name = _text(row, "tAtsNm")
+                        if place_name and place_name not in place_name_cache:
+                            place_name_cache[place_name] = session.scalar(
+                                select(PlaceLocalization.eden_place_id)
+                                .where(
+                                    PlaceLocalization.language == "ko",
+                                    PlaceLocalization.title == place_name,
+                                )
+                                .order_by(PlaceLocalization.eden_place_id)
+                                .limit(1)
+                            )
+                        place_id = place_name_cache.get(place_name) if place_name else None
+                        concentration = _bounded_index(row, "cnctrRate")
+                        _upsert_forecast_input(
+                            session,
+                            raw,
+                            source_id=VISITOR_FORECAST_SOURCE,
+                            area_id=_resolve_area_id(session, VISITOR_FORECAST_SOURCE, row),
+                            place_id=place_id,
+                            forecast_date=_date(
+                                _text(row, "baseYmd", required=True) or "",
+                                ("%Y%m%d",),
+                            ),
+                            source_forecast={
+                                "place_name": place_name,
+                                "concentration_rate": float(concentration),
+                                "expected_visitors": None,
+                            },
+                            quality_flags=["authoritative_source_horizon"],
+                        )
+                    normalized += 1
+                except Exception as exc:
+                    _add_dead_letter(session, raw, "visitor_forecast_row_schema", exc)
+            session.commit()
         _finish_run(session, run_id, normalized)
+        session.commit()
     return normalized
 
 
 def _match_area(session: Session, *text_values: str | None) -> str:
     haystack = " ".join(value for value in text_values if value)
     areas = session.execute(
-        select(Area.eden_area_id, Area.name_ko, Area.level)
+        select(Area.eden_area_id, Area.name_ko, Area.level, Area.parent_area_id)
         .where(Area.active.is_(True))
         .order_by((Area.level == "sigungu").desc(), Area.name_ko)
     ).all()
     matches = [row for row in areas if row.name_ko and row.name_ko in haystack]
     if not matches:
         raise ValueError("festival area could not be mapped from its official address")
-    return matches[0].eden_area_id
+    child_matches = [row for row in matches if row.parent_area_id is not None]
+    if len(child_matches) == 1:
+        return child_matches[0].eden_area_id
+    parent_names = {row.eden_area_id: row.name_ko for row in areas}
+    parent_matches = [
+        row for row in child_matches if parent_names.get(row.parent_area_id, "") in haystack
+    ]
+    if len(parent_matches) == 1:
+        return parent_matches[0].eden_area_id
+    if not child_matches and len(matches) == 1:
+        return matches[0].eden_area_id
+    raise ValueError("official address maps to multiple EDEN areas")
 
 
 def normalize_festival_run(session_factory: sessionmaker[Session], run_id: str) -> int:
@@ -162,54 +182,59 @@ def normalize_festival_run(session_factory: sessionmaker[Session], run_id: str) 
     with session_factory.begin() as session:
         for raw in _run_records(session, run_id, FESTIVAL_SOURCE):
             try:
-                for row in public_data_items(_document(raw)):
-                    name = _text(row, "fstvlNm", "축제명", required=True) or ""
-                    start = _date(
-                        _text(
-                            row, "fstvlStartDate", "축제시작일자", required=True
-                        )
-                        or "",
-                        ("%Y-%m-%d", "%Y%m%d"),
-                    )
-                    end = _date(
-                        _text(row, "fstvlEndDate", "축제종료일자")
-                        or start.strftime("%Y-%m-%d"),
-                        ("%Y-%m-%d", "%Y%m%d"),
-                    )
-                    if end < start:
-                        raise ValueError("festival end date precedes its start date")
-                    original_days = (end - start).days + 1
-                    bounded_days = min(original_days, 60)
-                    area_id = _match_area(
-                        session,
-                        _text(row, "rdnmadr", "도로명주소"),
-                        _text(row, "lnmadr", "지번주소"),
-                        _text(row, "opar", "축제장소"),
-                    )
-                    for offset in range(bounded_days):
-                        _upsert_forecast_input(
-                            session,
-                            raw,
-                            source_id=FESTIVAL_SOURCE,
-                            area_id=area_id,
-                            place_id=None,
-                            forecast_date=start + timedelta(days=offset),
-                            festivals=[
-                                {
-                                    "name": name,
-                                    "start_date": start.date().isoformat(),
-                                    "end_date": end.date().isoformat(),
-                                }
-                            ],
-                            quality_flags=(
-                                ["festival_duration_bounded_at_60_days"]
-                                if original_days > 60
-                                else []
-                            ),
-                        )
-                        normalized += 1
+                rows = _strict_public_data_items(_document(raw))
             except Exception as exc:
                 _add_dead_letter(session, raw, "festival_schema", exc)
+                continue
+            for row in rows:
+                try:
+                    row_count = 0
+                    with session.begin_nested():
+                        name = _text(row, "fstvlNm", "축제명", required=True) or ""
+                        start = _date(
+                            _text(row, "fstvlStartDate", "축제시작일자", required=True) or "",
+                            ("%Y-%m-%d", "%Y%m%d"),
+                        )
+                        end = _date(
+                            _text(row, "fstvlEndDate", "축제종료일자")
+                            or start.strftime("%Y-%m-%d"),
+                            ("%Y-%m-%d", "%Y%m%d"),
+                        )
+                        if end < start:
+                            raise ValueError("festival end date precedes its start date")
+                        original_days = (end - start).days + 1
+                        bounded_days = min(original_days, 60)
+                        area_id = _match_area(
+                            session,
+                            _text(row, "rdnmadr", "도로명주소"),
+                            _text(row, "lnmadr", "지번주소"),
+                            _text(row, "opar", "축제장소"),
+                        )
+                        for offset in range(bounded_days):
+                            _upsert_forecast_input(
+                                session,
+                                raw,
+                                source_id=FESTIVAL_SOURCE,
+                                area_id=area_id,
+                                place_id=None,
+                                forecast_date=start + timedelta(days=offset),
+                                festivals=[
+                                    {
+                                        "name": name,
+                                        "start_date": start.date().isoformat(),
+                                        "end_date": end.date().isoformat(),
+                                    }
+                                ],
+                                quality_flags=(
+                                    ["festival_duration_bounded_at_60_days"]
+                                    if original_days > 60
+                                    else []
+                                ),
+                            )
+                            row_count += 1
+                    normalized += row_count
+                except Exception as exc:
+                    _add_dead_letter(session, raw, "festival_row_schema", exc)
         _finish_run(session, run_id, normalized)
     return normalized
 
@@ -222,29 +247,37 @@ def normalize_holiday_run(session_factory: sessionmaker[Session], run_id: str) -
         )
         for raw in _run_records(session, run_id, HOLIDAY_SOURCE):
             try:
-                for row in public_data_items(_document(raw)):
-                    holiday_date = _date(
-                        _text(row, "locdate", required=True) or "", ("%Y%m%d",)
-                    )
-                    is_holiday = (_text(row, "isHoliday") or "N").upper() == "Y"
-                    holiday = {
-                        "name": _text(row, "dateName", required=True),
-                        "is_holiday": is_holiday,
-                        "date_kind": _text(row, "dateKind"),
-                    }
-                    for area_id in area_ids:
-                        _upsert_forecast_input(
-                            session,
-                            raw,
-                            source_id=HOLIDAY_SOURCE,
-                            area_id=area_id,
-                            place_id=None,
-                            forecast_date=holiday_date,
-                            holiday=holiday,
-                        )
-                        normalized += 1
+                rows = _strict_public_data_items(_document(raw))
             except Exception as exc:
                 _add_dead_letter(session, raw, "holiday_schema", exc)
+                continue
+            for row in rows:
+                try:
+                    row_count = 0
+                    with session.begin_nested():
+                        holiday_date = _date(
+                            _text(row, "locdate", required=True) or "", ("%Y%m%d",)
+                        )
+                        is_holiday = (_text(row, "isHoliday") or "N").upper() == "Y"
+                        holiday = {
+                            "name": _text(row, "dateName", required=True),
+                            "is_holiday": is_holiday,
+                            "date_kind": _text(row, "dateKind"),
+                        }
+                        for area_id in area_ids:
+                            _upsert_forecast_input(
+                                session,
+                                raw,
+                                source_id=HOLIDAY_SOURCE,
+                                area_id=area_id,
+                                place_id=None,
+                                forecast_date=holiday_date,
+                                holiday=holiday,
+                            )
+                            row_count += 1
+                    normalized += row_count
+                except Exception as exc:
+                    _add_dead_letter(session, raw, "holiday_row_schema", exc)
         _finish_run(session, run_id, normalized)
     return normalized
 
@@ -258,25 +291,46 @@ def _condition(categories: dict[str, str]) -> str | None:
             "3": "snow",
             "4": "shower",
         }.get(precipitation, "precipitation")
-    return {"1": "clear", "3": "cloudy", "4": "overcast"}.get(
-        categories.get("SKY", "")
-    )
+    return {"1": "clear", "3": "cloudy", "4": "overcast"}.get(categories.get("SKY", ""))
 
 
-def normalize_weather_rows(rows: list[dict[str, Any]]) -> dict[datetime, dict[str, Any]]:
-    """Pure KMA category pivot used by the database normalizer and fixtures."""
-    grouped: dict[tuple[datetime, int, int], dict[str, str]] = {}
+def _weather_components(
+    rows: list[dict[str, Any]],
+) -> list[tuple[datetime, int, int, str, str]]:
+    components: list[tuple[datetime, int, int, str, str]] = []
     for row in rows:
-        forecast_date = _date(
-            _text(row, "fcstDate", required=True) or "", ("%Y%m%d",)
+        category = _text(row, "category", required=True) or ""
+        value = _text(row, "fcstValue", required=True) or ""
+        if category in {"TMP", "POP"}:
+            numeric = _decimal(row, "fcstValue", required=True)
+            if category == "POP" and numeric is not None and not 0 <= numeric <= 100:
+                raise ValueError("weather precipitation probability is outside 0-100")
+        nx = int(_text(row, "nx", required=True) or "")
+        ny = int(_text(row, "ny", required=True) or "")
+        if nx < 1 or ny < 1:
+            raise ValueError("weather grid coordinates must be positive")
+        components.append(
+            (
+                _date(_text(row, "fcstDate", required=True) or "", ("%Y%m%d",)),
+                nx,
+                ny,
+                category,
+                value,
+            )
         )
-        nx = int(_text(row, "nx", required=True) or 0)
-        ny = int(_text(row, "ny", required=True) or 0)
-        grouped.setdefault((forecast_date, nx, ny), {})[
-            _text(row, "category", required=True) or ""
-        ] = _text(row, "fcstValue", required=True) or ""
+    return components
+
+
+def _weather_payloads(
+    components: list[tuple[datetime, int, int, str, str]],
+) -> dict[datetime, dict[str, Any]]:
+    grouped: dict[tuple[datetime, int, int], dict[str, str]] = {}
+    for forecast_date, nx, ny, category, value in components:
+        grouped.setdefault((forecast_date, nx, ny), {})[category] = value
     result: dict[datetime, dict[str, Any]] = {}
     for (forecast_date, nx, ny), categories in grouped.items():
+        if forecast_date in result:
+            raise ValueError("one area forecast contains multiple KMA grids for a date")
         temperature = categories.get("TMP")
         precipitation = categories.get("POP")
         result[forecast_date] = {
@@ -291,12 +345,17 @@ def normalize_weather_rows(rows: list[dict[str, Any]]) -> dict[datetime, dict[st
     return result
 
 
+def normalize_weather_rows(rows: list[dict[str, Any]]) -> dict[datetime, dict[str, Any]]:
+    """Pure KMA category pivot used by the database normalizer and fixtures."""
+    return _weather_payloads(_weather_components(rows))
+
+
 def normalize_weather_run(session_factory: sessionmaker[Session], run_id: str) -> int:
     normalized = 0
     with session_factory.begin() as session:
         for raw in _run_records(session, run_id, WEATHER_SOURCE):
             try:
-                rows = public_data_items(_document(raw))
+                rows = _strict_public_data_items(_document(raw))
                 area_token = next(
                     (
                         token.removeprefix("area=")
@@ -307,18 +366,30 @@ def normalize_weather_run(session_factory: sessionmaker[Session], run_id: str) -
                 )
                 if area_token is None or session.get(Area, area_token) is None:
                     raise ValueError("KMA external key does not contain a valid EDEN area")
-                for forecast_date, weather in normalize_weather_rows(rows).items():
-                    _upsert_forecast_input(
-                        session,
-                        raw,
-                        source_id=WEATHER_SOURCE,
-                        area_id=area_token,
-                        place_id=None,
-                        forecast_date=forecast_date,
-                        weather=weather,
-                    )
-                    normalized += 1
             except Exception as exc:
                 _add_dead_letter(session, raw, "weather_schema", exc)
+                continue
+            components: list[tuple[datetime, int, int, str, str]] = []
+            for row in rows:
+                try:
+                    components.extend(_weather_components([row]))
+                except Exception as exc:
+                    _add_dead_letter(session, raw, "weather_row_schema", exc)
+            for forecast_date, weather in _weather_payloads(components).items():
+                try:
+                    with session.begin_nested():
+                        _upsert_forecast_input(
+                            session,
+                            raw,
+                            source_id=WEATHER_SOURCE,
+                            area_id=area_token,
+                            place_id=None,
+                            forecast_date=forecast_date,
+                            weather=weather,
+                            quality_flags=["source_grid_horizon"],
+                        )
+                    normalized += 1
+                except Exception as exc:
+                    _add_dead_letter(session, raw, "weather_row_schema", exc)
         _finish_run(session, run_id, normalized)
     return normalized

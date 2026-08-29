@@ -1,0 +1,6 @@
+{
+  "response": {
+    "header": {"resultCode": "00", "resultMsg": "NORMAL SERVICE"},
+    "body": {"items": {"item": ["not-an-object"]}, "totalCount": 1}
+  }
+}

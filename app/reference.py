@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from app.products.formulas import (
     INBOUND_FORMULA_VERSION,
     INTEREST_FORMULA_VERSION,
     RECOMMENDATION_FORMULA_VERSION,
+    RISING_KEYWORD_FORMULA_VERSION,
 )
 from app.repositories.models import (
     Area,
@@ -21,11 +22,12 @@ from app.repositories.models import (
     Country,
     MarketCohort,
     MetricDefinition,
+    Place,
     RefreshPolicy,
     SourceRegistry,
     SourceState,
 )
-from app.sources.catalog import CADENCE_SECONDS, SOURCES
+from app.sources.catalog import CADENCE_SECONDS, EXPECTED_PUBLISH_LAG_SECONDS, SOURCES
 from app.sources.kto_inbound import DEFAULT_COUNTRIES
 from app.sources.plans import (
     DOCUMENTATION_VERIFIED_AT,
@@ -92,7 +94,12 @@ def _insert_once(session: Session, table, values: dict[str, Any], key_columns: l
 def seed_reference_data(session: Session) -> None:
     now = datetime.now(UTC)
     active_areas = session.execute(
-        select(Area.administrative_code, Area.eden_area_id).where(
+        select(
+            Area.administrative_code,
+            Area.eden_area_id,
+            Area.center_lat,
+            Area.center_lng,
+        ).where(
                 Area.active.is_(True), Area.administrative_code.is_not(None)
         )
     ).all()
@@ -100,12 +107,36 @@ def seed_reference_data(session: Session) -> None:
     area_id_by_code = {
         row.administrative_code: row.eden_area_id for row in active_areas
     }
+    place_centroids = {
+        area_id: (float(lat), float(lng))
+        for area_id, lat, lng in session.execute(
+            select(Place.area_id, func.avg(Place.lat), func.avg(Place.lng))
+            .where(Place.lat.is_not(None), Place.lng.is_not(None))
+            .group_by(Place.area_id)
+        )
+        if lat is not None and lng is not None
+    }
+    area_locations_by_code = {
+        row.administrative_code: (
+            row.eden_area_id,
+            float(row.center_lat) if row.center_lat is not None else centroid[0],
+            float(row.center_lng) if row.center_lng is not None else centroid[1],
+        )
+        for row in active_areas
+        if row.administrative_code is not None
+        and (
+            row.center_lat is not None and row.center_lng is not None
+            or (centroid := place_centroids.get(row.eden_area_id)) is not None
+        )
+    }
     for source in SOURCES:
         interval, max_age = CADENCE_SECONDS[source.cadence_tier]
+        expected_publish_lag = EXPECTED_PUBLISH_LAG_SECONDS[source.cadence_tier]
         refresh_scope: dict[str, Any] = public_data_refresh_scope(
             source.source_id,
             [code for code in active_area_codes if code is not None],
             area_id_by_code,
+            area_locations_by_code,
         )
         if source.source_id == "SRC_KTO_INBOUND_STATS":
             refresh_scope = {"months": 2, "countries": DEFAULT_COUNTRIES}
@@ -152,7 +183,7 @@ def seed_reference_data(session: Session) -> None:
             ),
             "supported_countries": list(source.supported_countries),
             "supported_languages": list(source.supported_languages),
-            "expected_publish_lag_seconds": interval,
+            "expected_publish_lag_seconds": expected_publish_lag,
             "max_acceptable_age_seconds": max_age,
             "storage_mode": source.storage_mode,
             "identity_mode": source.identity_mode,
@@ -200,7 +231,7 @@ def seed_reference_data(session: Session) -> None:
             {
                 "source_id": source.source_id,
                 "interval_seconds": interval,
-                "expected_publish_lag_seconds": interval,
+                "expected_publish_lag_seconds": expected_publish_lag,
                 "max_acceptable_age_seconds": max_age,
                 "retry_limit": 3,
                 "jitter_seconds": min(300, interval // 20),
@@ -276,6 +307,21 @@ def seed_reference_data(session: Session) -> None:
                         },
                         ["source_id", "external_area_code"],
                     )
+        elif level == "sigungu":
+            for source_id in TOURAPI_AREA_SOURCES:
+                _upsert(
+                    session,
+                    AreaSourceMap.__table__,
+                    {
+                        "source_id": source_id,
+                        "external_area_code": administrative_code[:5],
+                        "eden_area_id": eden_area_id,
+                        "spatial_resolution": "sigungu",
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                    ["source_id", "external_area_code"],
+                )
 
     for rank, code, name_ko, name_en, language, currency, count in MARKET_COHORT_V1:
         country_id = stable_eden_id("country", "ISO3166", code)
@@ -330,6 +376,18 @@ def seed_reference_data(session: Session) -> None:
             "Active market_cohort_v1 countries",
             "Requested 3m, 6m, 12m or 24m window",
             "Previous equal-length period",
+        ),
+        (
+            "rising_keywords",
+            "index_0_100",
+            RISING_KEYWORD_FORMULA_VERSION,
+            {
+                "method": "per_source_growth_then_available_mean",
+                "minimum_observations_per_window": 2,
+            },
+            "Keywords with both current and previous observations in the selected sources",
+            "Requested 7d, 30d or 90d window",
+            "Previous equal-length window",
         ),
         (
             "crowd_index",

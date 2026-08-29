@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import time
 from collections.abc import Iterable
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
+from random import SystemRandom
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
+
+_JITTER = SystemRandom()
 
 
 class SourceHttpError(RuntimeError):
@@ -15,6 +20,37 @@ class SourceHttpError(RuntimeError):
 
 class SourceTransientHttpError(SourceHttpError):
     """A bounded retry may succeed without changing the source request."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after_seconds: float | None = None,
+        max_attempts: int = 3,
+    ) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+        self.max_attempts = max_attempts
+
+
+class SourceCredentialHttpError(SourceHttpError):
+    """The source rejected configured credentials or approval scope."""
+
+
+def _retry_after_seconds(value: str | None, *, now: datetime | None = None) -> float | None:
+    if not value:
+        return None
+    stripped = value.strip()
+    if stripped.isdecimal():
+        return float(stripped)
+    try:
+        retry_at = parsedate_to_datetime(stripped)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    current = now or datetime.now(UTC)
+    return max(0.0, (retry_at.astimezone(UTC) - current.astimezone(UTC)).total_seconds())
 
 
 class SecureSourceClient:
@@ -25,13 +61,17 @@ class SecureSourceClient:
         allowed_hosts: Iterable[str],
         timeout_seconds: float = 20,
         max_response_bytes: int = 10 * 1024 * 1024,
+        *,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.allowed_hosts = {host.lower().rstrip(".") for host in allowed_hosts}
         self.max_response_bytes = max_response_bytes
+        self.timeout_seconds = timeout_seconds
         self.client = httpx.Client(
             timeout=httpx.Timeout(timeout_seconds),
             follow_redirects=False,
             headers={"User-Agent": "EDEN-Ingestion/0.1 (+https://api.edenapi.org)"},
+            transport=transport,
         )
 
     def close(self) -> None:
@@ -53,13 +93,24 @@ class SecureSourceClient:
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                 raise SourceHttpError(f"Registered host resolved to a non-public address: {host}")
 
-    @retry(
-        retry=retry_if_exception_type(SourceTransientHttpError),
-        wait=wait_random_exponential(multiplier=0.5, max=8),
-        stop=stop_after_attempt(3),
-        reraise=True,
-    )
     def _request(self, method: str, url: str, **kwargs: object) -> tuple[bytes, str, str]:
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                return self._request_once(method, url, **kwargs)
+            except SourceTransientHttpError as exc:
+                if attempt >= exc.max_attempts:
+                    raise
+                if exc.retry_after_seconds is not None:
+                    if exc.retry_after_seconds > self.timeout_seconds:
+                        raise
+                    delay = exc.retry_after_seconds
+                else:
+                    delay = _JITTER.uniform(0.5, min(8.0, 0.5 * (2 ** (attempt - 1))))
+                time.sleep(delay)
+
+    def _request_once(self, method: str, url: str, **kwargs: object) -> tuple[bytes, str, str]:
         current_url = url
         current_method = method
         current_kwargs = kwargs
@@ -80,7 +131,19 @@ class SecureSourceClient:
                                 if key not in {"content", "data", "files", "json"}
                             }
                         continue
-                    if response.status_code in {408, 425, 429} or response.status_code >= 500:
+                    if response.status_code in {401, 403}:
+                        raise SourceCredentialHttpError(
+                            f"Source rejected credentials with HTTP {response.status_code}"
+                        )
+                    if response.status_code == 429:
+                        raise SourceTransientHttpError(
+                            "Source returned rate limit HTTP 429",
+                            retry_after_seconds=_retry_after_seconds(
+                                response.headers.get("retry-after")
+                            ),
+                            max_attempts=2,
+                        )
+                    if response.status_code in {408, 425} or response.status_code >= 500:
                         raise SourceTransientHttpError(
                             f"Source returned transient HTTP {response.status_code}"
                         )

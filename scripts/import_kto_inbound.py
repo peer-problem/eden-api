@@ -4,13 +4,13 @@ from app.config import get_settings
 from app.ingestion.service import IngestionService
 from app.normalization.inbound import normalize_kto_inbound_run
 from app.products.inbound import build_inbound_snapshots
-from app.repositories.database import create_database_engine, create_session_factory
+from app.repositories.database import create_scheduler_database_engine, create_session_factory
 from app.sources.kto_inbound import DEFAULT_COUNTRIES, KtoInboundAdapter
 
 
 def main() -> None:
     settings = get_settings()
-    engine = create_database_engine(settings)
+    engine = create_scheduler_database_engine(settings)
     factory = create_session_factory(engine)
     adapter = KtoInboundAdapter(
         settings.SOURCE_HTTP_TIMEOUT_SECONDS,

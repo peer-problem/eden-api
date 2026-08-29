@@ -8,8 +8,8 @@ from zoneinfo import ZoneInfo
 from pydantic import SecretStr
 
 from app.domain.enums import SourceStatus
-from app.sources.base import FetchResult, RawItem, SourceAdapter
-from app.sources.http import SecureSourceClient
+from app.sources.base import FetchReasonCode, FetchResult, RawItem, SourceAdapter
+from app.sources.http import SecureSourceClient, SourceCredentialHttpError
 
 SOURCE_ID = "SRC_KEXIM_FX"
 SEOUL = ZoneInfo("Asia/Seoul")
@@ -37,6 +37,7 @@ class KeximFxAdapter(SourceAdapter):
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
                 reason="KEXIM_API_KEY 환경 변수가 없습니다.",
+                reason_code=FetchReasonCode.CREDENTIAL_MISSING,
             )
         today = datetime.now(SEOUL).date()
         errors: list[str] = []
@@ -81,6 +82,12 @@ class KeximFxAdapter(SourceAdapter):
                         ),
                     ),
                     partial_errors=tuple(errors),
+                )
+            except SourceCredentialHttpError as exc:
+                return FetchResult(
+                    status=SourceStatus.UNAVAILABLE,
+                    reason=f"KEXIM 자격 증명 또는 승인 범위가 거절되었습니다: {exc}",
+                    reason_code=FetchReasonCode.CREDENTIAL_REJECTED,
                 )
             except Exception as exc:
                 errors.append(f"{rate_date.isoformat()}:{type(exc).__name__}")

@@ -11,8 +11,8 @@ from defusedxml import ElementTree
 from pydantic import SecretStr
 
 from app.domain.enums import SourceStatus
-from app.sources.base import FetchResult, RawItem, SourceAdapter
-from app.sources.http import SecureSourceClient
+from app.sources.base import FetchReasonCode, FetchResult, RawItem, SourceAdapter
+from app.sources.http import SecureSourceClient, SourceCredentialHttpError
 
 SEOUL = ZoneInfo("Asia/Seoul")
 
@@ -69,6 +69,60 @@ def _first_named_value(value: Any, name: str) -> Any | None:
     return None
 
 
+def _all_named_values(value: Any, name: str) -> list[Any]:
+    found: list[Any] = []
+    if isinstance(value, dict):
+        if name in value:
+            found.append(value[name])
+        for child in value.values():
+            found.extend(_all_named_values(child, name))
+    elif isinstance(value, list):
+        for child in value:
+            found.extend(_all_named_values(child, name))
+    return found
+
+
+def public_data_watermark(
+    request: dict[str, Any],
+    params: dict[str, Any],
+    document: dict[str, Any] | list[Any],
+) -> datetime | None:
+    """Resolve an authoritative source period without using retrieval time."""
+    descriptor = request.get("watermark")
+    if not isinstance(descriptor, dict):
+        return None
+    date_format = descriptor.get("format")
+    if not isinstance(date_format, str) or not date_format:
+        raise ValueError("Public-data watermark format is missing")
+    raw_values: list[str] = []
+    param_names = descriptor.get("params")
+    if isinstance(param_names, list) and param_names:
+        parts = [params.get(str(name)) for name in param_names]
+        if all(part is not None and str(part) for part in parts):
+            raw_values.append("".join(str(part) for part in parts))
+    elif isinstance(descriptor.get("param"), str):
+        value = params.get(str(descriptor["param"]))
+        if value is not None and str(value):
+            raw_values.append(str(value))
+    elif isinstance(descriptor.get("response_field"), str):
+        raw_values.extend(
+            str(value)
+            for value in _all_named_values(document, descriptor["response_field"])
+            if value is not None and str(value)
+        )
+    if not raw_values:
+        return None
+    parsed: list[datetime] = []
+    for value in raw_values:
+        try:
+            parsed.append(datetime.strptime(value.strip(), date_format).replace(tzinfo=UTC))
+        except ValueError:
+            continue
+    if not parsed:
+        raise ValueError("Public-data watermark did not match its configured format")
+    return max(parsed)
+
+
 def public_data_page_info(document: dict[str, Any] | list[Any]) -> tuple[int | None, int]:
     """Return declared total count and the number of records on this page."""
     total_raw = _first_named_value(document, "totalCount")
@@ -79,7 +133,7 @@ def public_data_page_info(document: dict[str, Any] | list[Any]) -> tuple[int | N
     items = _first_named_value(document, "items")
     if isinstance(items, dict) and "item" in items:
         items = items["item"]
-    if items is None or items == "":
+    if items is None or items == "" or items == {}:
         count = 0
     elif isinstance(items, list):
         count = len(items)
@@ -103,7 +157,7 @@ def public_data_items(document: dict[str, Any] | list[Any]) -> list[dict[str, An
     items = _first_named_value(document, "items")
     if isinstance(items, dict) and "item" in items:
         items = items["item"]
-    if items in (None, ""):
+    if items in (None, "", {}):
         return []
     if isinstance(items, dict):
         return [items]
@@ -199,6 +253,7 @@ class PublicDataAdapter(SourceAdapter):
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
                 reason="PUBLIC_DATA_SERVICE_KEY 환경 변수가 없습니다.",
+                reason_code=FetchReasonCode.CREDENTIAL_MISSING,
             )
         configured = scope.get("operations")
         if configured is None and (scope.get("operation") or scope.get("use_base_url")):
@@ -207,11 +262,14 @@ class PublicDataAdapter(SourceAdapter):
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
                 reason="검증된 원천 operation이 refresh scope에 등록되지 않았습니다.",
+                reason_code=FetchReasonCode.SCOPE_MISSING,
             )
         now = datetime.now(UTC)
         items: list[RawItem] = []
         errors: list[str] = []
         authentication_errors = 0
+        authoritative_watermarks: list[datetime] = []
+        missing_watermark_count = 0
         for index, request in enumerate(configured):
             if not isinstance(request, dict):
                 errors.append(f"operation[{index}]:invalid_config")
@@ -256,15 +314,26 @@ class PublicDataAdapter(SourceAdapter):
                     parsed = parse_json_or_xml(payload, content_type)
                     validate_public_data_result(parsed)
                     total, page_count = public_data_page_info(parsed)
+                    source_updated_at = public_data_watermark(request, params, parsed)
                 except Exception as exc:
-                    if isinstance(exc, PublicDataAuthenticationError):
+                    if isinstance(
+                        exc,
+                        (PublicDataAuthenticationError, SourceCredentialHttpError),
+                    ):
                         authentication_errors += 1
                     errors.append(f"{operation_key}:page={page}:{type(exc).__name__}")
                     break
+                if source_updated_at is None:
+                    missing_watermark_count += 1
+                    source_updated_at = now
+                    watermark_basis = "retrieved_at_unverified"
+                else:
+                    authoritative_watermarks.append(source_updated_at)
+                    watermark_basis = "authoritative_source_period"
                 items.append(
                     RawItem(
                         external_key=f"{operation_key}:{page}",
-                        source_updated_at=now,
+                        source_updated_at=source_updated_at,
                         observed_at=now,
                         content_type="application/json",
                         body={
@@ -275,6 +344,7 @@ class PublicDataAdapter(SourceAdapter):
                                 if key.lower() not in {"servicekey", "authkey", "apikey"}
                             },
                             "response": parsed,
+                            "watermark_basis": watermark_basis,
                         },
                     )
                 )
@@ -306,12 +376,26 @@ class PublicDataAdapter(SourceAdapter):
                     if authentication_errors == len(errors)
                     else "등록된 공공데이터 operation 수집에 모두 실패했습니다."
                 ),
+                reason_code=(
+                    FetchReasonCode.CREDENTIAL_REJECTED
+                    if authentication_errors == len(errors)
+                    else None
+                ),
                 partial_errors=tuple(errors),
             )
+        degraded = bool(errors or missing_watermark_count)
+        if errors:
+            reason = "일부 operation 또는 page 수집 실패"
+        elif missing_watermark_count:
+            reason = "원천 발표시각을 확인할 수 없어 freshness를 보수적으로 처리했습니다."
+        else:
+            reason = None
         return FetchResult(
-            status=SourceStatus.DEGRADED if errors else SourceStatus.AVAILABLE,
-            data_as_of=now,
+            status=SourceStatus.DEGRADED if degraded else SourceStatus.AVAILABLE,
+            data_as_of=(
+                max(authoritative_watermarks) if authoritative_watermarks else None
+            ),
             items=tuple(items),
-            reason="일부 operation 또는 page 수집 실패" if errors else None,
+            reason=reason,
             partial_errors=tuple(errors),
         )

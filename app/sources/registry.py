@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 from app.config import Settings
 from app.inventory import SOCIAL_REASONS
 from app.sources.alerts import OfficialNoticeAdapter
-from app.sources.base import SourceAdapter, UnavailableAdapter
+from app.sources.base import FetchReasonCode, SourceAdapter, UnavailableAdapter
 from app.sources.bok import BokEcosAdapter
 from app.sources.catalog import SOURCES, source_definition
 from app.sources.keta import KetaNoticeAdapter
@@ -61,7 +61,24 @@ def build_adapter(
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
         )
+    if source_id == "SRC_TOURISM_ADMISSION":
+        return UnavailableAdapter(
+            source_id,
+            "공식 명세가 HTTP 전용 legacy origin만 제공하고 현재 공공데이터 키를 "
+            "SERVICE_KEY_IS_NOT_REGISTERED로 거절하여 안전하게 수집할 수 없습니다.",
+            FetchReasonCode.UNSUPPORTED_ACCESS,
+        )
     if source_id == "SRC_NAVER_TREND":
+        if (
+            settings.NAVER_CLIENT_ID is not None
+            and settings.NAVER_CLIENT_SECRET is not None
+            and not settings.NAVER_STORAGE_POLICY_APPROVED
+        ):
+            return UnavailableAdapter(
+                source_id,
+                "NAVER 검색 데이터의 저장 및 재게시 정책 승인이 확인되지 않았습니다.",
+                FetchReasonCode.UNSUPPORTED_ACCESS,
+            )
         return NaverTrendAdapter(
             source.base_url,
             settings.NAVER_CLIENT_ID,
@@ -118,4 +135,5 @@ def build_adapter(
     return UnavailableAdapter(
         source_id,
         f"{source.auth_type} 접근 조건을 충족하는 어댑터 설정이 아직 없습니다.",
+        FetchReasonCode.ADAPTER_MISSING,
     )

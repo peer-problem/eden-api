@@ -8,8 +8,8 @@ from urllib.parse import quote, urlparse
 from pydantic import SecretStr
 
 from app.domain.enums import SourceStatus
-from app.sources.base import FetchResult, RawItem, SourceAdapter
-from app.sources.http import SecureSourceClient
+from app.sources.base import FetchReasonCode, FetchResult, RawItem, SourceAdapter
+from app.sources.http import SecureSourceClient, SourceCredentialHttpError
 
 SOURCE_ID = "SRC_BOK_ECOS"
 STAT_CODE = "301Y013"
@@ -61,6 +61,7 @@ class BokEcosAdapter(SourceAdapter):
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
                 reason="BOK_ECOS_API_KEY 환경 변수가 없습니다.",
+                reason_code=FetchReasonCode.CREDENTIAL_MISSING,
             )
         months = min(max(int(scope.get("months", 48)), 2), 120)
         now = datetime.now(UTC)
@@ -116,6 +117,12 @@ class BokEcosAdapter(SourceAdapter):
                         },
                     )
                 )
+            except SourceCredentialHttpError as exc:
+                return FetchResult(
+                    status=SourceStatus.UNAVAILABLE,
+                    reason=f"ECOS 자격 증명 또는 승인 범위가 거절되었습니다: {exc}",
+                    reason_code=FetchReasonCode.CREDENTIAL_REJECTED,
+                )
             except Exception as exc:
                 errors.append(f"{item_code}:{type(exc).__name__}")
 
@@ -127,6 +134,6 @@ class BokEcosAdapter(SourceAdapter):
             ),
             items=tuple(items),
             data_as_of=data_as_of,
-            reason="일반여행 수입·지급 중 일부 수집 실패" if errors else None,
+            reason="일반여행 수입 및 지급 중 일부 수집 실패" if errors else None,
             partial_errors=tuple(errors),
         )

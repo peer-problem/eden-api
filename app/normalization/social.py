@@ -17,6 +17,7 @@ from app.normalization.public_data import (
     _run_records,
     _text,
 )
+from app.normalization.raw_content import decoded_raw_json
 from app.repositories.models import Country, SocialObservation
 
 SOCIAL_SOURCES = {
@@ -55,7 +56,7 @@ def normalize_social_run(
     with session_factory.begin() as session:
         for raw in _run_records(session, run_id, source_id):
             try:
-                row = raw.body_json
+                row = decoded_raw_json(raw)
                 if not isinstance(row, dict) or row.get("schema") != "social_aggregate_v1":
                     raise ValueError("social raw record schema is unsupported")
                 if row.get("source_id") != source_id:
@@ -80,6 +81,9 @@ def normalize_social_run(
                     isinstance(flag, str) for flag in flags
                 ):
                     raise ValueError("social quality_flags must be a string list")
+                tombstone = bool(raw.tombstone)
+                if tombstone and "source_tombstone" not in flags:
+                    flags = [*flags, "source_tombstone"]
                 values = {
                     "raw_record_id": raw.raw_record_id,
                     "keyword": _text(row, "keyword", required=True),
@@ -87,20 +91,22 @@ def normalize_social_run(
                     "area_id": None,
                     "bucket_start": period,
                     "bucket_grain": _text(row, "bucket_grain", required=True),
-                    "post_count": _nonnegative_integer(row, "post_count"),
-                    "view_count": _nonnegative_integer(row, "view_count"),
-                    "reaction_count": _nonnegative_integer(row, "reaction_count"),
-                    "search_ratio": ratio,
-                    "source_score": ratio,
+                    "post_count": None if tombstone else _nonnegative_integer(row, "post_count"),
+                    "view_count": None if tombstone else _nonnegative_integer(row, "view_count"),
+                    "reaction_count": (
+                        None if tombstone else _nonnegative_integer(row, "reaction_count")
+                    ),
+                    "search_ratio": None if tombstone else ratio,
+                    "source_score": None if tombstone else ratio,
                     "observed_at": _database_time(raw.observed_at),
                     "source_updated_at": _database_time(raw.source_updated_at),
                     "ingested_at": _database_time(raw.ingested_at),
                     "calculated_at": calculated_at,
                     "source_id": source_id,
-                    "availability": "available",
+                    "availability": "unavailable" if tombstone else "available",
                     "quality_flags": flags,
                 }
-                if all(
+                if not tombstone and all(
                     values[name] is None
                     for name in (
                         "post_count",

@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 
 from app.domain.enums import SourceStatus
 from app.sources.alerts import sanitize_html
-from app.sources.base import FetchResult, RawItem, SourceAdapter
+from app.sources.base import FetchReasonCode, FetchResult, RawItem, SourceAdapter
 from app.sources.http import SecureSourceClient
 
 SOURCE_ID = "SRC_KETA"
@@ -85,6 +85,7 @@ class KetaNoticeAdapter(SourceAdapter):
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
                 reason="K-ETA notice limit은 1-100 범위여야 합니다.",
+                reason_code=FetchReasonCode.INVALID_SCOPE,
             )
         now = datetime.now(UTC)
         try:

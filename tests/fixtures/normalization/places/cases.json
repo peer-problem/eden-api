@@ -1,0 +1,17 @@
+{
+  "ko": {
+    "contentid": "126166",
+    "title": "Test Place",
+    "mapx": "126.9800000",
+    "mapy": "37.5700000"
+  },
+  "en": {
+    "contentid": "264401",
+    "title": "Test Place EN",
+    "mapx": "126.9800000",
+    "mapy": "37.5700000"
+  },
+  "zero_coordinate": {"mapx": "0", "mapy": "0"},
+  "missing_coordinate": {"mapx": "", "mapy": null},
+  "invalid_coordinate": {"mapx": "181", "mapy": "37"}
+}

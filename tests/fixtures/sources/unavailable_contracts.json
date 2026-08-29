@@ -1,0 +1,51 @@
+{
+  "credential_missing": [
+    {
+      "source_id": "SRC_NAVER_TREND",
+      "expected_credentials": ["NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"],
+      "scope": {
+        "targets": [{"country": "KR", "keyword": "서울 여행"}]
+      }
+    },
+    {
+      "source_id": "SRC_YOUTUBE",
+      "expected_credentials": ["YOUTUBE_API_KEY"],
+      "scope": {
+        "targets": [{"country": "JP", "keyword": "韓国旅行"}]
+      }
+    },
+    {
+      "source_id": "SRC_X",
+      "expected_credentials": ["X_BEARER_TOKEN"],
+      "scope": {
+        "targets": [{"country": "US", "keyword": "Korea travel"}]
+      }
+    },
+    {
+      "source_id": "SRC_KEXIM_FX",
+      "expected_credentials": ["KEXIM_API_KEY"],
+      "scope": {}
+    },
+    {
+      "source_id": "SRC_BOK_ECOS",
+      "expected_credentials": ["BOK_ECOS_API_KEY"],
+      "scope": {"months": 12}
+    },
+    {
+      "source_id": "SRC_KTO_RESOURCE_DEMAND",
+      "expected_credentials": ["PUBLIC_DATA_SERVICE_KEY"],
+      "scope": {"operation": "areaTarSvcDemList"}
+    }
+  ],
+  "unsupported_access": [
+    "SRC_INSTAGRAM",
+    "SRC_FACEBOOK",
+    "SRC_TIKTOK",
+    "SRC_REDDIT",
+    "SRC_WEIBO",
+    "SRC_DOUYIN",
+    "SRC_XIAOHONGSHU",
+    "SRC_LINE",
+    "SRC_TOURISM_ADMISSION"
+  ]
+}

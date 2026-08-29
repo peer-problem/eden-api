@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 from dateutil.parser import isoparse
 
 from app.domain.enums import SourceStatus
-from app.sources.base import FetchResult, RawItem, SourceAdapter
+from app.sources.base import FetchReasonCode, FetchResult, RawItem, SourceAdapter
 from app.sources.http import SecureSourceClient
 
 NOTICE_TERMS = (
@@ -274,6 +274,7 @@ class OfficialNoticeAdapter(SourceAdapter):
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
                 reason="공식기관 공지 target inventory가 비어 있습니다.",
+                reason_code=FetchReasonCode.SCOPE_MISSING,
             )
         now = datetime.now(UTC)
         items: list[RawItem] = []

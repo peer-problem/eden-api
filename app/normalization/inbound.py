@@ -8,6 +8,7 @@ from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.domain.ids import stable_eden_id
+from app.normalization.raw_content import decoded_raw_json
 from app.repositories.models import (
     InboundVisitorObservation,
     IngestionRun,
@@ -48,7 +49,7 @@ def normalize_kto_inbound_run(
             .order_by(RawRecord.raw_record_id)
         ).all()
         for raw in records:
-            body = raw.body_json
+            body = decoded_raw_json(raw)
             if not isinstance(body, dict):
                 continue
             country_iso = body.get("country_iso")

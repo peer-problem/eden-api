@@ -8,14 +8,14 @@ from sqlalchemy.dialects.mysql import insert
 
 from app.config import get_settings
 from app.ingestion.service import IngestionService
-from app.repositories.database import create_database_engine, create_session_factory
+from app.repositories.database import create_scheduler_database_engine, create_session_factory
 from app.repositories.models import Area, AreaSourceMap, RawRecord, SourceRegistry, SourceState
 from app.sources.reference import MoisAreaAdapter, parse_mois_archive
 
 
 def main() -> None:
     settings = get_settings()
-    engine = create_database_engine(settings)
+    engine = create_scheduler_database_engine(settings)
     factory = create_session_factory(engine)
     adapter = MoisAreaAdapter(
         settings.SOURCE_HTTP_TIMEOUT_SECONDS,

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Official travel notices</title>
+    <item>
+      <title>Updated entry requirements for visitors</title>
+      <link>https://embassy.example/notices/entry-requirements</link>
+      <pubDate>Fri, 28 Aug 2026 12:00:00 +0900</pubDate>
+      <description><![CDATA[
+        <p>Visitors should review the updated entry requirements before departure.</p>
+        <script>active-script-secret</script>
+        <form><input name="token" value="form-secret">form-secret</form>
+      ]]></description>
+    </item>
+    <item>
+      <title>External notice must be skipped</title>
+      <link>https://outside.example/notices/untrusted</link>
+      <description>Untrusted entry.</description>
+    </item>
+    <item>
+      <title></title>
+      <link>https://embassy.example/notices/missing-title</link>
+      <description>Invalid entry without a title.</description>
+    </item>
+  </channel>
+</rss>

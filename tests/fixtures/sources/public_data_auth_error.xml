@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenAPI_ServiceResponse>
+  <cmmMsgHeader>
+    <returnReasonCode>30</returnReasonCode>
+    <returnAuthMsg>SERVICE KEY IS NOT REGISTERED ERROR</returnAuthMsg>
+  </cmmMsgHeader>
+</OpenAPI_ServiceResponse>

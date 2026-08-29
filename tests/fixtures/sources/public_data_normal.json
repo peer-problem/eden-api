@@ -1,0 +1,16 @@
+{
+  "response": {
+    "header": {"resultCode": "00", "resultMsg": "NORMAL SERVICE"},
+    "body": {
+      "items": {
+        "item": [
+          {"contentid": "1001", "title": "서울 관광지"},
+          {"contentid": "1002", "title": "부산 관광지"}
+        ]
+      },
+      "numOfRows": 10,
+      "pageNo": 1,
+      "totalCount": 2
+    }
+  }
+}

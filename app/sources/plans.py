@@ -2,28 +2,29 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
+from math import cos, floor, log, pi, sin, tan
 from typing import Any
 
 DOCUMENTATION_VERIFIED_AT = datetime(2026, 8, 11, tzinfo=UTC)
 
-KTO_METROPOLITAN_AREA_CODES = (
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
+KTO_ADMINISTRATIVE_AREA_CODES = (
+    "11",
+    "26",
+    "27",
+    "28",
+    "29",
+    "30",
     "31",
-    "32",
-    "33",
-    "34",
-    "35",
     "36",
-    "37",
-    "38",
-    "39",
+    "41",
+    "43",
+    "44",
+    "46",
+    "47",
+    "48",
+    "50",
+    "51",
+    "52",
 )
 
 SOCIAL_MARKET_TARGETS = (
@@ -86,21 +87,70 @@ KMA_SIDO_GRID_BY_MOIS_PREFIX = {
 }
 
 
-def _kto_monthly_area_operations(operation_names: tuple[str, ...]) -> list[dict[str, Any]]:
+def wgs84_to_kma_grid(lat: float, lng: float) -> tuple[int, int]:
+    """Convert WGS84 coordinates to the KMA 5 km Lambert grid."""
+    if not -90 <= lat <= 90 or not -180 <= lng <= 180:
+        raise ValueError("WGS84 coordinate is outside valid bounds")
+    earth_radius_km = 6371.00877
+    grid_km = 5.0
+    standard_latitude_1 = 30.0
+    standard_latitude_2 = 60.0
+    origin_lng = 126.0
+    origin_lat = 38.0
+    origin_x = 43.0
+    origin_y = 136.0
+    radians = pi / 180.0
+    re = earth_radius_km / grid_km
+    slat1 = standard_latitude_1 * radians
+    slat2 = standard_latitude_2 * radians
+    olon = origin_lng * radians
+    olat = origin_lat * radians
+    sn = tan(pi * 0.25 + slat2 * 0.5) / tan(pi * 0.25 + slat1 * 0.5)
+    sn = log(cos(slat1) / cos(slat2)) / log(sn)
+    sf = tan(pi * 0.25 + slat1 * 0.5)
+    sf = (sf**sn) * cos(slat1) / sn
+    ro = tan(pi * 0.25 + olat * 0.5)
+    ro = re * sf / (ro**sn)
+    ra = tan(pi * 0.25 + lat * radians * 0.5)
+    ra = re * sf / (ra**sn)
+    theta = lng * radians - olon
+    if theta > pi:
+        theta -= 2.0 * pi
+    if theta < -pi:
+        theta += 2.0 * pi
+    theta *= sn
+    nx = floor(ra * sin(theta) + origin_x + 0.5)
+    ny = floor(ro - ra * cos(theta) + origin_y + 0.5)
+    return nx, ny
+
+
+def _kto_monthly_area_operations(
+    operations: dict[str, tuple[str, str]],
+) -> list[dict[str, Any]]:
+    """Collect three published monthly cohorts without exceeding portal quotas.
+
+    These APIs return a successful empty result when their optional-looking
+    aggregate metric code is omitted.  Their publication currently trails the
+    calendar by about two months, so query a bounded three-month window and let
+    raw-record deduplication make repeated daily runs inexpensive.
+    """
     return [
         {
             "operation": operation,
-            "external_key": f"{operation}:area={area_code}:month=$previous_month",
+            "external_key": f"{operation}:area={area_code}:month=$month_minus_{months}",
             "params": {
                 "MobileOS": "ETC",
                 "MobileApp": "EDEN",
-                "baseYm": "$previous_month",
+                "baseYm": f"$month_minus_{months}",
                 "areaCd": area_code,
+                metric_parameter: metric_code,
             },
+            "watermark": {"param": "baseYm", "format": "%Y%m"},
             "max_pages": 10,
         }
-        for operation in operation_names
-        for area_code in KTO_METROPOLITAN_AREA_CODES
+        for operation, (metric_parameter, metric_code) in operations.items()
+        for months in range(2, 5)
+        for area_code in KTO_ADMINISTRATIVE_AREA_CODES
     ]
 
 
@@ -110,6 +160,10 @@ _TOURAPI_CATALOG = {
             "operation": "areaBasedList2",
             "external_key": "areaBasedList2:all",
             "params": {"MobileOS": "ETC", "MobileApp": "EDEN", "arrange": "C"},
+            "watermark": {
+                "response_field": "modifiedtime",
+                "format": "%Y%m%d%H%M%S",
+            },
             "max_pages": 300,
         }
     ]
@@ -118,7 +172,12 @@ _TOURAPI_CATALOG = {
 
 PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
     "SRC_KTO_RESOURCE_DEMAND": {
-        "operations": _kto_monthly_area_operations(("areaTarSvcDemList", "areaCulResDemList"))
+        "operations": _kto_monthly_area_operations(
+            {
+                "areaTarSvcDemList": ("tarSvcDemIxCd", "11"),
+                "areaCulResDemList": ("culResDemIxCd", "12"),
+            }
+        )
     },
     "SRC_KTO_REGIONAL_VISITORS": {
         "operations": [
@@ -132,17 +191,30 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                     "startYmd": "$today_minus_455d",
                     "endYmd": "$yesterday",
                 },
+                "watermark": {
+                    "response_field": "baseYmd",
+                    "format": "%Y%m%d",
+                },
                 "max_pages": 100,
             }
             for operation in ("metcoRegnVisitrDDList", "locgoRegnVisitrDDList")
         ]
     },
     "SRC_KTO_DEMAND_INTENSITY": {
-        "operations": _kto_monthly_area_operations(("areaTarSjrnDsList", "areaTarExpDsList"))
+        "operations": _kto_monthly_area_operations(
+            {
+                "areaTarSjrnDsList": ("tarSjrnDsIxCd", "21"),
+                "areaTarExpDsList": ("tarExpDsIxCd", "22"),
+            }
+        )
     },
     "SRC_KTO_DIVERSITY": {
         "operations": _kto_monthly_area_operations(
-            ("areaTouDivList", "areaExpDivList", "areaIntlDivList")
+            {
+                "areaTouDivList": ("touDivIxCd", "31"),
+                "areaExpDivList": ("expDivIxCd", "32"),
+                "areaIntlDivList": ("intlDivIxCd", "33"),
+            }
         )
     },
     "SRC_TOUR_KO": _TOURAPI_CATALOG,
@@ -156,12 +228,17 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
     "SRC_KTO_PLACE_RELATED": {"operations": []},
     "SRC_KTO_VISITOR_FORECAST": {"operations": []},
     "SRC_KMA_FORECAST": {"operations": []},
+    "SRC_SEMAS_SHOPS": {"operations": []},
     "SRC_FESTIVAL": {
         "operations": [
             {
                 "use_base_url": True,
                 "external_key": "festival:all",
                 "response_type_param": "type",
+                "watermark": {
+                    "response_field": "modifiedtime",
+                    "format": "%Y%m%d%H%M%S",
+                },
                 "max_pages": 100,
             }
         ]
@@ -172,12 +249,20 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "operation": "getRestDeInfo",
                 "external_key": "holiday:current-month",
                 "params": {"solYear": "$current_year", "solMonth": "$current_month"},
+                "watermark": {
+                    "params": ["solYear", "solMonth"],
+                    "format": "%Y%m",
+                },
                 "max_pages": 10,
             },
             {
                 "operation": "getRestDeInfo",
                 "external_key": "holiday:next-month",
                 "params": {"solYear": "$next_month_year", "solMonth": "$next_month"},
+                "watermark": {
+                    "params": ["solYear", "solMonth"],
+                    "format": "%Y%m",
+                },
                 "max_pages": 10,
             },
         ]
@@ -188,6 +273,7 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "operation": "getPchrgTrrsrtVisitorList",
                 "external_key": "tourism-admission:$previous_month",
                 "params": {"YM": "$previous_month"},
+                "watermark": {"param": "YM", "format": "%Y%m"},
                 "response_type_param": None,
                 "max_pages": 100,
             }
@@ -203,6 +289,7 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                     "to_month": f"$month_minus_{months}",
                     "pax_cargo": "Y",
                 },
+                "watermark": {"param": "to_month", "format": "%Y%m"},
                 "response_type_param": "type",
                 "paginate": False,
                 "pagination_params": False,
@@ -256,18 +343,19 @@ def kto_sigungu_operations(
             "signguCd": code[:5],
         }
         if source_id != "SRC_KTO_VISITOR_FORECAST":
-            params["baseYm"] = "$previous_month"
-        rows.append(
-            {
-                "operation": operation,
-                "external_key": (
-                    f"{operation}:area={code[:2]}:signgu={code[:5]}"
-                    + (":month=$previous_month" if "baseYm" in params else "")
-                ),
-                "params": params,
-                "max_pages": 10,
-            }
-        )
+            params["baseYm"] = "$month_minus_2"
+        request: dict[str, Any] = {
+            "operation": operation,
+            "external_key": (
+                f"{operation}:area={code[:2]}:signgu={code[:5]}"
+                + (":month=$month_minus_2" if "baseYm" in params else "")
+            ),
+            "params": params,
+            "max_pages": 10,
+        }
+        if "baseYm" in params:
+            request["watermark"] = {"param": "baseYm", "format": "%Y%m"}
+        rows.append(request)
     return rows
 
 
@@ -275,11 +363,13 @@ def public_data_refresh_scope(
     source_id: str,
     administrative_codes: list[str] | tuple[str, ...] = (),
     area_id_by_code: dict[str, str] | None = None,
+    area_locations_by_code: dict[str, tuple[str, float, float]] | None = None,
 ) -> dict[str, Any]:
     """Return a private copy because adapters resolve dynamic values per run."""
     scope = deepcopy(PUBLIC_DATA_REFRESH_SCOPES.get(source_id, {}))
     dynamic = kto_sigungu_operations(source_id, administrative_codes)
     if source_id == "SRC_KMA_FORECAST" and area_id_by_code:
+        locations = area_locations_by_code or {}
         dynamic = [
             {
                 "operation": "getVilageFcst",
@@ -287,18 +377,54 @@ def public_data_refresh_scope(
                 "params": {
                     "base_date": "$kma_base_date",
                     "base_time": "$kma_base_time",
-                    "nx": KMA_SIDO_GRID_BY_MOIS_PREFIX[code[:2]][0],
-                    "ny": KMA_SIDO_GRID_BY_MOIS_PREFIX[code[:2]][1],
+                    "nx": grid[0],
+                    "ny": grid[1],
+                },
+                "watermark": {
+                    "params": ["base_date", "base_time"],
+                    "format": "%Y%m%d%H%M",
                 },
                 "max_pages": 10,
             }
             for code, area_id in sorted(area_id_by_code.items())
-            if code.endswith("00000000")
-            and code[:2] in KMA_SIDO_GRID_BY_MOIS_PREFIX
+            if code.endswith("00000")
+            for grid in (
+                (
+                    wgs84_to_kma_grid(
+                        locations[code][1],
+                        locations[code][2],
+                    )
+                    if code in locations
+                    else KMA_SIDO_GRID_BY_MOIS_PREFIX.get(code[:2])
+                    if code.endswith("00000000")
+                    else None
+                ),
+            )
+            if grid is not None
         ]
     if dynamic:
         scope["operations"] = dynamic
     return scope
+
+
+def semas_place_operations(
+    places: list[tuple[str, float, float]],
+) -> list[dict[str, Any]]:
+    """Build one bounded nearby-commerce batch; the scheduler rotates batches."""
+    return [
+        {
+            "operation": "storeListInRadius",
+            "external_key": f"storeListInRadius:place={place_id}",
+            "params": {
+                "radius": "1000",
+                "cx": f"{lng:.7f}",
+                "cy": f"{lat:.7f}",
+            },
+            "response_type_param": "type",
+            "max_pages": 2,
+        }
+        for place_id, lat, lng in places[:50]
+    ]
 
 
 def social_refresh_scope(source_id: str) -> dict[str, Any]:

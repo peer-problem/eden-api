@@ -8,8 +8,14 @@ from urllib.parse import urlparse
 from pydantic import SecretStr
 
 from app.domain.enums import SourceStatus
-from app.sources.base import FetchResult, RawItem, SourceAdapter
-from app.sources.http import SecureSourceClient
+from app.sources.base import (
+    FetchReasonCode,
+    FetchResult,
+    RawItem,
+    SourceAdapter,
+    UnavailableAdapter,
+)
+from app.sources.http import SecureSourceClient, SourceCredentialHttpError
 
 
 def _targets(scope: dict[str, Any]) -> list[dict[str, str]]:
@@ -65,6 +71,7 @@ def _missing_credentials(source_id: str, names: list[str]) -> FetchResult:
     return FetchResult(
         status=SourceStatus.UNAVAILABLE,
         reason=f"{source_id} 자격 증명이 없습니다: {', '.join(names)}",
+        reason_code=FetchReasonCode.CREDENTIAL_MISSING,
     )
 
 
@@ -102,6 +109,7 @@ class NaverTrendAdapter(SourceAdapter):
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
                 reason="검증된 NAVER 검색어 scope가 없습니다.",
+                reason_code=FetchReasonCode.SCOPE_MISSING,
             )
         now = datetime.now(UTC)
         end = now.date() - timedelta(days=1)
@@ -167,6 +175,12 @@ class NaverTrendAdapter(SourceAdapter):
                 items=tuple(items),
                 data_as_of=max(item.source_updated_at for item in items),
             )
+        except SourceCredentialHttpError as exc:
+            return FetchResult(
+                status=SourceStatus.UNAVAILABLE,
+                reason=f"NAVER 자격 증명 또는 승인 범위가 거절되었습니다: {exc}",
+                reason_code=FetchReasonCode.CREDENTIAL_REJECTED,
+            )
         except Exception as exc:
             return FetchResult(
                 status=SourceStatus.DEGRADED,
@@ -198,6 +212,7 @@ class YouTubeAggregateAdapter(SourceAdapter):
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
                 reason="검증된 YouTube 검색어 scope가 없습니다.",
+                reason_code=FetchReasonCode.SCOPE_MISSING,
             )
         now = datetime.now(UTC)
         since = now - timedelta(days=min(max(int(scope.get("lookback_days", 7)), 1), 30))
@@ -261,6 +276,12 @@ class YouTubeAggregateAdapter(SourceAdapter):
                         reaction_count=reactions,
                     )
                 )
+            except SourceCredentialHttpError as exc:
+                return FetchResult(
+                    status=SourceStatus.UNAVAILABLE,
+                    reason=f"YouTube 자격 증명 또는 승인 범위가 거절되었습니다: {exc}",
+                    reason_code=FetchReasonCode.CREDENTIAL_REJECTED,
+                )
             except Exception as exc:
                 errors.append(f"{target['country']}:{type(exc).__name__}")
         return FetchResult(
@@ -300,6 +321,7 @@ class XCountAdapter(SourceAdapter):
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
                 reason="검증된 X 검색어 scope가 없습니다.",
+                reason_code=FetchReasonCode.SCOPE_MISSING,
             )
         now = datetime.now(UTC)
         start = now - timedelta(days=7)
@@ -335,6 +357,12 @@ class XCountAdapter(SourceAdapter):
                             post_count=int(row["tweet_count"]),
                         )
                     )
+            except SourceCredentialHttpError as exc:
+                return FetchResult(
+                    status=SourceStatus.UNAVAILABLE,
+                    reason=f"X 자격 증명 또는 승인 범위가 거절되었습니다: {exc}",
+                    reason_code=FetchReasonCode.CREDENTIAL_REJECTED,
+                )
             except Exception as exc:
                 errors.append(f"{target['country']}:{type(exc).__name__}")
         return FetchResult(
@@ -346,13 +374,8 @@ class XCountAdapter(SourceAdapter):
         )
 
 
-class ApprovedAggregateAdapter(SourceAdapter):
+class ApprovedAggregateAdapter(UnavailableAdapter):
     """Explicit unavailable adapter for platforms that require unsupported approval context."""
 
     def __init__(self, source_id: str, reason: str) -> None:
-        self.source_id = source_id
-        self.reason = reason
-
-    def fetch(self, scope: dict[str, Any]) -> FetchResult:
-        del scope
-        return FetchResult(status=SourceStatus.UNAVAILABLE, reason=self.reason)
+        super().__init__(source_id, reason, FetchReasonCode.UNSUPPORTED_ACCESS)

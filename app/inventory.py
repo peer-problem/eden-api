@@ -164,7 +164,7 @@ SOCIAL_REASONS = {
     "SRC_YOUTUBE": "YOUTUBE_API_KEY가 없습니다.",
     "SRC_INSTAGRAM": "Meta 앱 검수 및 META_ACCESS_TOKEN이 없습니다.",
     "SRC_FACEBOOK": "Meta 앱 검수 및 META_ACCESS_TOKEN이 없습니다.",
-    "SRC_TIKTOK": "현재 Research API 대상 지역·기관 승인과 자격 증명이 없습니다.",
+    "SRC_TIKTOK": "현재 Research API 대상 지역 및 기관 승인과 자격 증명이 없습니다.",
     "SRC_X": "X API 프로젝트 토큰과 유료 전체기간 접근 권한이 없습니다.",
     "SRC_REDDIT": "Reddit Data API 사전 요청 승인과 OAuth 자격 증명이 없습니다.",
     "SRC_LINE": "관광시장 검색용 공개 API가 아니며 공식계정 소유자 insight만 제공합니다.",
@@ -230,10 +230,6 @@ def seed_source_inventories(session: Session, now: datetime) -> None:
             },
             {"inventory_id"},
         )
-
-
-def official_notice_urls() -> list[str]:
-    return [item[4] for item in OFFICIAL_INVENTORY]
 
 
 def official_notice_targets() -> list[dict[str, Any]]:

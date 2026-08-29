@@ -1,0 +1,9 @@
+{
+  "StatisticSearch": {
+    "list_total_count": 2,
+    "row": [
+      {"TIME": "202605", "DATA_VALUE": "120.5", "ITEM_CODE1": "2C1Y00"},
+      {"TIME": "202606", "DATA_VALUE": "121.0", "ITEM_CODE1": "2C1Y00"}
+    ]
+  }
+}

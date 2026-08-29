@@ -243,7 +243,7 @@ SOURCES: tuple[SourceDefinition, ...] = (
     SourceDefinition(
         "SRC_SEMAS_SHOPS",
         "소상공인시장진흥공단",
-        "https://apis.data.go.kr/B553077/api/open/sdsc2/storeListInRadius",
+        "https://apis.data.go.kr/B553077/api/open/sdsc2",
         "https://www.data.go.kr/data/15012005/openapi.do",
         "json_xml_api",
         "public_data_service_key",
@@ -288,7 +288,7 @@ SOURCES: tuple[SourceDefinition, ...] = (
     SourceDefinition(
         "SRC_TOURISM_ADMISSION",
         "한국문화관광연구원",
-        "https://apis.data.go.kr/B551011/TourismResourceStatsService",
+        "http://openapi.tour.go.kr/openapi/service/TourismResourceStatsService",
         "https://www.data.go.kr/data/15000366/openapi.do",
         "json_xml_api",
         "public_data_service_key",
@@ -384,6 +384,14 @@ CADENCE_SECONDS = {
     "C": (24 * 3600, 3 * 24 * 3600),
     "D": (24 * 3600, 38 * 24 * 3600),
     "E": (7 * 24 * 3600, 30 * 24 * 3600),
+}
+
+EXPECTED_PUBLISH_LAG_SECONDS = {
+    "A": 3600,
+    "B": 6 * 3600,
+    "C": 24 * 3600,
+    "D": 7 * 24 * 3600,
+    "E": 7 * 24 * 3600,
 }
 
 

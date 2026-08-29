@@ -11,7 +11,6 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
-from app.llm.policy import assert_non_authoritative_task
 from app.repositories.models import AlertRevision
 
 PROMPT_VERSION = "official_alert_translation_summary_v1"
@@ -54,8 +53,6 @@ class OpenAIAlertEnricher:
         )
 
     def enrich(self, title: str, body: str) -> AlertEnrichmentPayload:
-        assert_non_authoritative_task("translate")
-        assert_non_authoritative_task("summarize")
         source_text = (
             "<UNTRUSTED_OFFICIAL_NOTICE>\n"
             f"<TITLE>{title[:1000]}</TITLE>\n"

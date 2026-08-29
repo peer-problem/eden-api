@@ -1,0 +1,48 @@
+{
+  "airport": {
+    "valid": {"country": "Japan", "arrFlight": "1,234", "arrPax": "98,765"},
+    "zero": {"country": "Japan", "arrFlight": "0", "arrPax": "0"},
+    "flight_only": {"country": "Japan", "arrFlight": "12"},
+    "missing": {"country": "Japan"}
+  },
+  "weekly": [
+    {
+      "airportcode": "NRT",
+      "firstdate": "20260829",
+      "lastdate": "20260904",
+      "monday": "Y",
+      "tuesday": "Y",
+      "wednesday": "Y",
+      "thursday": "Y",
+      "friday": "Y",
+      "saturday": "Y",
+      "sunday": "Y"
+    }
+  ],
+  "kexim": [
+    {"cur_unit": "CNH", "deal_bas_r": "190.25"},
+    {"cur_unit": "JPY(100)", "deal_bas_r": "925.50"},
+    {"cur_unit": "USD", "deal_bas_r": "0"},
+    {"cur_unit": "EUR", "deal_bas_r": "1,500.00"}
+  ],
+  "ecos": {
+    "receipt": {
+      "unit": "million_usd",
+      "metric": "receipt",
+      "item_code": "2C1Y00",
+      "rows": [
+        {"TIME": "202607", "DATA_VALUE": "125.5", "ITEM_CODE1": "2C1Y00"},
+        {"TIME": "bad", "DATA_VALUE": "130", "ITEM_CODE1": "2C1Y00"},
+        {"TIME": "202608", "DATA_VALUE": "0", "ITEM_CODE1": "2C1Y00"}
+      ]
+    },
+    "expenditure": {
+      "unit": "million_usd",
+      "metric": "expenditure",
+      "item_code": "2C2Y00",
+      "rows": [
+        {"TIME": "202607", "DATA_VALUE": "100", "ITEM_CODE1": "2C2Y00"}
+      ]
+    }
+  }
+}

@@ -6,7 +6,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.domain.enums import SourceStatus
-from app.sources.base import FetchResult, RawItem, SourceAdapter
+from app.sources.base import FetchReasonCode, FetchResult, RawItem, SourceAdapter
 from app.sources.http import SecureSourceClient
 
 SOURCE_ID = "SRC_KTO_INBOUND_STATS"
@@ -89,6 +89,7 @@ class KtoInboundAdapter(SourceAdapter):
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
                 reason="KTO 방한객 조회 months는 1-60 범위여야 합니다.",
+                reason_code=FetchReasonCode.INVALID_SCOPE,
             )
         start_month = str(scope.get("start_month") or _shift_month(end_month, -(months - 1)))
         countries = scope.get("countries") or DEFAULT_COUNTRIES
@@ -96,6 +97,7 @@ class KtoInboundAdapter(SourceAdapter):
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
                 reason="KTO 방한객 국가 scope가 비어 있습니다.",
+                reason_code=FetchReasonCode.SCOPE_MISSING,
             )
 
         items: list[RawItem] = []
