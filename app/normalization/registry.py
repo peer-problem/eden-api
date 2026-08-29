@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.domain.enums import RunStatus, SourceStatus
 from app.normalization.alerts import normalize_keta_alert_run, normalize_official_alert_run
 from app.normalization.forecast import (
     normalize_festival_run,
@@ -31,9 +35,85 @@ from app.normalization.public_data import (
     normalize_resource_demand_run,
 )
 from app.normalization.social import SOCIAL_SOURCES, normalize_social_run
+from app.repositories.models import DeadLetter, IngestionRun, RawRecord
 
 
 def normalize_run(
+    source_id: str,
+    session_factory: sessionmaker[Session],
+    run_id: str,
+) -> NormalizationResult | int | None:
+    """Reprocess prior dead letters without letting stale failures taint this attempt."""
+    with session_factory.begin() as session:
+        run = session.get(IngestionRun, run_id)
+        if run is None:
+            raise ValueError(f"ingestion run does not exist: {run_id}")
+        fetch_status = (run.request_scope or {}).get("_fetch_result", {}).get("status")
+        if fetch_status == SourceStatus.DEGRADED:
+            run.status = RunStatus.PARTIAL
+        elif fetch_status in {SourceStatus.UNAVAILABLE, SourceStatus.DISABLED}:
+            run.status = RunStatus.FAILED
+        elif fetch_status in {SourceStatus.AVAILABLE, SourceStatus.STALE} or (
+            fetch_status is None and run.error_summary is None
+        ):
+            run.status = RunStatus.SUCCEEDED
+        raw_ids = tuple(
+            session.scalars(
+                select(RawRecord.raw_record_id).where(RawRecord.run_id == run_id)
+            )
+        )
+        dead_letter_ids = (
+            tuple(
+                session.scalars(
+                    select(DeadLetter.dead_letter_id).where(
+                        DeadLetter.raw_record_id.in_(raw_ids),
+                        DeadLetter.reprocess_status == "pending",
+                    )
+                )
+            )
+            if raw_ids
+            else ()
+        )
+        if dead_letter_ids:
+            session.execute(
+                update(DeadLetter)
+                .where(
+                    DeadLetter.dead_letter_id.in_(dead_letter_ids),
+                    DeadLetter.reprocess_status == "pending",
+                )
+                .values(reprocess_status="retrying")
+            )
+    try:
+        result = _normalize_run(source_id, session_factory, run_id)
+    except Exception:
+        with session_factory.begin() as session:
+            if dead_letter_ids:
+                session.execute(
+                    update(DeadLetter)
+                    .where(
+                        DeadLetter.dead_letter_id.in_(dead_letter_ids),
+                        DeadLetter.reprocess_status == "retrying",
+                    )
+                    .values(reprocess_status="pending")
+                )
+        raise
+    with session_factory.begin() as session:
+        if dead_letter_ids:
+            session.execute(
+                update(DeadLetter)
+                .where(
+                    DeadLetter.dead_letter_id.in_(dead_letter_ids),
+                    DeadLetter.reprocess_status == "retrying",
+                )
+                .values(
+                    reprocess_status="resolved",
+                    reprocessed_at=datetime.now(UTC).replace(tzinfo=None),
+                )
+            )
+    return result
+
+
+def _normalize_run(
     source_id: str,
     session_factory: sessionmaker[Session],
     run_id: str,
@@ -81,3 +161,12 @@ def normalize_run(
     if source_id in SOCIAL_SOURCES:
         return normalize_social_run(source_id, session_factory, run_id)
     return None
+
+
+def reprocess_normalization_run(
+    source_id: str,
+    session_factory: sessionmaker[Session],
+    run_id: str,
+) -> NormalizationResult | int | None:
+    """Run the current source normalizer under an external dead-letter claim."""
+    return _normalize_run(source_id, session_factory, run_id)
