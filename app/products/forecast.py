@@ -105,7 +105,18 @@ def build_forecast_snapshots(
                             "forecast_date": _aware(row.forecast_date).isoformat(),
                             "place_id": row.place_id,
                             "source_forecast": row.source_forecast,
-                            "weather": row.weather,
+                            "weather": (
+                                {
+                                    **row.weather,
+                                    "grid_source": (
+                                        "parent_area"
+                                        if row.area_id != area_id
+                                        else "area_center"
+                                    ),
+                                }
+                                if row.weather is not None
+                                else None
+                            ),
                             "festivals": row.festivals,
                             "holiday": row.holiday,
                             "availability": row.availability,

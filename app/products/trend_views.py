@@ -6,7 +6,13 @@ from statistics import mean
 from typing import Any
 
 from app.domain.enums import Availability
-from app.products.formulas import INTEREST_FORMULA_VERSION, minmax_score
+from app.products.formulas import (
+    INTEREST_FORMULA_VERSION,
+    RISING_KEYWORD_FORMULA_VERSION,
+    bounded_index,
+    interest_index,
+    minmax_score,
+)
 
 PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90}
 SOURCE_NAMES = {
@@ -22,6 +28,7 @@ SOURCE_NAMES = {
     "facebook": "SRC_FACEBOOK",
 }
 ALWAYS_INCLUDED_SOURCES = {"SRC_NAVER_TREND", "SRC_KTO_RESOURCE_DEMAND"}
+RISING_MIN_OBSERVATIONS_PER_WINDOW = 2
 
 
 def _timestamp(value: object) -> datetime:
@@ -32,6 +39,30 @@ def _timestamp(value: object) -> datetime:
 def _sum_optional(values: list[int | None]) -> int | None:
     present = [value for value in values if value is not None]
     return sum(present) if present else None
+
+
+def _single_source_sum(
+    rows: list[dict[str, Any]],
+    field: str,
+    *,
+    excluded_sources: set[str] | None = None,
+) -> int | None:
+    excluded = excluded_sources or set()
+    contributing_sources = {
+        str(row["source_id"])
+        for row in rows
+        if row.get("source_id") not in excluded and row.get(field) is not None
+    }
+    if len(contributing_sources) != 1:
+        return None
+    source_id = next(iter(contributing_sources))
+    return _sum_optional(
+        [
+            int(row[field])
+            for row in rows
+            if row.get("source_id") == source_id and row.get(field) is not None
+        ]
+    )
 
 
 def _group_time(value: datetime, grain: str) -> datetime:
@@ -95,9 +126,7 @@ def _source_bucket_scores(
             bucket_scores[key] = score
             if score is not None:
                 values_for_period.append(score)
-        source_scores[source_id] = (
-            round(mean(values_for_period), 4) if values_for_period else None
-        )
+        source_scores[source_id] = round(mean(values_for_period), 4) if values_for_period else None
     return bucket_scores, source_scores
 
 
@@ -111,6 +140,72 @@ def _change_rate(series: list[dict[str, Any]]) -> float | None:
     if previous == 0:
         return None
     return round((current - previous) / previous * 100, 4)
+
+
+def _combined_score(scores: dict[str, float | None], selected_source_ids: set[str]) -> float | None:
+    result = interest_index(
+        {source_id: scores.get(source_id) for source_id in selected_source_ids},
+        {source_id: 1.0 for source_id in selected_source_ids},
+    )
+    return result.value
+
+
+def _rising_keywords(
+    observations: list[dict[str, Any]],
+    scope: dict[str, Any],
+    selected_source_ids: set[str],
+    latest: datetime,
+) -> list[dict[str, Any]]:
+    period_days = PERIOD_DAYS[scope["period"]]
+    current_start = latest - timedelta(days=period_days - 1)
+    previous_start = current_start - timedelta(days=period_days)
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in observations:
+        if not isinstance(row, dict) or row.get("source_id") not in selected_source_ids:
+            continue
+        if scope.get("country") != "all" and row.get("country") != scope.get("country"):
+            continue
+        if scope.get("area_code") is not None and row.get("area_id") != scope.get("area_code"):
+            continue
+        keyword = str(row.get("keyword") or "").strip()
+        if not keyword or keyword.casefold() == str(scope["keyword"]).casefold():
+            continue
+        bucket = _timestamp(row["bucket_start"])
+        window = (
+            "current"
+            if current_start <= bucket <= latest
+            else "previous"
+            if previous_start <= bucket < current_start
+            else "outside"
+        )
+        if window != "outside":
+            grouped[(keyword, str(row["source_id"]), window)].append(row)
+
+    keyword_scores: dict[str, list[float]] = defaultdict(list)
+    keyword_sources = sorted({(keyword, source_id) for keyword, source_id, _ in grouped})
+    for keyword, source_id in keyword_sources:
+        current_rows = grouped.get((keyword, source_id, "current"), [])
+        previous_rows = grouped.get((keyword, source_id, "previous"), [])
+        if (
+            len(current_rows) < RISING_MIN_OBSERVATIONS_PER_WINDOW
+            or len(previous_rows) < RISING_MIN_OBSERVATIONS_PER_WINDOW
+        ):
+            continue
+        current = _signal(current_rows)
+        previous = _signal(previous_rows)
+        if current is None or previous is None or previous <= 0:
+            continue
+        growth = (current - previous) / previous * 100
+        if growth > 0:
+            keyword_scores[keyword].append(bounded_index(growth) or 0.0)
+
+    ranked = [
+        {"keyword": keyword, "score": round(mean(scores), 4)}
+        for keyword, scores in keyword_scores.items()
+        if scores
+    ]
+    ranked.sort(key=lambda row: (-float(row["score"]), str(row["keyword"])))
+    return ranked[: int(scope.get("limit", 10))]
 
 
 def build_trend_view(
@@ -146,18 +241,14 @@ def build_trend_view(
     grouped_time: dict[datetime, list[dict[str, Any]]] = defaultdict(list)
     grouped_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        grouped_time[_group_time(_timestamp(row["bucket_start"]), scope["time_unit"])].append(
-            row
-        )
+        grouped_time[_group_time(_timestamp(row["bucket_start"]), scope["time_unit"])].append(row)
         grouped_source[row["source_id"]].append(row)
 
     series: list[dict[str, Any]] = []
     for bucket, bucket_rows in sorted(grouped_time.items()):
-        available_scores = [
-            bucket_scores.get((source_id, bucket))
-            for source_id in {row["source_id"] for row in bucket_rows}
-        ]
-        scores = [score for score in available_scores if score is not None]
+        scores = {
+            source_id: bucket_scores.get((source_id, bucket)) for source_id in selected_source_ids
+        }
         series.append(
             {
                 "timestamp": bucket,
@@ -181,18 +272,17 @@ def build_trend_view(
                         for row in bucket_rows
                     ]
                 ),
-                "sns_mentions": _sum_optional(
-                    [
-                        int(row["post_count"])
-                        if row.get("source_id")
-                        not in {"SRC_YOUTUBE", "SRC_KTO_RESOURCE_DEMAND"}
-                        and row.get("post_count") is not None
-                        else None
-                        for row in bucket_rows
-                    ]
+                "sns_mentions": _single_source_sum(
+                    bucket_rows,
+                    "post_count",
+                    excluded_sources={
+                        "SRC_YOUTUBE",
+                        "SRC_NAVER_TREND",
+                        "SRC_KTO_RESOURCE_DEMAND",
+                    },
                 ),
                 "destination_searches": None,
-                "interest_index": round(mean(scores), 4) if scores else None,
+                "interest_index": _combined_score(scores, selected_source_ids),
             }
         )
 
@@ -203,7 +293,7 @@ def build_trend_view(
         if not source_rows:
             source_availability[source_id] = {
                 "availability": "unavailable",
-                "reason": "요청 키워드·범위의 관측이 없습니다.",
+                "reason": "요청 키워드 및 범위의 관측이 없습니다.",
             }
             continue
         score = source_scores.get(source_id)
@@ -212,9 +302,7 @@ def build_trend_view(
                 "source_id": source_id,
                 "posts": _sum_optional([row.get("post_count") for row in source_rows]),
                 "views": _sum_optional([row.get("view_count") for row in source_rows]),
-                "reactions": _sum_optional(
-                    [row.get("reaction_count") for row in source_rows]
-                ),
+                "reactions": _sum_optional([row.get("reaction_count") for row in source_rows]),
                 "search_ratio": (
                     round(mean(ratios), 4)
                     if (
@@ -227,7 +315,7 @@ def build_trend_view(
                     else None
                 ),
                 "score": score,
-                "availability": "available",
+                "availability": "available" if score is not None else "partial",
                 "reason": None if score is not None else "정규화 모집단이 부족합니다.",
             }
         )
@@ -236,10 +324,10 @@ def build_trend_view(
             "reason": None if score is not None else "정규화 모집단이 부족합니다.",
         }
 
-    period_scores = [value for value in source_scores.values() if value is not None]
+    period_score = _combined_score(source_scores, selected_source_ids)
     availability = (
         Availability.AVAILABLE
-        if selected_source_ids == set(grouped_source) and period_scores
+        if selected_source_ids == set(grouped_source) and period_score is not None
         else Availability.PARTIAL
     )
     data = {
@@ -248,12 +336,17 @@ def build_trend_view(
         "country": scope.get("country", "all"),
         "period": scope["period"],
         "time_unit": scope["time_unit"],
-        "interest_index": round(mean(period_scores), 4) if period_scores else None,
+        "interest_index": period_score,
         "change_rate": _change_rate(series),
         "source_metrics": source_metrics,
         "source_availability": source_availability,
         "series": series,
-        "rising_keywords": [],
+        "rising_keywords": _rising_keywords(
+            observations,
+            scope,
+            selected_source_ids,
+            latest,
+        ),
         "sources": sorted(grouped_source),
     }
     return (
@@ -265,4 +358,8 @@ def build_trend_view(
     )
 
 
-__all__ = ["INTEREST_FORMULA_VERSION", "build_trend_view"]
+__all__ = [
+    "INTEREST_FORMULA_VERSION",
+    "RISING_KEYWORD_FORMULA_VERSION",
+    "build_trend_view",
+]

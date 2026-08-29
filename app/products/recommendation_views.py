@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from heapq import nsmallest
 from typing import Any
 
 from app.domain.enums import Availability
-from app.products.formulas import RECOMMENDATION_FORMULA_VERSION, recommendation_score
+from app.products.formulas import (
+    RECOMMENDATION_FORMULA_VERSION,
+    bounded_index,
+    recommendation_score,
+)
 
 
 def build_recommendation_view(
@@ -17,6 +22,12 @@ def build_recommendation_view(
             Availability.UNAVAILABLE,
             "접근성 조건을 검증할 등록 원천이 없습니다.",
         )
+    if constraints.get("max_travel_minutes") is not None:
+        return (
+            None,
+            Availability.UNAVAILABLE,
+            "이동시간 조건을 검증할 등록 원천이 없습니다.",
+        )
     features = product.get("features")
     languages = product.get("country_languages")
     if not isinstance(features, list) or not isinstance(languages, dict):
@@ -29,7 +40,9 @@ def build_recommendation_view(
     requested_area = scope.get("area_code")
     season = scope["travel_window"]["season"]
     avoid_crowds = bool(constraints.get("avoid_crowds"))
-    candidates: list[dict[str, Any]] = []
+    scored_features: list[
+        tuple[float, str, dict[str, Any], dict[str, Any], str, bool, float | None, bool]
+    ] = []
 
     for feature in features:
         if not isinstance(feature, dict):
@@ -55,7 +68,7 @@ def build_recommendation_view(
         market_affinity = 100.0 if localized else 60.0
         crowd_values = feature.get("crowd_by_season")
         crowd = crowd_values.get(season) if isinstance(crowd_values, dict) else None
-        crowd_value = float(crowd) if crowd is not None else None
+        crowd_value = bounded_index(float(crowd)) if crowd is not None else None
         score = recommendation_score(
             {
                 "theme_match": theme_match,
@@ -69,22 +82,56 @@ def build_recommendation_view(
         )
         if score.value is None:
             continue
+        place_id = str(feature["place_id"])
+        # Preserve eager validation of required location fields while deferring
+        # the expensive nested response construction until after top-k selection.
+        feature["lat"]
+        feature["lng"]
+        scored_features.append(
+            (
+                float(score.value),
+                place_id,
+                feature,
+                area,
+                title,
+                localized,
+                crowd_value,
+                bool(requested_themes and requested_themes & place_themes),
+            )
+        )
+
+    selected_features = nsmallest(
+        int(scope.get("limit", 5)),
+        scored_features,
+        key=lambda item: (-item[0], item[1]),
+    )
+    selected: list[dict[str, Any]] = []
+    for rank, (
+        score_value,
+        place_id,
+        feature,
+        area,
+        title,
+        localized,
+        crowd_value,
+        theme_aligned,
+    ) in enumerate(selected_features, start=1):
         reasons: list[str] = []
         if localized:
             reasons.append(f"{target_language} 관광지명이 제공됩니다.")
-        if requested_themes and requested_themes & place_themes:
+        if theme_aligned:
             reasons.append("요청한 테마와 관광지 분류가 일치합니다.")
         if feature.get("demand_score") is not None:
             reasons.append("공식 지역 수요 지수를 반영했습니다.")
         if avoid_crowds and crowd_value is not None:
             reasons.append("계절별 혼잡도 회피 조건을 반영했습니다.")
-        candidates.append(
+        selected.append(
             {
-                "rank": 0,
-                "score": score.value,
+                "rank": rank,
+                "score": score_value,
                 "region": area,
                 "place": {
-                    "content_id": feature["place_id"],
+                    "content_id": place_id,
                     "title": title,
                     "location": {
                         "lat": feature["lat"],
@@ -99,14 +146,16 @@ def build_recommendation_view(
                 "crowd_index": crowd_value,
                 "related_places": feature.get("related_places") or [],
                 "reasons": reasons,
-                "sources": feature.get("sources") or [],
+                "sources": sorted(
+                    {
+                        str(source_id)
+                        for source_id in (feature.get("sources") or [])
+                        if source_id is not None
+                    }
+                ),
                 "formula_version": RECOMMENDATION_FORMULA_VERSION,
             }
         )
-    candidates.sort(key=lambda row: (-float(row["score"]), row["place"]["content_id"]))
-    selected = candidates[: int(scope.get("limit", 5))]
-    for rank, row in enumerate(selected, start=1):
-        row["rank"] = rank
     if not selected:
         return (
             None,

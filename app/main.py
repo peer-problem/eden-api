@@ -17,9 +17,17 @@ from app.api.v1.common import ErrorDetail, ErrorResponse
 from app.api.v1.routes import router as v1_router
 from app.config import Settings, get_settings
 from app.observability.logging import configure_logging
-from app.observability.middleware import BodyLimitMiddleware, RequestContextMiddleware
+from app.observability.middleware import (
+    BodyLimitMiddleware,
+    RequestContextMiddleware,
+    ResponseSizeLimitMiddleware,
+)
 from app.readmodels.repository import MariaDBReadRepository, ReadRepository
-from app.repositories.database import create_database_engine, create_session_factory
+from app.repositories.database import (
+    create_database_engine,
+    create_scheduler_database_engine,
+    create_session_factory,
+)
 
 logger = logging.getLogger("eden.api")
 
@@ -31,10 +39,11 @@ def create_app(
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings.LOG_LEVEL)
     engine: Engine | None = None
+    scheduler_engine: Engine | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        nonlocal engine
+        nonlocal engine, scheduler_engine
         if repository is not None:
             app.state.read_repository = repository
         else:
@@ -42,22 +51,30 @@ def create_app(
             factory = create_session_factory(engine)
             app.state.read_repository = MariaDBReadRepository(factory)
             app.state.session_factory = factory
+            scheduler_engine = create_scheduler_database_engine(resolved_settings)
+            scheduler_factory = create_session_factory(scheduler_engine)
+            app.state.pilot_session_factory = scheduler_factory
             if resolved_settings.SCHEDULER_ENABLED:
                 from app.scheduler.runtime import start_scheduler
 
-                app.state.scheduler = start_scheduler(resolved_settings, factory)
+                app.state.scheduler = start_scheduler(
+                    resolved_settings,
+                    scheduler_factory,
+                )
         yield
         scheduler = getattr(app.state, "scheduler", None)
         if scheduler is not None:
             scheduler.shutdown(wait=False)
         if engine is not None:
             engine.dispose()
+        if scheduler_engine is not None:
+            scheduler_engine.dispose()
 
     app = FastAPI(
         title="EDEN API",
         summary="한국 관광 트렌드와 방한시장 데이터 API",
         description=(
-            "EDEN DB에 주기적으로 수집·계산된 현재 상태만 반환합니다. API 요청은 외부 "
+            "EDEN DB에 주기적으로 수집하고 계산한 현재 상태만 반환합니다. API 요청은 외부 "
             "데이터 수집을 유발하지 않습니다. 관광지 content_id는 EDEN ID가 기준이며 "
             "기존 TourAPI content ID도 별칭으로 조회할 수 있습니다."
         ),
@@ -69,6 +86,10 @@ def create_app(
     )
     app.state.settings = resolved_settings
     app.add_middleware(BodyLimitMiddleware, max_body_bytes=resolved_settings.MAX_REQUEST_BODY_BYTES)
+    app.add_middleware(
+        ResponseSizeLimitMiddleware,
+        max_body_bytes=resolved_settings.MAX_RESPONSE_BODY_BYTES,
+    )
     app.add_middleware(RequestContextMiddleware)
     app.include_router(v1_router)
 
@@ -132,13 +153,30 @@ def create_app(
     @app.get("/internal/readiness", include_in_schema=False)
     def readiness(request: Request) -> JSONResponse:
         repo: ReadRepository = request.app.state.read_repository
+        reasons: list[str] = []
+        warnings: list[str] = []
         try:
             ready = repo.ready()
         except Exception:
             ready = False
+        if not ready:
+            reasons.append("database_unavailable")
+        if resolved_settings.ENVIRONMENT == "production" and resolved_settings.SCHEDULER_ENABLED:
+            scheduler = getattr(request.app.state, "scheduler", None)
+            capacity_gate = getattr(scheduler, "capacity_gate", None)
+            if capacity_gate is None:
+                warnings.append("scheduler_capacity_unavailable")
+            else:
+                warnings.extend(capacity_gate.readiness_reasons(resolved_settings))
+        ready = ready and not reasons
         return JSONResponse(
             status_code=200 if ready else 503,
-            content={"status": "ready" if ready else "not_ready"},
+            content={
+                "status": "ready" if ready else "not_ready",
+                "scheduler_enabled": resolved_settings.SCHEDULER_ENABLED,
+                "reasons": reasons,
+                "warnings": warnings,
+            },
         )
 
     @app.get("/internal/metrics", include_in_schema=False)

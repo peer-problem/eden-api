@@ -7,6 +7,7 @@ from statistics import mean
 from typing import Any
 
 from app.domain.enums import Availability
+from app.products.formulas import bounded_index
 
 PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90, "12m": 365}
 
@@ -30,25 +31,63 @@ def _change_rate(current: int | None, baseline: int | None) -> float | None:
     return round((current - baseline) / baseline * 100, 4)
 
 
+def _previous_year(value: date) -> date:
+    try:
+        return value.replace(year=value.year - 1)
+    except ValueError:
+        return value.replace(year=value.year - 1, day=28)
+
+
 def _visitor_totals(rows: list[dict[str, Any]]) -> dict[str, int | None]:
-    values = {
-        visitor_type: _sum(
-            [
-                int(row["visitor_count"]) if row.get("visitor_count") is not None else None
-                for row in rows
-                if row.get("visitor_type") == visitor_type
-            ]
+    grouped: dict[tuple[str, str, str, str], dict[str, list[int | None]]] = defaultdict(
+        lambda: {"all": [], "domestic": [], "foreign": []}
+    )
+    for row in rows:
+        visitor_type = str(row.get("visitor_type"))
+        if visitor_type not in {"all", "domestic", "foreign"}:
+            continue
+        key = (
+            str(row.get("period_start")),
+            str(row.get("grain")),
+            str(row.get("subject_type")),
+            str(row.get("subject_key")),
         )
-        for visitor_type in ("all", "domestic", "foreign")
+        grouped[key][visitor_type].append(
+            int(row["visitor_count"]) if row.get("visitor_count") is not None else None
+        )
+
+    totals: dict[str, list[int | None]] = {
+        "all": [],
+        "domestic": [],
+        "foreign": [],
     }
-    if values["domestic"] is not None and values["foreign"] is not None:
-        values["all"] = values["domestic"] + values["foreign"]
-    return values
+    for counts in grouped.values():
+        scoped = {visitor_type: _sum(values) for visitor_type, values in counts.items()}
+        domestic = scoped["domestic"]
+        foreign = scoped["foreign"]
+        reported_total = scoped["all"]
+        if domestic is not None and foreign is not None:
+            derived_total = domestic + foreign
+            if reported_total is not None and reported_total != derived_total:
+                raise ValueError("all must equal domestic + foreign at the same scope and grain")
+            scoped["all"] = derived_total
+        for visitor_type in totals:
+            totals[visitor_type].append(scoped[visitor_type])
+    return {visitor_type: _sum(values) for visitor_type, values in totals.items()}
 
 
-def _window_rows(
-    rows: list[dict[str, Any]], start: date, end: date
-) -> list[dict[str, Any]]:
+def _project_visitor_totals(
+    totals: dict[str, int | None],
+    visitor_type: str,
+) -> dict[str, int | None]:
+    if visitor_type == "domestic":
+        return {"all": totals["domestic"], "domestic": totals["domestic"], "foreign": None}
+    if visitor_type == "foreign":
+        return {"all": totals["foreign"], "domestic": None, "foreign": totals["foreign"]}
+    return totals
+
+
+def _window_rows(rows: list[dict[str, Any]], start: date, end: date) -> list[dict[str, Any]]:
     return [row for row in rows if start <= _day(str(row["period_start"])) <= end]
 
 
@@ -58,12 +97,27 @@ def build_region_insight_view(
     selected = set(scope.get("include") or ["visitors", "demand", "diversity"])
     period = str(scope.get("period", "30d"))
     days = PERIOD_DAYS[period]
+    area_visit_rows = [
+        row for row in product.get("visits", []) if row.get("subject_type") == "area"
+    ]
+    selected_collections = {
+        "visitors": area_visit_rows,
+        "demand": product.get("demand", []),
+        "diversity": product.get("diversity", []),
+    }
     all_dated_rows = [
         row
-        for collection in ("visits", "demand", "diversity")
-        for row in product.get(collection, [])
+        for collection in selected
+        for row in selected_collections[collection]
         if row.get("period_start")
     ]
+    if not all_dated_rows:
+        all_dated_rows = [
+            row
+            for collection in selected_collections.values()
+            for row in collection
+            if row.get("period_start")
+        ]
     if not all_dated_rows:
         raise ValueError("regional product contains no dated observations")
     end = max(_day(str(row["period_start"])) for row in all_dated_rows)
@@ -73,12 +127,11 @@ def build_region_insight_view(
     visitors = None
     comparison = None
     if "visitors" in selected:
-        visit_rows = _window_rows(product.get("visits", []), start, end)
-        totals = _visitor_totals(visit_rows)
-        visitor_available = any(value is not None for value in totals.values())
-        visitor_state = (
-            Availability.AVAILABLE if visitor_available else Availability.UNAVAILABLE
-        )
+        visit_rows = _window_rows(area_visit_rows, start, end)
+        visitor_type = str(scope.get("visitor_type", "all"))
+        totals = _project_visitor_totals(_visitor_totals(visit_rows), visitor_type)
+        visitor_available = totals["all"] is not None
+        visitor_state = Availability.AVAILABLE if visitor_available else Availability.UNAVAILABLE
         states.append(visitor_state)
         visitors = {
             "total": totals["all"],
@@ -92,15 +145,16 @@ def build_region_insight_view(
         if compare:
             if compare == "previous_period":
                 baseline_end = start - timedelta(days=1)
+                baseline_start = baseline_end - timedelta(days=days - 1)
             else:
-                baseline_end = end - timedelta(days=365)
-            baseline_start = baseline_end - timedelta(days=days - 1)
-            baseline_rows = _window_rows(
-                product.get("visits", []), baseline_start, baseline_end
-            )
+                baseline_start = _previous_year(start)
+                baseline_end = _previous_year(end)
+            baseline_rows = _window_rows(area_visit_rows, baseline_start, baseline_end)
             baseline_totals = _visitor_totals(baseline_rows)
-            visitor_type = str(scope.get("visitor_type", "all"))
-            change = _change_rate(totals[visitor_type], baseline_totals[visitor_type])
+            change = _change_rate(
+                totals["all"],
+                _project_visitor_totals(baseline_totals, visitor_type)["all"],
+            )
             visitors["change_rate"] = change
             comparison = {
                 "type": compare,
@@ -118,15 +172,29 @@ def build_region_insight_view(
         stay_values = [value for value in stay if value is not None]
         spend_values = [value for value in spend if value is not None]
         night_values = [value for value in nights if value is not None]
-        block_available = bool(stay_values or spend_values or night_values)
-        state = Availability.AVAILABLE if block_available else Availability.UNAVAILABLE
+        present_dimensions = sum(
+            bool(values) for values in (stay_values, spend_values, night_values)
+        )
+        state = (
+            Availability.AVAILABLE
+            if present_dimensions == 3
+            else Availability.PARTIAL
+            if present_dimensions
+            else Availability.UNAVAILABLE
+        )
         states.append(state)
         demand = {
-            "stay_index": round(mean(stay_values), 4) if stay_values else None,
-            "spend_index": round(mean(spend_values), 4) if spend_values else None,
+            "stay_index": bounded_index(mean(stay_values)) if stay_values else None,
+            "spend_index": bounded_index(mean(spend_values)) if spend_values else None,
             "avg_stay_nights": round(mean(night_values), 3) if night_values else None,
             "availability": state.value,
-            "reason": None if block_available else "요청 기간의 수요 관측이 없습니다.",
+            "reason": (
+                None
+                if state == Availability.AVAILABLE
+                else "일부 수요 차원이 없습니다."
+                if state == Availability.PARTIAL
+                else "요청 기간의 수요 관측이 없습니다."
+            ),
         }
 
     diversity = None
@@ -134,18 +202,32 @@ def build_region_insight_view(
         rows = _window_rows(product.get("diversity", []), start, end)
         ages = [value for row in rows if (value := _number(row.get("age_index"))) is not None]
         nationalities = [
-            value
-            for row in rows
-            if (value := _number(row.get("nationality_index"))) is not None
+            value for row in rows if (value := _number(row.get("nationality_index"))) is not None
         ]
-        block_available = bool(ages or nationalities)
-        state = Availability.AVAILABLE if block_available else Availability.UNAVAILABLE
+        has_any_dimension = bool(ages or nationalities)
+        state = (
+            Availability.AVAILABLE
+            if ages and nationalities
+            else Availability.PARTIAL
+            if has_any_dimension
+            else Availability.UNAVAILABLE
+        )
         states.append(state)
         diversity = {
-            "age_index": round(mean(ages), 4) if ages else None,
-            "nationality_index": round(mean(nationalities), 4) if nationalities else None,
+            "age_index": bounded_index(mean(ages)) if ages else None,
+            "nationality_index": (bounded_index(mean(nationalities)) if nationalities else None),
             "availability": state.value,
-            "reason": None if block_available else "요청 기간의 다양성 관측이 없습니다.",
+            "reason": (
+                None
+                if state == Availability.AVAILABLE
+                else (
+                    "연령 다양성 원천이 없어 국적 다양성만 제공합니다."
+                    if not ages
+                    else "국적 다양성 원천이 없어 연령 다양성만 제공합니다."
+                )
+                if state == Availability.PARTIAL
+                else "요청 기간의 다양성 관측이 없습니다."
+            ),
         }
 
     available_count = sum(state == Availability.AVAILABLE for state in states)
@@ -153,14 +235,16 @@ def build_region_insight_view(
         Availability.AVAILABLE
         if states and available_count == len(states)
         else Availability.PARTIAL
+        if any(state != Availability.UNAVAILABLE for state in states)
+        else Availability.UNAVAILABLE
     )
     reason = None if availability == Availability.AVAILABLE else "일부 지역 데이터 블록이 없습니다."
     sources = []
-    if product.get("visits"):
+    if "visitors" in selected and area_visit_rows:
         sources.append("SRC_KTO_REGIONAL_VISITORS")
-    if product.get("demand"):
+    if "demand" in selected and product.get("demand"):
         sources.append("SRC_KTO_DEMAND_INTENSITY")
-    if product.get("diversity"):
+    if "diversity" in selected and product.get("diversity"):
         sources.append("SRC_KTO_DIVERSITY")
     return (
         {
@@ -195,6 +279,56 @@ def _bucket_expected_days(bucket: date, granularity: str, start: date, end: date
     return max(1, (min(bucket_end, end) - max(bucket, start)).days + 1)
 
 
+def _expected_buckets(start: date, end: date, granularity: str) -> list[date]:
+    current = _bucket_start(start, granularity)
+    buckets: list[date] = []
+    while current <= end:
+        buckets.append(current)
+        if granularity == "day":
+            current += timedelta(days=1)
+        elif granularity == "week":
+            current += timedelta(days=7)
+        else:
+            current = (
+                current.replace(year=current.year + 1, month=1)
+                if current.month == 12
+                else current.replace(month=current.month + 1)
+            )
+    return buckets
+
+
+def _source_grain(rows: list[dict[str, Any]], granularity: str) -> str | None:
+    rank = {"day": 0, "week": 1, "month": 2}
+    target_rank = rank[granularity]
+    compatible = {
+        str(row.get("grain"))
+        for row in rows
+        if str(row.get("grain")) in rank and rank[str(row.get("grain"))] <= target_rank
+    }
+    return min(compatible, key=rank.__getitem__) if compatible else None
+
+
+def _bucket_completeness(
+    rows: list[dict[str, Any]],
+    source_grain: str,
+    granularity: str,
+    bucket: date,
+    start: date,
+    end: date,
+) -> float:
+    coverage_by_period: dict[date, list[float]] = defaultdict(list)
+    for row in rows:
+        value = _number(row.get("completeness_ratio"))
+        coverage_by_period[_day(str(row["period_start"]))].append(
+            min(1.0, max(0.0, value if value is not None else 1.0))
+        )
+    period_coverage = [max(values) for values in coverage_by_period.values()]
+    if source_grain == granularity:
+        return round(mean(period_coverage), 6) if period_coverage else 0.0
+    expected_days = _bucket_expected_days(bucket, granularity, start, end)
+    return round(min(1.0, sum(period_coverage) / expected_days), 6)
+
+
 def build_visitor_timeseries_view(
     product: dict[str, Any], scope: dict[str, Any]
 ) -> tuple[dict[str, Any] | None, Availability, str | None]:
@@ -212,23 +346,29 @@ def build_visitor_timeseries_view(
         visitor_rows = [row for row in visitor_rows if row.get("subject_type") == "area"]
     if not visitor_rows:
         return None, Availability.UNAVAILABLE, "요청 범위의 방문 시계열 관측이 없습니다."
+    granularity = str(scope.get("granularity", "day"))
+    source_grain = _source_grain(visitor_rows, granularity)
+    if source_grain is None:
+        return (
+            None,
+            Availability.UNAVAILABLE,
+            "요청 grain보다 세밀한 방문 시계열 관측이 없습니다.",
+        )
+    visitor_rows = [row for row in visitor_rows if row.get("grain") == source_grain]
     end = max(_day(str(row["period_start"])) for row in visitor_rows)
     start = end - timedelta(days=days - 1)
     selected = _window_rows(visitor_rows, start, end)
-    granularity = str(scope.get("granularity", "day"))
     buckets: dict[date, list[dict[str, Any]]] = defaultdict(list)
     for row in selected:
         buckets[_bucket_start(_day(str(row["period_start"])), granularity)].append(row)
 
     series: list[dict[str, Any]] = []
-    for bucket, rows in sorted(buckets.items()):
-        totals = _visitor_totals(rows)
-        observed_days = len({_day(str(row["period_start"])) for row in rows})
-        expected_days = _bucket_expected_days(bucket, granularity, start, end)
+    visitor_type = str(scope.get("visitor_type", "all"))
+    for bucket in _expected_buckets(start, end, granularity):
+        rows = buckets.get(bucket, [])
+        totals = _project_visitor_totals(_visitor_totals(rows), visitor_type)
         concentrations = [
-            value
-            for row in rows
-            if (value := _number(row.get("concentration_rate"))) is not None
+            value for row in rows if (value := _number(row.get("concentration_rate"))) is not None
         ]
         series.append(
             {
@@ -239,9 +379,11 @@ def build_visitor_timeseries_view(
                 "domestic": totals["domestic"],
                 "foreign": totals["foreign"],
                 "concentration_rate": (
-                    round(mean(concentrations), 4) if concentrations else None
+                    bounded_index(mean(concentrations)) if concentrations else None
                 ),
-                "completeness_ratio": round(min(1, observed_days / expected_days), 6),
+                "completeness_ratio": _bucket_completeness(
+                    rows, source_grain, granularity, bucket, start, end
+                ),
             }
         )
     if not series:
@@ -255,15 +397,13 @@ def build_visitor_timeseries_view(
         if point["concentration_rate"] is not None
     ]
     completeness = round(mean(point["completeness_ratio"] for point in series), 6)
-    availability = (
-        Availability.AVAILABLE if completeness == 1 else Availability.PARTIAL
-    )
+    availability = Availability.AVAILABLE if completeness == 1 else Availability.PARTIAL
     return (
         {
             "area": product["area"],
             "period": period,
             "granularity": granularity,
-            "visitor_type": scope.get("visitor_type", "all"),
+            "visitor_type": visitor_type,
             "attraction_name": attraction,
             "summary": {
                 "total": total,
@@ -277,7 +417,7 @@ def build_visitor_timeseries_view(
                 "completeness_ratio": completeness,
             },
             "series": series,
-            "sources": ["SRC_KTO_REGIONAL_VISITORS"],
+            "sources": ["SRC_TOURISM_ADMISSION" if attraction else "SRC_KTO_REGIONAL_VISITORS"],
         },
         availability,
         None if availability == Availability.AVAILABLE else "시계열의 일부 날짜가 없습니다.",

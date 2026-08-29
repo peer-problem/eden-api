@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel
 
 from app.api.dependencies import get_read_repository
-from app.api.v1.common import Envelope, Freshness, Meta, SourceMeta
+from app.api.v1.common import Envelope, ErrorResponse, Freshness, Meta, SourceMeta
 from app.api.v1.schemas import (
     AlertsData,
     CountryCode,
@@ -30,7 +30,15 @@ from app.readmodels.keys import lookup_key
 from app.readmodels.repository import ReadRepository
 from app.readmodels.results import ReadResult
 
-router = APIRouter(prefix="/v1")
+router = APIRouter(
+    prefix="/v1",
+    responses={
+        404: {"model": ErrorResponse, "description": "Resource not found"},
+        413: {"model": ErrorResponse, "description": "Request body too large"},
+        422: {"model": ErrorResponse, "description": "Request validation failed"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 RepositoryDep = Annotated[ReadRepository, Depends(get_read_repository)]
 TrendSocialSource = Literal[
     "youtube",
@@ -45,6 +53,7 @@ TrendSocialSource = Literal[
     "facebook",
 ]
 InboundSocialSource = Literal[
+    "youtube",
     "instagram",
     "tiktok",
     "x",
@@ -82,6 +91,7 @@ def _envelope[ModelT: BaseModel](
     )
     source_meta = [SourceMeta.model_validate(source) for source in result.sources]
     stale = stale_by_age or any(source.stale for source in source_meta)
+    request.state.response_stale = stale
     record_api_availability(request.scope["route"].path, result.availability, stale)
     freshness_status = "unavailable" if as_of is None else ("stale" if stale else "fresh")
     return Envelope[ModelT](

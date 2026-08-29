@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from statistics import mean
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.domain.enums import Availability
@@ -29,6 +29,9 @@ from app.repositories.models import (
 )
 
 MAX_AGE_SECONDS = 3 * 24 * 3600
+MAX_RECOMMENDATION_FEATURES = 2_000
+MAX_RECOMMENDATION_FEATURES_PER_AREA = 50
+RECOMMENDATION_CROWD_HISTORY_DAYS = 366
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,34 +99,46 @@ def build_recommendation_snapshot(
     session_factory: sessionmaker[Session],
 ) -> RecommendationProductResult:
     with session_factory() as session:
+        place_filter = (
+            (Place.merge_status == "active")
+            & Place.area_id.is_not(None)
+            & Place.lat.is_not(None)
+            & Place.lng.is_not(None)
+        )
+        eligible_place_count = int(
+            session.scalar(select(func.count()).select_from(Place).where(place_filter)) or 0
+        )
+        ranked_places = (
+            select(
+                Place.eden_place_id.label("place_id"),
+                func.row_number()
+                .over(
+                    partition_by=Place.area_id,
+                    order_by=Place.eden_place_id,
+                )
+                .label("area_rank"),
+            )
+            .where(place_filter)
+            .subquery()
+        )
         places = list(
             session.scalars(
                 select(Place)
-                .where(
-                    Place.merge_status == "active",
-                    Place.lat.is_not(None),
-                    Place.lng.is_not(None),
+                .join(
+                    ranked_places,
+                    ranked_places.c.place_id == Place.eden_place_id,
                 )
-                .order_by(Place.eden_place_id)
+                .where(
+                    ranked_places.c.area_rank
+                    <= MAX_RECOMMENDATION_FEATURES_PER_AREA
+                )
+                .order_by(Place.area_id, Place.eden_place_id)
+                .limit(MAX_RECOMMENDATION_FEATURES)
             ).all()
         )
         if not places:
             return RecommendationProductResult(0, 0)
         place_ids = [place.eden_place_id for place in places]
-        localizations = list(
-            session.scalars(
-                select(PlaceLocalization)
-                .where(PlaceLocalization.eden_place_id.in_(place_ids))
-                .order_by(PlaceLocalization.eden_place_id, PlaceLocalization.language)
-            ).all()
-        )
-        source_maps = list(
-            session.scalars(
-                select(PlaceSourceMap)
-                .where(PlaceSourceMap.eden_place_id.in_(place_ids))
-                .order_by(PlaceSourceMap.eden_place_id, PlaceSourceMap.source_id)
-            ).all()
-        )
         relations = list(
             session.scalars(
                 select(PlaceRelation)
@@ -138,13 +153,56 @@ def build_recommendation_snapshot(
                 )
             ).all()
         )
+        localization_place_ids = sorted(
+            {*place_ids, *(row.to_place_id for row in relations)}
+        )
+        localizations = list(
+            session.scalars(
+                select(PlaceLocalization)
+                .where(PlaceLocalization.eden_place_id.in_(localization_place_ids))
+                .order_by(PlaceLocalization.eden_place_id, PlaceLocalization.language)
+            ).all()
+        )
+        source_maps = list(
+            session.scalars(
+                select(PlaceSourceMap)
+                .where(PlaceSourceMap.eden_place_id.in_(place_ids))
+                .order_by(PlaceSourceMap.eden_place_id, PlaceSourceMap.source_id)
+            ).all()
+        )
+        ranked_demand = (
+            select(
+                RegionalDemandObservation.observation_id.label("observation_id"),
+                func.row_number()
+                .over(
+                    partition_by=RegionalDemandObservation.area_id,
+                    order_by=(
+                        RegionalDemandObservation.period_start.desc(),
+                        RegionalDemandObservation.observation_id.desc(),
+                    ),
+                )
+                .label("area_rank"),
+            )
+            .subquery()
+        )
         demand_rows = list(
             session.scalars(
-                select(RegionalDemandObservation).order_by(
-                    RegionalDemandObservation.area_id,
-                    RegionalDemandObservation.period_start.desc(),
+                select(RegionalDemandObservation)
+                .join(
+                    ranked_demand,
+                    ranked_demand.c.observation_id
+                    == RegionalDemandObservation.observation_id,
                 )
+                .where(ranked_demand.c.area_rank == 1)
+                .order_by(RegionalDemandObservation.area_id)
             ).all()
+        )
+        latest_visit_period = session.scalar(
+            select(func.max(RegionalVisitObservation.period_start)).where(
+                RegionalVisitObservation.subject_type == "area",
+                RegionalVisitObservation.visitor_type == "all",
+                RegionalVisitObservation.visitor_count.is_not(None),
+            )
         )
         visit_rows = list(
             session.scalars(
@@ -152,12 +210,22 @@ def build_recommendation_snapshot(
                     RegionalVisitObservation.subject_type == "area",
                     RegionalVisitObservation.visitor_type == "all",
                     RegionalVisitObservation.visitor_count.is_not(None),
+                    RegionalVisitObservation.period_start
+                    >= (
+                        latest_visit_period
+                        - timedelta(days=RECOMMENDATION_CROWD_HISTORY_DAYS)
+                        if latest_visit_period is not None
+                        else datetime.max
+                    ),
                 )
             ).all()
         )
+        selected_area_ids = {str(place.area_id) for place in places}
         areas = {
             row.eden_area_id: row
-            for row in session.scalars(select(Area)).all()
+            for row in session.scalars(
+                select(Area).where(Area.eden_area_id.in_(selected_area_ids))
+            ).all()
         }
         country_languages = {
             row.iso_alpha2: row.default_language
@@ -204,7 +272,7 @@ def build_recommendation_snapshot(
             population = [
                 value
                 for (candidate_area, candidate_season), value in season_totals.items()
-                if candidate_season == season and candidate_area in areas
+                if candidate_season == season
             ]
             crowd_by_area[area_id][season] = crowd_index(
                 season_totals.get((area_id, season)), population
@@ -308,6 +376,7 @@ def build_recommendation_snapshot(
         )
 
     calculated_at = datetime.now(UTC)
+    feature_pool_truncated = eligible_place_count > len(places)
     SnapshotPublisher(session_factory).publish(
         SnapshotCandidate(
             endpoint="recommendation_feature",
@@ -320,6 +389,12 @@ def build_recommendation_snapshot(
                 "max_acceptable_age_seconds": MAX_AGE_SECONDS,
                 "spatial_resolution": "place",
                 "reason": "예산 원천은 등록되어 있지 않아 값이 제공되지 않습니다.",
+                "candidate_pool": {
+                    "eligible_places": eligible_place_count,
+                    "selected_places": len(places),
+                    "max_places": MAX_RECOMMENDATION_FEATURES,
+                    "max_places_per_area": MAX_RECOMMENDATION_FEATURES_PER_AREA,
+                },
             },
             input_watermarks=input_watermarks,
             formula_versions={
@@ -331,7 +406,10 @@ def build_recommendation_snapshot(
             ingested_at=max(ingested_times),
             calculated_at=calculated_at,
             availability=Availability.PARTIAL,
-            quality_flags=("budget_source_unavailable",),
+            quality_flags=(
+                "budget_source_unavailable",
+                *(("candidate_pool_truncated",) if feature_pool_truncated else ()),
+            ),
             raw_record_ids=raw_record_ids,
         )
     )

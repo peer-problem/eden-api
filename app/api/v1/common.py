@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,7 +22,7 @@ class SourceMeta(StrictModel):
 
 
 class Freshness(StrictModel):
-    status: str
+    status: Literal["fresh", "stale", "unavailable"]
     age_seconds: int | None = Field(default=None, ge=0)
     max_acceptable_age_seconds: int | None = Field(default=None, ge=0)
 

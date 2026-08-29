@@ -25,6 +25,7 @@ from app.sources.kto_inbound import SOURCE_ID
 PERIOD_MONTHS = {"3m": 3, "6m": 6, "12m": 12, "24m": 24}
 MAX_AGE_SECONDS = 38 * 24 * 3600
 SOCIAL_SOURCE_NAMES = {
+    "SRC_YOUTUBE": "youtube",
     "SRC_INSTAGRAM": "instagram",
     "SRC_TIKTOK": "tiktok",
     "SRC_X": "x",
@@ -192,31 +193,36 @@ def build_inbound_snapshots(
             social_rows = [
                 row for row in social_population_rows if row.country_id == country_id
             ]
-            current_total = (
-                sum(row.visitor_count or 0 for row in current_rows) if current_rows else None
+            current_total = _sum_optional([row.visitor_count for row in current_rows])
+            previous_total = _sum_optional([row.visitor_count for row in previous_rows])
+            arriving_flights = _sum_optional(
+                [row.arriving_flights for row in current_flights]
             )
-            previous_total = (
-                sum(row.visitor_count or 0 for row in previous_rows) if previous_rows else None
+            previous_arriving_flights = _sum_optional(
+                [row.arriving_flights for row in previous_flights]
             )
-            arriving_flights = (
-                sum(row.arriving_flights or 0 for row in current_flights)
-                if current_flights
-                else None
+            available_month_count = len(
+                {
+                    _month_ordinal(row.period_start)
+                    for row in current_rows
+                    if row.visitor_count is not None
+                }
             )
-            previous_arriving_flights = (
-                sum(row.arriving_flights or 0 for row in previous_flights)
-                if previous_flights
-                else None
+            completeness = available_month_count / month_count
+            availability = (
+                Availability.AVAILABLE
+                if completeness == 1
+                else Availability.PARTIAL
+                if completeness > 0
+                else Availability.UNAVAILABLE
             )
-            completeness = (
-                len({_month_ordinal(row.period_start) for row in current_rows}) / month_count
-            )
-            availability = Availability.AVAILABLE if completeness == 1 else Availability.PARTIAL
             reason = None
             quality_flags: tuple[str, ...] = ()
             if completeness < 1:
                 reason = (
-                    f"요청 {month_count}개월 중 {len(current_rows)}개월의 공식 통계만 있습니다."
+                    f"요청 {month_count}개월 중 "
+                    f"{available_month_count}개월의 "
+                    "공식 통계만 있습니다."
                 )
                 quality_flags = ("incomplete_period",)
             input_rows = [
