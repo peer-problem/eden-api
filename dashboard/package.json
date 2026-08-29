@@ -1,0 +1,38 @@
+{
+  "name": "eden-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "npm run check:openapi && npm run generate:types && tsc -b && vite build && npm run check:bundle",
+    "generate:types": "uv run --project .. python scripts/export_openapi.py node_modules/.tmp/openapi.json && openapi-typescript node_modules/.tmp/openapi.json -o src/api/schema.ts",
+    "check:openapi": "uv run --project .. python ../scripts/check_openapi_drift.py",
+    "check:types": "npm run check:openapi && npm run generate:types && tsc -b --pretty false",
+    "check:bundle": "node scripts/check_bundle.mjs",
+    "test": "vitest run",
+    "test:browser": "playwright test",
+    "check": "npm run check:types && npm run test && npm run build"
+  },
+  "dependencies": {
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@playwright/test": "latest",
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@testing-library/user-event": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "axe-core": "latest",
+    "jsdom": "latest",
+    "openapi-typescript": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vitest": "latest"
+  }
+}
