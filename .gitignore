@@ -1,8 +1,13 @@
-.agent/
+.agents/
 AGENTS.md
 .env
 .DS_Store
 .venv/
+.playwright-cli/
+node_modules/
+playwright-report/
+test-results/
+dashboard/src/api/schema.ts
 __pycache__/
 *.py[cod]
 .ruff_cache/
