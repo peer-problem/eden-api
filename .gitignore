@@ -16,3 +16,9 @@ build/
 *.egg-info/
 tmp/
 releases/
+
+/AGENTS.md
+/.env
+/.agents/
+/HANDOFF.md
+/.ops/

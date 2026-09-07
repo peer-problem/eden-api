@@ -266,8 +266,11 @@ def test_sync_env_allowlist_contains_db_security_keys_without_printing_values() 
     assert "chown root:eden /opt/eden/shared/.env" in source
     assert "INGESTION_DB_USER" in allowlist
     assert "INGESTION_DB_PASSWORD" in allowlist
-    assert "MIGRATION_DB_USER" not in allowlist
-    assert "MIGRATION_DB_PASSWORD" not in allowlist
+    assert "updates.pop(key)" in source
+    assert 'migration_path = target.parent / "migration.env"' in source
+    assert "os.chown(temporary, 0, 0)" in source
+    assert "MIGRATION_DB_USER" in allowlist
+    assert "MIGRATION_DB_PASSWORD" in allowlist
     assert "BACKUP_ENCRYPTION_KEY" not in source
     assert "BACKUP_DIR" not in source
     assert "if key in forbidden" in source

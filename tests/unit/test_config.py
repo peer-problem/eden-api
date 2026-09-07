@@ -121,3 +121,17 @@ def test_production_scheduler_requires_explicit_snapshot_retention_enablement() 
 
     settings = _settings(**production, SNAPSHOT_RETENTION_ENABLED=True)
     assert settings.SNAPSHOT_RETENTION_ENABLED is True
+
+
+def test_development_ssh_forwarding_requires_loopback_and_verified_tls() -> None:
+    values = {"DB_HOST": "127.0.0.1", "DB_PORT": 13306, "DB_SSL_CA": Path("ca.pem")}
+    with pytest.raises(ValidationError, match="Local databases are forbidden"):
+        _settings(**values)
+    assert _settings(**values, DB_SSH_TUNNEL=True).DB_SSH_TUNNEL
+    for override in (
+        {"DB_HOST": "remote.example.test"},
+        {"DB_SSL_CA": None},
+        {"DB_SSL_VERIFY_CERT": False},
+    ):
+        with pytest.raises(ValidationError, match="requires loopback and verified TLS"):
+            _settings(**{**values, **override}, DB_SSH_TUNNEL=True)

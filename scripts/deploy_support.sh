@@ -94,20 +94,51 @@ verify_ssh_host_key() {
   chmod 600 "$pinned_hosts" "$raw_hosts"
 }
 
+# Parse dotenv as data. NUL delimiters preserve spaces, quotes and multiline values.
+load_dotenv_file() {
+  local env_path="$1" values_file key value
+  values_file="$(mktemp)"
+  chmod 600 "$values_file"
+  if ! uv run --frozen --no-sync python - "$env_path" >"$values_file" <<'PYENV'
+import re
+import sys
+from pathlib import Path
+from dotenv import dotenv_values
+if not Path(sys.argv[1]).is_file():
+    raise SystemExit("Missing dotenv file")
+for key, value in dotenv_values(sys.argv[1]).items():
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        raise SystemExit("Invalid dotenv key")
+    if value is not None:
+        if "\0" in value:
+            raise SystemExit("NUL bytes are not supported in environment values")
+        sys.stdout.buffer.write(key.encode() + b"\0" + value.encode() + b"\0")
+PYENV
+  then
+    rm -f "$values_file"
+    return 1
+  fi
+  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done <"$values_file"
+  rm -f "$values_file"
+}
+
 load_runtime_environment() {
   if [[ -f /opt/eden/shared/.env ]]; then
     set -a
-    source /opt/eden/shared/.env
+    load_dotenv_file /opt/eden/shared/.env
     set +a
     if [[ -e /opt/eden/shared/migration.env || -L /opt/eden/shared/migration.env ]]; then
       validate_migration_environment /opt/eden/shared/migration.env
       set -a
-      source /opt/eden/shared/migration.env
+      load_dotenv_file /opt/eden/shared/migration.env
       set +a
     fi
   elif [[ -f .env ]]; then
     set -a
-    source .env
+    load_dotenv_file .env
     set +a
   fi
   unexport_sensitive_environment

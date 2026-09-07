@@ -24,7 +24,12 @@ uv sync
 ```
 
 `.ops/run.sh`는 `.env`의 원격 MariaDB 설정을 사용하고 scheduler를 끈 상태로 API를
-실행합니다. 로컬 MariaDB 연결은 거부합니다.
+실행합니다. 로컬 MariaDB 연결은 거부합니다. 루트 `.env`의
+`DEV_DB_CONNECTION=ssh-tunnel`과 `DEV_DB_SSL_CA`로 운영 DB까지 SSH 연결하고
+인증서도 검증합니다. 운영용 `DB_HOST`, `DB_PORT`, `DB_SSL_CA`는 보존합니다.
+터널은 명령이 실행되는 동안 유지되며 연결이 끊기면 해당 명령도 종료됩니다.
+`.ops/run.sh check`는 실행 환경을 확인하고 `db-check`는 읽기 전용 DB 조회를 합니다.
+`.ops/run.sh exec COMMAND`는 같은 개발 설정으로 DB 도구를 실행합니다.
 
 대시보드 개발 서버는 별도로 실행합니다.
 
@@ -107,13 +112,14 @@ uv run python scripts/phase2_pilot.py report --output /opt/eden/phase2-evidence/
 contract 전환과 7일 soak 검사는 deploy 스크립트의 하위 명령입니다.
 공통 함수와 VPS 배포 본문은 각각 `scripts/deploy_support.sh`와
 `scripts/deploy_remote.sh`에 분리되어 있습니다.
-`sync-env.sh`는 migration credentials를 의도적으로 전송하지 않습니다. 운영자는
-`MIGRATION_DB_USER`와 `MIGRATION_DB_PASSWORD`를 원격의
-`/opt/eden/shared/migration.env`에 별도로 준비해야 합니다. 이 파일의 소유자는
-`root:root`, mode는 `600`이어야 합니다.
+`sync-env.sh`는 루트 `.env`에서 배포 설정을 생성합니다. migration credentials는
+API 설정에서 제외하고 `/opt/eden/shared/migration.env`에 별도로 생성합니다.
+이 파일의 소유자는 `root:root`, mode는 `600`입니다. 생성된 운영 env 파일은 직접
+편집하지 않습니다. `sync-env.sh --check`는 전송 없이 값 보존을 검사합니다.
 
 ```bash
 ./.ops/sync-env.sh
+./.ops/deploy.sh preflight
 ./.ops/deploy.sh deploy
 ./.ops/deploy.sh finalize-phase1-contract
 ./.ops/deploy.sh soak-7d
@@ -133,3 +139,7 @@ test가 실패하면 이전 API release와 대시보드 symlink를 복구합니�
 `/opt/eden/phase2-evidence/soak.jsonl`에 5분마다 기록합니다. 7일 soak와 실제 파일럿
 28일 증거는 배포 직후 생성할 수 없으므로 운영 기간이 지난 뒤 gate 결과를 확인해야
 합니다.
+
+`.ops/`는 Git에서 제외하는 기기별 실행 파일입니다. Mac과 Tommy 각각의 런타임
+경로를 사용합니다. 루트 `AGENTS.md`, `.env`, `.agents/`는 Tommy 통합 전송으로
+동기화하고 `.ops/`는 전송하지 않습니다.

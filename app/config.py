@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     DB_POOL_RECYCLE_SECONDS: int = 900
     DB_SSL_CA: Path | None = None
     DB_SSL_VERIFY_CERT: bool = True
+    DB_SSH_TUNNEL: bool = False
 
     SOURCE_HTTP_TIMEOUT_SECONDS: float = 20.0
     SOURCE_MAX_RESPONSE_BYTES: int = 10 * 1024 * 1024
@@ -109,6 +110,10 @@ class Settings(BaseSettings):
         is_local = host in LOCAL_HOSTS
         with suppress(ValueError):
             is_local = is_local or ipaddress.ip_address(host).is_loopback
+        if self.DB_SSH_TUNNEL:
+            if not is_local or self.DB_SSL_CA is None or not self.DB_SSL_VERIFY_CERT:
+                raise ValueError("Development SSH forwarding requires loopback and verified TLS")
+            return self
         if is_local:
             raise ValueError(
                 "Local databases are forbidden. Development and tests must use the shared "

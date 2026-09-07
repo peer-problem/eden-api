@@ -189,14 +189,14 @@ uv sync --frozen --no-dev
   exit 1
 }
 set -a
-source /opt/eden/shared/.env
+load_dotenv_file /opt/eden/shared/.env
 set +a
 validate_migration_environment /opt/eden/shared/migration.env
 set -a
-source /opt/eden/shared/migration.env
+load_dotenv_file /opt/eden/shared/migration.env
 set +a
 unexport_sensitive_environment
-grep -Eq '^SNAPSHOT_RETENTION_ENABLED=true$' /opt/eden/shared/.env || {
+is_true "${SNAPSHOT_RETENTION_ENABLED:-false}" || {
   echo "Runtime environment must set SNAPSHOT_RETENTION_ENABLED=true before Settings validation." >&2
   exit 1
 }
