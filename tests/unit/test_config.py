@@ -1,4 +1,3 @@
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -32,32 +31,18 @@ def test_phase_one_bounds_dead_letter_and_provenance_batches() -> None:
         _settings(SNAPSHOT_PROVENANCE_BATCH_SIZE=501)
 
 
-def test_database_engine_uses_verified_tls_when_ca_is_configured() -> None:
-    settings = _settings(
-        DB_SSL_CA=Path("/etc/eden/mariadb-ca.pem"),
-        DB_POOL_RECYCLE_SECONDS=600,
-    )
+def test_database_engine_requires_verified_tls_without_pem_settings() -> None:
+    settings = _settings(DB_POOL_RECYCLE_SECONDS=600)
     engine = Mock()
-
     with patch("app.repositories.database.create_engine", return_value=engine) as create:
         assert create_database_engine(settings) is engine
-
-    _, kwargs = create.call_args
+    assert create.call_args.args[0].startswith("mysql+mariadbconnector://")
+    kwargs = create.call_args.kwargs
     assert kwargs["pool_pre_ping"] is True
     assert kwargs["pool_recycle"] == 600
-    assert kwargs["connect_args"]["ssl"] == {
-        "ca": "/etc/eden/mariadb-ca.pem",
-        "check_hostname": True,
+    assert kwargs["connect_args"] == {
+        "connect_timeout": 5, "ssl": True, "ssl_verify_cert": True,
     }
-
-
-def test_database_engine_does_not_claim_tls_without_a_ca() -> None:
-    settings = _settings()
-
-    with patch("app.repositories.database.create_engine", return_value=Mock()) as create:
-        create_database_engine(settings)
-
-    assert "ssl" not in create.call_args.kwargs["connect_args"]
 
 
 def test_scheduler_uses_a_separate_bounded_database_pool() -> None:
@@ -82,25 +67,22 @@ def test_scheduler_uses_a_separate_bounded_database_pool() -> None:
 
 def test_production_requires_verified_tls_and_distinct_ingestion_role() -> None:
     with pytest.raises(ValidationError, match="verified TLS"):
-        _settings(ENVIRONMENT="production")
+        _settings(ENVIRONMENT="production", DB_PASSWORD="")
 
     with pytest.raises(ValidationError, match="separate ingestion"):
         _settings(
             ENVIRONMENT="production",
-            DB_SSL_CA=Path("/etc/eden/mariadb-ca.pem"),
         )
 
     with pytest.raises(ValidationError, match="must be different"):
         _settings(
             ENVIRONMENT="production",
-            DB_SSL_CA=Path("/etc/eden/mariadb-ca.pem"),
             INGESTION_DB_USER="eden",
             INGESTION_DB_PASSWORD="writer-secret",  # noqa: S106 - isolated unit settings
         )
 
     settings = _settings(
         ENVIRONMENT="production",
-        DB_SSL_CA=Path("/etc/eden/mariadb-ca.pem"),
         INGESTION_DB_USER="eden_ingestion",
         INGESTION_DB_PASSWORD="writer-secret",  # noqa: S106 - isolated unit settings
     )
@@ -111,7 +93,6 @@ def test_production_scheduler_requires_explicit_snapshot_retention_enablement() 
     production = {
         "ENVIRONMENT": "production",
         "SCHEDULER_ENABLED": True,
-        "DB_SSL_CA": Path("/etc/eden/mariadb-ca.pem"),
         "INGESTION_DB_USER": "eden_ingestion",
         "INGESTION_DB_PASSWORD": "writer-secret",  # noqa: S106 - isolated unit settings
     }
@@ -123,15 +104,13 @@ def test_production_scheduler_requires_explicit_snapshot_retention_enablement() 
     assert settings.SNAPSHOT_RETENTION_ENABLED is True
 
 
-def test_development_ssh_forwarding_requires_loopback_and_verified_tls() -> None:
-    values = {"DB_HOST": "127.0.0.1", "DB_PORT": 13306, "DB_SSL_CA": Path("ca.pem")}
+def test_development_ssh_forwarding_requires_loopback_and_keeps_tls() -> None:
+    values = {"DB_HOST": "127.0.0.1", "DB_PORT": 13306}
     with pytest.raises(ValidationError, match="Local databases are forbidden"):
         _settings(**values)
     assert _settings(**values, DB_SSH_TUNNEL=True).DB_SSH_TUNNEL
-    for override in (
-        {"DB_HOST": "remote.example.test"},
-        {"DB_SSL_CA": None},
-        {"DB_SSL_VERIFY_CERT": False},
-    ):
-        with pytest.raises(ValidationError, match="requires loopback and verified TLS"):
-            _settings(**{**values, **override}, DB_SSH_TUNNEL=True)
+    with pytest.raises(ValidationError, match="requires a loopback endpoint"):
+        _settings(DB_HOST="remote.example.test", DB_SSH_TUNNEL=True)
+    with patch("app.repositories.database.create_engine", return_value=Mock()) as create:
+        create_database_engine(_settings(**values, DB_SSH_TUNNEL=True))
+    assert create.call_args.kwargs["connect_args"]["ssl_verify_cert"] is True

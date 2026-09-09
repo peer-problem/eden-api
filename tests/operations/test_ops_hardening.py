@@ -15,11 +15,10 @@ DEPLOY = "\n".join(
     )
 )
 RUN = (REPOSITORY_ROOT / ".ops" / "run.sh").read_text(encoding="utf-8")
-SYNC = (REPOSITORY_ROOT / ".ops" / "sync-env.sh").read_text(encoding="utf-8")
 
 
 def test_ssh_pinning_requires_the_exact_advertised_key_set() -> None:
-    for source in (DEPLOY, SYNC):
+    for source in (DEPLOY,):
         assert "sort -u" in source
         assert '"$actual_fingerprints" == "$expected_fingerprints"' in source
         assert "advertised keys do not exactly match the pin" in source
@@ -67,12 +66,12 @@ def test_rollback_covers_phase2_units_and_verifies_readiness() -> None:
 
 
 def test_runtime_helpers_do_not_export_migration_or_vps_secrets() -> None:
-    for source in (DEPLOY, SYNC):
+    for source in (DEPLOY,):
         assert 'export -n "$key"' in source or 'export -n "$secret_key"' in source
         assert "MIGRATION_DB_PASSWORD" in source
         assert "VPS_PASSWORD" in source
         assert "BACKUP_ENCRYPTION_KEY" not in source
-    assert "unexport_sensitive_environment" in SYNC
+    assert "unexport_sensitive_environment" in DEPLOY
 
 
 def test_release_parent_remains_traversable_by_the_runtime_user() -> None:
@@ -103,7 +102,11 @@ def test_development_launcher_removes_deployment_credentials() -> None:
     code = (
         "import os; assert not any(k.startswith(('VPS_', 'MIGRATION_', 'DEVELOPER_')) "
         "or k == 'SSHPASS' for k in os.environ); "
-        "assert os.environ['SCHEDULER_ENABLED'] == 'false'"
+        "assert os.environ['SCHEDULER_ENABLED'] == 'false'; "
+        "from dotenv import dotenv_values; v = dotenv_values('.env'); "
+        "assert os.environ['DB_USER'] == v['DEVELOPER_DB_USER']; "
+        "assert os.environ['DB_PASSWORD'] == v['DEVELOPER_DB_PASSWORD']; "
+        "assert os.environ['DB_NAME'] == v['DB_NAME']"
     )
     result = subprocess.run(  # noqa: S603
         ["/bin/bash", str(REPOSITORY_ROOT / ".ops/run.sh"), "exec", sys.executable, "-c", code],

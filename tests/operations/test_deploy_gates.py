@@ -20,7 +20,6 @@ def test_operations_shell_scripts_have_valid_syntax() -> None:
     for script in (
         OPS_SCRIPT,
         REPOSITORY_ROOT / ".ops" / "run.sh",
-        REPOSITORY_ROOT / ".ops" / "sync-env.sh",
         DEPLOY_SUPPORT_SCRIPT,
         DEPLOY_REMOTE_SCRIPT,
     ):
@@ -169,11 +168,10 @@ def test_internal_sprint_documents_are_ignored_and_excluded_from_release() -> No
     assert "--exclude '.agents/'" in deploy_source
 
 
-def test_operations_directory_contains_only_the_three_authorized_entrypoints() -> None:
+def test_operations_directory_contains_only_the_two_authorized_entrypoints() -> None:
     assert sorted(path.name for path in (REPOSITORY_ROOT / ".ops").iterdir()) == [
         "deploy.sh",
         "run.sh",
-        "sync-env.sh",
     ]
 
 
@@ -188,7 +186,7 @@ def test_deploy_has_dedicated_user_and_security_boundaries() -> None:
     assert "Group=eden" in source
     assert "NoNewPrivileges=true" in source
     assert "ProtectSystem=strict" in source
-    assert "DB_SSL_CA" in source
+    assert "--ssl --ssl-verify-server-cert" in source
     assert "ssl-verify-server-cert" in source
     assert "DB_NETWORK_MODE" in source
     assert "DB_ALLOWED_CIDRS" in source
@@ -250,33 +248,18 @@ def test_deploy_uses_fingerprint_pinned_ssh_and_excludes_runtime_secrets() -> No
     assert "--exclude '.pytest_cache/'" in source
 
 
-def test_sync_env_allowlist_contains_db_security_keys_without_printing_values() -> None:
-    source = (REPOSITORY_ROOT / ".ops" / "sync-env.sh").read_text(encoding="utf-8")
-    allowlist = source.split("allowed=(", 1)[1].split(")", 1)[0]
-
-    assert "DB_SSL_CA" in source
-    assert "DB_SSL_VERIFY_CERT" in source
-    assert "DB_NETWORK_MODE" in source
-    assert "DB_ALLOWED_CIDRS" in source
-    assert "DB_PASSWORD" in source
-    assert "cut -d= -f1" in source
-    assert "StrictHostKeyChecking=yes" in source
-    assert "StrictHostKeyChecking=accept-new" not in source
-    assert "chmod 640 /opt/eden/shared/.env" in source
-    assert "chown root:eden /opt/eden/shared/.env" in source
-    assert "INGESTION_DB_USER" in allowlist
-    assert "INGESTION_DB_PASSWORD" in allowlist
-    assert "updates.pop(key)" in source
-    assert 'migration_path = target.parent / "migration.env"' in source
-    assert "os.chown(temporary, 0, 0)" in source
-    assert "MIGRATION_DB_USER" in allowlist
-    assert "MIGRATION_DB_PASSWORD" in allowlist
-    assert "BACKUP_ENCRYPTION_KEY" not in source
-    assert "BACKUP_DIR" not in source
-    assert "if key in forbidden" in source
-    assert "groupadd --system eden" in source
-    assert "install -d -o root -g eden -m 750 /opt/eden/shared" in source
-    assert "target.read_text().splitlines() if target.is_file() else []" in source
+def test_deploy_generates_environment_and_rolls_it_back_with_the_release() -> None:
+    source = _deploy_source()
+    assert "scripts/deployment_env.py .env" in source
+    assert '"$generated_env/runtime.env" "$generated_env/migration.env"' in source
+    assert "install -o root -g root -m 600" in source
+    assert "install -o root -g eden -m 640" in source
+    for path, name in ((".env", "runtime_env"), ("migration.env", "migration_env")):
+        assert f"snapshot_path /opt/eden/shared/{path} {name}" in source
+        assert f"restore_snapshot /opt/eden/shared/{path} {name}" in source
+    assert source.index("snapshot_path /opt/eden/shared/.env") < source.index(
+        'install -o root -g eden -m 640 "$release/runtime.env"'
+    )
 
 
 def test_deploy_builds_and_installs_the_dashboard_artifact() -> None:

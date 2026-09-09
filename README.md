@@ -16,7 +16,9 @@ EDEN은 한국 관광과 방한시장 데이터를 MariaDB에 수집하고 정�
 
 ## 로컬 실행
 
-Python 환경과 API를 준비합니다.
+Python 3.12와 MariaDB Connector/C 3.4 이상을 준비합니다. Mac은
+`brew install mariadb-connector-c`, Ubuntu 26.04는 `apt install libmariadb-dev build-essential`로
+네이티브 커넥터의 빌드 의존성을 설치합니다. 이 패키지는 DB 서버를 설치하지 않습니다.
 
 ```bash
 uv sync
@@ -24,12 +26,13 @@ uv sync
 ```
 
 `.ops/run.sh`는 `.env`의 원격 MariaDB 설정을 사용하고 scheduler를 끈 상태로 API를
-실행합니다. 로컬 MariaDB 연결은 거부합니다. 루트 `.env`의
-`DEV_DB_CONNECTION=ssh-tunnel`과 `DEV_DB_SSL_CA`로 운영 DB까지 SSH 연결하고
-인증서도 검증합니다. 운영용 `DB_HOST`, `DB_PORT`, `DB_SSL_CA`는 보존합니다.
+실행합니다. 로컬 MariaDB 연결은 거부합니다. SSH 터널을 통해 운영 DB에 접속하고
+MariaDB의 Zero-Configuration TLS로 서버를 검증합니다. 운영용 `DB_HOST`, `DB_PORT`는
+보존하며 별도 연결 방식 스위치를 두지 않습니다.
 터널은 명령이 실행되는 동안 유지되며 연결이 끊기면 해당 명령도 종료됩니다.
 `.ops/run.sh check`는 실행 환경을 확인하고 `db-check`는 읽기 전용 DB 조회를 합니다.
-`.ops/run.sh exec COMMAND`는 같은 개발 설정으로 DB 도구를 실행합니다.
+`.ops/run.sh exec COMMAND`는 같은 개발 계정으로 DB 도구를 실행합니다.
+`.ops/run.sh migrate current`는 마이그레이션 계정으로 현재 버전을 조회합니다.
 
 대시보드 개발 서버는 별도로 실행합니다.
 
@@ -41,13 +44,24 @@ npm run dev
 
 ## 환경과 DB 보안
 
-`.env`에는 다음 역할별 접속 정보를 둡니다.
+원격 MariaDB는 하나이며 모든 역할이 루트 `.env`의 `DB_HOST`, `DB_PORT`, `DB_NAME`을
+공통으로 사용합니다. 개발 전용 DB나 마이그레이션 전용 DB는 만들지 않습니다.
+SSH 터널의 loopback 주소는 이 원격 DB로 전달하는 임시 접속 경로입니다.
+
+`.env`에는 같은 DB에 접속하는 다음 역할별 계정을 둡니다.
 
 - `DB_USER`, `DB_PASSWORD`: 공개 API 읽기 전용 계정
+- `DEVELOPER_DB_USER`, `DEVELOPER_DB_PASSWORD`: 개발 실행과 도구의 데이터 읽기 및 수정 계정
 - `INGESTION_DB_USER`, `INGESTION_DB_PASSWORD`: scheduler와 파일럿 집계 쓰기 계정
 - `MIGRATION_DB_USER`, `MIGRATION_DB_PASSWORD`: 배포 중 schema 변경 전용 계정
 
-production에서는 `DB_SSL_CA`와 `DB_SSL_VERIFY_CERT=true`가 필수입니다. 세 계정 이름은
+PEM 파일이나 인증서 본문을 환경변수로 보관하지 않습니다. MariaDB 11.4 이상과
+Connector/C 3.4 이상의 Zero-Configuration TLS를 사용하며 암호화와 서버 검증은 코드에서
+항상 활성화합니다. 서버 인증서와 DB 비밀번호를 함께 검증하므로 비어 있지 않은
+DB 비밀번호가 필요합니다. `VPS_PASSWORD`는 SSH 인증용이며 API 프로세스에는 전달하지
+않습니다. [MariaDB 공식 설명](https://mariadb.com/docs/server/security/encryption/data-in-transit-encryption/zero-configuration-ssl)
+
+API와 ingestion 및 migration 계정 이름은
 서로 달라야 합니다. `DB_NETWORK_MODE`는 승인된 CIDR allowlist 또는 SSH tunnel 중
 하나를 사용합니다. 공개 배포의 `ENVIRONMENT`는 반드시 `production`이어야 합니다.
 `SCHEDULER_ENABLED=true`인 production은 `SNAPSHOT_RETENTION_ENABLED=true`도 요구합니다.
@@ -80,11 +94,12 @@ npm run test:browser
 `migrations/`는 Alembic이 관리합니다. 배포는 별도 DB backup 없이 expand migration을
 적용합니다. snapshot contract 변경은 soak 증거가 통과한 뒤 별도 gate로 적용합니다.
 
-수동 점검이 필요한 경우에도 migration 계정을 명시적으로 선택합니다.
+수동 점검도 동일한 원격 DB와 TLS 설정을 사용합니다. `migrate` 명령이 루트 `.env`의
+마이그레이션 계정을 선택합니다. `current`는 조회만 하며 스키마를 변경하지 않습니다.
 
 ```bash
-uv run alembic heads
-uv run alembic current
+.ops/run.sh migrate heads
+.ops/run.sh migrate current
 ```
 
 ## 파일럿 계측
@@ -96,11 +111,11 @@ uv run alembic current
 파일럿 시작과 운영 이벤트를 기록하고 28일 보고서를 생성할 수 있습니다.
 
 ```bash
-uv run python scripts/phase2_pilot.py start customer-agreed-id
-uv run python scripts/phase2_pilot.py correction customer-agreed-id --note "approved correction"
-uv run python scripts/phase2_pilot.py incident customer-agreed-id --note "service incident"
-uv run python scripts/phase2_pilot.py recovered customer-agreed-id
-uv run python scripts/phase2_pilot.py report --output /opt/eden/phase2-evidence/pilot-report.json
+.ops/run.sh exec python scripts/phase2_pilot.py start customer-agreed-id
+.ops/run.sh exec python scripts/phase2_pilot.py correction customer-agreed-id --note "approved correction"
+.ops/run.sh exec python scripts/phase2_pilot.py incident customer-agreed-id --note "service incident"
+.ops/run.sh exec python scripts/phase2_pilot.py recovered customer-agreed-id
+.ops/run.sh exec python scripts/phase2_pilot.py report --output /opt/eden/phase2-evidence/pilot-report.json
 ```
 
 보고서는 고정된 핵심 5개 endpoint 모두의 반복 사용을 검사합니다. 수작업 보정이 한
@@ -108,17 +123,19 @@ uv run python scripts/phase2_pilot.py report --output /opt/eden/phase2-evidence/
 
 ## 운영과 배포
 
-운영 파일은 `.ops/deploy.sh`, `.ops/run.sh`, `.ops/sync-env.sh` 세 개만 사용합니다.
+운영 파일은 `.ops/deploy.sh`, `.ops/run.sh` 두 개만 사용합니다.
 contract 전환과 7일 soak 검사는 deploy 스크립트의 하위 명령입니다.
 공통 함수와 VPS 배포 본문은 각각 `scripts/deploy_support.sh`와
 `scripts/deploy_remote.sh`에 분리되어 있습니다.
-`sync-env.sh`는 루트 `.env`에서 배포 설정을 생성합니다. migration credentials는
+`deploy.sh`는 루트 `.env`에서 배포 설정을 생성하고 코드와 함께 적용합니다. migration credentials는
 API 설정에서 제외하고 `/opt/eden/shared/migration.env`에 별도로 생성합니다.
 이 파일의 소유자는 `root:root`, mode는 `600`입니다. 생성된 운영 env 파일은 직접
-편집하지 않습니다. `sync-env.sh --check`는 전송 없이 값 보존을 검사합니다.
+편집하지 않습니다. `deploy.sh env-check`는 전송 없이 값 보존을 검사합니다.
+API와 MariaDB CLI 모두 PEM 없이 TLS 서버 검증을 수행합니다.
+배포 실패 시 이전 운영 설정도 함께 복구합니다.
 
 ```bash
-./.ops/sync-env.sh
+./.ops/deploy.sh env-check
 ./.ops/deploy.sh preflight
 ./.ops/deploy.sh deploy
 ./.ops/deploy.sh finalize-phase1-contract

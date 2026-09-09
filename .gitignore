@@ -22,3 +22,30 @@ releases/
 /.agents/
 /HANDOFF.md
 /.ops/
+
+# Local and generated environment settings
+.env.*
+*.env
+*.env.*
+.envrc
+
+# Private keys and credential stores
+*.pem
+*.key
+*.p12
+*.pfx
+*.ppk
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+.ssh/
+.netrc
+.my.cnf
+.mylogin.cnf
+.npmrc
+.pypirc
+
+# Runtime logs may contain request or database details
+*.log
+logs/

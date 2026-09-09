@@ -96,17 +96,17 @@ verify_ssh_host_key() {
 
 # Parse dotenv as data. NUL delimiters preserve spaces, quotes and multiline values.
 load_dotenv_file() {
-  local env_path="$1" values_file key value
+  local env_path="$1" interpolate="${2:-true}" values_file key value
   values_file="$(mktemp)"
   chmod 600 "$values_file"
-  if ! uv run --frozen --no-sync python - "$env_path" >"$values_file" <<'PYENV'
+  if ! uv run --frozen --no-sync python - "$env_path" "$interpolate" >"$values_file" <<'PYENV'
 import re
 import sys
 from pathlib import Path
 from dotenv import dotenv_values
 if not Path(sys.argv[1]).is_file():
     raise SystemExit("Missing dotenv file")
-for key, value in dotenv_values(sys.argv[1]).items():
+for key, value in dotenv_values(sys.argv[1], interpolate=sys.argv[2] == "true").items():
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
         raise SystemExit("Invalid dotenv key")
     if value is not None:
@@ -128,12 +128,12 @@ PYENV
 load_runtime_environment() {
   if [[ -f /opt/eden/shared/.env ]]; then
     set -a
-    load_dotenv_file /opt/eden/shared/.env
+    load_dotenv_file /opt/eden/shared/.env false
     set +a
     if [[ -e /opt/eden/shared/migration.env || -L /opt/eden/shared/migration.env ]]; then
       validate_migration_environment /opt/eden/shared/migration.env
       set -a
-      load_dotenv_file /opt/eden/shared/migration.env
+      load_dotenv_file /opt/eden/shared/migration.env false
       set +a
     fi
   elif [[ -f .env ]]; then

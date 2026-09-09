@@ -29,6 +29,17 @@ def create_scheduler_database_engine(settings: Settings) -> Engine:
     )
 
 
+def database_connect_args(settings: Settings) -> dict[str, object]:
+    """Use the same timeout and verified TLS settings for runtime and migrations."""
+    # Connector/C 3.4+ verifies MariaDB 11.4+ using the password and TLS peer
+    # certificate together. No CA file, fingerprint or verification opt-out.
+    return {
+        "connect_timeout": settings.DB_CONNECT_TIMEOUT_SECONDS,
+        "ssl": True,
+        "ssl_verify_cert": True,
+    }
+
+
 def _create_database_engine(
     settings: Settings,
     *,
@@ -36,19 +47,13 @@ def _create_database_engine(
     pool_size: int,
     max_overflow: int,
 ) -> Engine:
-    connect_args: dict[str, object] = {"connect_timeout": settings.DB_CONNECT_TIMEOUT_SECONDS}
-    if settings.DB_SSL_CA is not None:
-        connect_args["ssl"] = {
-            "ca": str(settings.DB_SSL_CA),
-            "check_hostname": settings.DB_SSL_VERIFY_CERT,
-        }
     engine = create_engine(
         database_url,
         pool_pre_ping=True,
         pool_recycle=settings.DB_POOL_RECYCLE_SECONDS,
         pool_size=pool_size,
         max_overflow=max_overflow,
-        connect_args=connect_args,
+        connect_args=database_connect_args(settings),
     )
     instrument_database_engine(engine)
     return engine
