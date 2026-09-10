@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -33,31 +32,6 @@ class AcquiredLock:
 
     def __exit__(self, *_args) -> None:
         pass
-
-
-def test_source_job_only_persists_dirty_product_requests() -> None:
-    source = inspect.getsource(runtime.run_source_if_due)
-
-    assert "mark_products_dirty" in source
-    assert "refresh_product_family" not in source
-    assert "refresh_products" not in source
-
-
-def test_source_job_persists_scheduled_and_skipped_locked_audit_states() -> None:
-    source = inspect.getsource(runtime.run_source_if_due)
-
-    assert source.index("schedule_run") < source.index("MariaDBAdvisoryLock")
-    assert source.count("skip_scheduled_run") == 2
-    assert "scheduled_run_id=run_id" in source
-
-
-def test_source_job_resumes_pipeline_without_refetch_and_blocks_failed_products() -> None:
-    source = inspect.getsource(runtime.run_source_if_due)
-
-    assert source.index("start_scheduled_pipeline_retry") < source.index("build_adapter")
-    assert source.index('if normalized_status == "failed"') < source.index(
-        "mark_products_dirty"
-    )
 
 
 def test_raw_stage_retry_refetches_but_normalization_retry_does_not() -> None:

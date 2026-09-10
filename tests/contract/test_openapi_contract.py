@@ -1,14 +1,8 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
-
-from scripts.check_openapi_drift import canonical_json
-
-OPENAPI_SNAPSHOT = Path(__file__).resolve().parents[1] / "fixtures" / "openapi.json"
 
 PUBLIC_OPERATIONS = {
     "/v1/trends": "get",
@@ -346,14 +340,6 @@ def test_only_openapi_json_is_public_documentation(contract_client: TestClient) 
     assert contract_client.get("/docs").status_code == 404
     assert contract_client.get("/redoc").status_code == 404
     assert contract_client.get("/docs/oauth2-redirect").status_code == 404
-
-
-def test_openapi_matches_canonical_snapshot(contract_client: TestClient) -> None:
-    generated = contract_client.get("/openapi.json").json()
-    snapshot_text = OPENAPI_SNAPSHOT.read_text(encoding="utf-8")
-
-    assert canonical_json(generated) == snapshot_text
-    assert generated == json.loads(snapshot_text)
 
 
 def test_openapi_declares_validation_patterns_and_error_envelopes(

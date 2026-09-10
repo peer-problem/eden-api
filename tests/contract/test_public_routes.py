@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -419,3 +420,20 @@ def test_unexpected_repository_failure_has_stable_safe_500_error(
     assert "secret" not in serialized
     assert "private-host" not in serialized
     assert "source-body" not in serialized
+
+
+def test_all_eight_route_calls_are_socket_free(
+    contract_client: TestClient,
+    fake_read_repository: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject_socket_connect(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("public API request attempted a socket connection")
+
+    monkeypatch.setattr(socket.socket, "connect", reject_socket_connect)
+
+    for method, path, kwargs, *_ in PUBLIC_REQUESTS:
+        response = contract_client.request(method, path, **kwargs)
+        assert response.status_code == 200, (method, path, response.text)
+
+    assert len(fake_read_repository.calls) == 8

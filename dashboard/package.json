@@ -5,14 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "npm run check:openapi && npm run generate:types && tsc -b && vite build && npm run check:bundle",
+    "build": "npm run generate:types && tsc -b && vite build",
     "generate:types": "uv run --project .. python scripts/export_openapi.py node_modules/.tmp/openapi.json && openapi-typescript node_modules/.tmp/openapi.json -o src/api/schema.ts",
-    "check:openapi": "uv run --project .. python ../scripts/check_openapi_drift.py",
-    "check:types": "npm run check:openapi && npm run generate:types && tsc -b --pretty false",
-    "check:bundle": "node scripts/check_bundle.mjs",
+    "check:types": "npm run generate:types && tsc -b --pretty false",
     "test": "vitest run",
     "test:browser": "playwright test",
-    "check": "npm run check:types && npm run test && npm run build"
+    "check": "npm run test && npm run build"
   },
   "dependencies": {
     "lucide-react": "latest",

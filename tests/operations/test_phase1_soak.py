@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import sys
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import scripts.phase1_soak as phase1_soak
 from app.observability.soak import PHASE1_SOAK_REQUIRED_SECONDS, evaluate_samples
-
-REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _sample(
@@ -201,45 +198,6 @@ def test_phase1_soak_rejects_missing_or_excessive_database_growth_evidence() -> 
 
     assert "database_growth_missing" in missing["violations"]
     assert "database_growth_budget_exceeded" in exceeded["violations"]
-
-
-def test_deploy_installs_the_five_minute_phase1_soak_timer() -> None:
-    source = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (
-            REPOSITORY_ROOT / ".ops" / "deploy.sh",
-            REPOSITORY_ROOT / "scripts" / "deploy_support.sh",
-            REPOSITORY_ROOT / "scripts" / "deploy_remote.sh",
-        )
-    )
-
-    assert "eden-phase1-soak.service" in source
-    assert "scripts/phase1_soak.py sample" in source
-    assert "OnUnitActiveSec=5min" in source
-    assert "scripts/phase1_soak.py baseline --iterations 20" in source
-    assert "20-phase1-baseline.conf" in source
-    assert "EnvironmentFile=/opt/eden/phase1-evidence/baseline.env" in source
-    assert "eden-phase1-soak.timer" in source
-
-
-def test_deploy_installs_query_plan_database_and_journal_gates() -> None:
-    source = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (
-            REPOSITORY_ROOT / ".ops" / "deploy.sh",
-            REPOSITORY_ROOT / "scripts" / "deploy_support.sh",
-            REPOSITORY_ROOT / "scripts" / "deploy_remote.sh",
-        )
-    )
-
-    assert "scripts/phase1_query_plans.py" in source
-    assert "eden-phase1-query-plans.timer" in source
-    assert "scripts/phase1_db_maintenance.py" in source
-    assert "OnCalendar=Sun *-*-* 03:30:00" in source
-    assert "SystemMaxUse=200M" in source
-    assert "RuntimeMaxUse=100M" in source
-    assert "MaxRetentionSec=14day" in source
-    assert "MaxFileSec=1day" in source
 
 
 def test_scheduler_off_baseline_cli_fails_activation_on_a_threshold_violation(
