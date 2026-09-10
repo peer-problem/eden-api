@@ -1,6 +1,6 @@
-.agents/
 AGENTS.md
 .env
+.agents/
 .DS_Store
 .venv/
 .playwright-cli/
@@ -11,14 +11,12 @@ dashboard/src/api/schema.ts
 __pycache__/
 *.py[cod]
 .ruff_cache/
+.pytest_cache/
 dist/
 build/
 *.egg-info/
 tmp/
 releases/
 
-/AGENTS.md
-/.env
-/.agents/
 /HANDOFF.md
 /.ops/
