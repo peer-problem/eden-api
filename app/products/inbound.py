@@ -21,21 +21,14 @@ from app.repositories.models import (
     TourismBalanceObservation,
 )
 from app.sources.kto_inbound import SOURCE_ID
+from app.sources.social import REQUESTABLE_SOCIAL_SOURCES
 
 PERIOD_MONTHS = {"3m": 3, "6m": 6, "12m": 12, "24m": 24}
 MAX_AGE_SECONDS = 38 * 24 * 3600
 SOCIAL_SOURCE_NAMES = {
-    "SRC_YOUTUBE": "youtube",
-    "SRC_INSTAGRAM": "instagram",
-    "SRC_TIKTOK": "tiktok",
-    "SRC_X": "x",
-    "SRC_REDDIT": "reddit",
-    "SRC_WEIBO": "weibo",
-    "SRC_DOUYIN": "douyin",
-    "SRC_XIAOHONGSHU": "xiaohongshu",
-    "SRC_LINE": "line",
-    "SRC_FACEBOOK": "facebook",
+    source_id: source_name for source_name, source_id in REQUESTABLE_SOCIAL_SOURCES.items()
 }
+COUNTRY_PROXY_FLAGS = frozenset({"query_market_proxy", "query_language_market_proxy"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,20 +177,12 @@ def build_inbound_snapshots(
             current_rows = _window(rows, end_ordinal, month_count)
             previous_rows = _window(rows, end_ordinal - month_count, month_count)
             current_flights = _window_flights(flight_rows, end_ordinal, month_count)
-            previous_flights = _window_flights(
-                flight_rows, end_ordinal - month_count, month_count
-            )
-            social_population_rows = _window_social(
-                all_social_rows, end_ordinal, month_count
-            )
-            social_rows = [
-                row for row in social_population_rows if row.country_id == country_id
-            ]
+            previous_flights = _window_flights(flight_rows, end_ordinal - month_count, month_count)
+            social_population_rows = _window_social(all_social_rows, end_ordinal, month_count)
+            social_rows = [row for row in social_population_rows if row.country_id == country_id]
             current_total = _sum_optional([row.visitor_count for row in current_rows])
             previous_total = _sum_optional([row.visitor_count for row in previous_rows])
-            arriving_flights = _sum_optional(
-                [row.arriving_flights for row in current_flights]
-            )
+            arriving_flights = _sum_optional([row.arriving_flights for row in current_flights])
             previous_arriving_flights = _sum_optional(
                 [row.arriving_flights for row in previous_flights]
             )
@@ -220,9 +205,7 @@ def build_inbound_snapshots(
             quality_flags: tuple[str, ...] = ()
             if completeness < 1:
                 reason = (
-                    f"요청 {month_count}개월 중 "
-                    f"{available_month_count}개월의 "
-                    "공식 통계만 있습니다."
+                    f"요청 {month_count}개월 중 {available_month_count}개월의 공식 통계만 있습니다."
                 )
                 quality_flags = ("incomplete_period",)
             input_rows = [
@@ -250,16 +233,10 @@ def build_inbound_snapshots(
                         ]
                     ],
                     "fx_observation": [
-                        row.observation_id
-                        for history in fx_history.values()
-                        for row in history
+                        row.observation_id for history in fx_history.values() for row in history
                     ],
-                    "tourism_balance_observation": (
-                        [balance.observation_id] if balance else []
-                    ),
-                    "social_observation": [
-                        row.observation_id for row in social_population_rows
-                    ],
+                    "tourism_balance_observation": ([balance.observation_id] if balance else []),
+                    "social_observation": [row.observation_id for row in social_population_rows],
                 },
             )
             visitor_population = _component_population(
@@ -303,6 +280,9 @@ def build_inbound_snapshots(
                 fx_component.value,
                 social_component,
             )
+            social_available = any(
+                item["availability"] == "available" for item in social_interest.values()
+            )
             source_availability = {
                 "visitors": {
                     "availability": availability.value,
@@ -326,11 +306,19 @@ def build_inbound_snapshots(
                 },
                 "tourism_balance": {
                     "availability": "available" if balance else "unavailable",
-                    "reason": None if balance else "관광수지 관측이 없습니다.",
+                    "reason": (
+                        "한국 전체 일반여행 수지이며 국가별 수지가 아닙니다."
+                        if balance
+                        else "관광수지 관측이 없습니다."
+                    ),
                 },
                 "social_interest": {
-                    "availability": "available" if social_interest else "unavailable",
-                    "reason": None if social_interest else "시장 SNS 관측이 없습니다.",
+                    "availability": "available" if social_available else "unavailable",
+                    "reason": (
+                        None
+                        if social_available
+                        else "실제 국가별 이용자 기준의 SNS 관측이 없습니다."
+                    ),
                 },
             }
             input_watermarks: dict[str, datetime] = {}
@@ -379,9 +367,11 @@ def build_inbound_snapshots(
                             else None
                         ),
                         "fx_by_currency": _fx_views(fx_history),
-                        "tourism_balance_usd": (
-                            balance.balance_usd if balance else None
+                        "tourism_balance_usd": (balance.balance_usd if balance else None),
+                        "tourism_balance_period": (
+                            balance.period_start.strftime("%Y-%m") if balance else None
                         ),
+                        "tourism_balance_scope": "KR_total" if balance else None,
                         "social_interest": social_interest or None,
                         "source_availability": source_availability,
                         "inbound_score": score.value,
@@ -458,27 +448,45 @@ def _social_interest(
     result: dict[str, dict[str, object]] = {}
     source_scores: list[float] = []
     for source_name, source_rows in sorted(grouped.items()):
+        country_rows = [row for row in source_rows if _is_country_social_signal(row)]
+        if not country_rows:
+            result[source_name] = {
+                "posts": None,
+                "views": None,
+                "reactions": None,
+                "score": None,
+                "availability": "unavailable",
+                "reason": (
+                    "YouTube 지역 필터는 재생 가능 지역이며 시청자 거주 국가가 아닙니다."
+                    if source_rows[0].source_id == "SRC_YOUTUBE"
+                    else "검색어 기반 시장 proxy는 실제 국가별 이용자 관측이 아닙니다."
+                ),
+            }
+            continue
         raw_scores = [
-            float(row.source_score)
-            for row in source_rows
-            if row.source_score is not None
+            float(row.source_score) for row in country_rows if row.source_score is not None
         ]
         score = (
-            normalized_scores.get(source_rows[0].source_id)
+            normalized_scores.get(country_rows[0].source_id)
             if normalized_scores is not None
             else (round(mean(raw_scores), 4) if raw_scores else None)
         )
         if score is not None:
             source_scores.append(score)
         result[source_name] = {
-            "posts": _sum_optional([row.post_count for row in source_rows]),
-            "views": _sum_optional([row.view_count for row in source_rows]),
-            "reactions": _sum_optional([row.reaction_count for row in source_rows]),
+            "posts": _sum_optional([row.post_count for row in country_rows]),
+            "views": _sum_optional([row.view_count for row in country_rows]),
+            "reactions": _sum_optional([row.reaction_count for row in country_rows]),
             "score": score,
             "availability": "available",
             "reason": None,
         }
     return result, round(mean(source_scores), 4) if source_scores else None
+
+
+def _is_country_social_signal(row: SocialObservation) -> bool:
+    flags = set(row.quality_flags or [])
+    return row.source_id != "SRC_YOUTUBE" and flags.isdisjoint(COUNTRY_PROXY_FLAGS)
 
 
 def _social_signal_value(rows: list[SocialObservation]) -> float | None:
@@ -499,13 +507,14 @@ def _social_source_scores(
 ) -> dict[str, float | None]:
     grouped: dict[tuple[str, str], list[SocialObservation]] = {}
     for row in rows:
-        if row.source_id not in SOCIAL_SOURCE_NAMES or row.country_id is None:
+        if (
+            row.source_id not in SOCIAL_SOURCE_NAMES
+            or row.country_id is None
+            or not _is_country_social_signal(row)
+        ):
             continue
         grouped.setdefault((row.source_id, row.country_id), []).append(row)
-    values = {
-        key: _social_signal_value(source_rows)
-        for key, source_rows in grouped.items()
-    }
+    values = {key: _social_signal_value(source_rows) for key, source_rows in grouped.items()}
     result: dict[str, float | None] = {}
     for source_id in SOCIAL_SOURCE_NAMES:
         population = [
@@ -538,11 +547,7 @@ def _fx_views(
             "krw_rate": latest.krw_rate,
             "change_rate": _change_rate_decimal(
                 float(latest.krw_rate) if latest.krw_rate is not None else None,
-                (
-                    float(previous.krw_rate)
-                    if previous and previous.krw_rate is not None
-                    else None
-                ),
+                (float(previous.krw_rate) if previous and previous.krw_rate is not None else None),
             ),
             "rate_date": latest.rate_date.date().isoformat(),
             "source_id": latest.source_id,

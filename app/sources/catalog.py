@@ -24,7 +24,7 @@ SOURCES: tuple[SourceDefinition, ...] = (
         "SRC_MOIS_ADMIN_CODES",
         "행정안전부",
         "https://www.mois.go.kr/cmm/fms/FileDown.do",
-        "https://www.mois.go.kr/frt/bbs/type001/commonSelectBoardArticle.do?bbsId=BBSMSTR_000000000052&nttId=122595",
+        "https://www.mois.go.kr/frt/bbs/type001/commonSelectBoardArticle.do?bbsId=BBSMSTR_000000000052&nttId=127979",
         "zip_file",
         "public",
         "E",
@@ -32,8 +32,8 @@ SOURCES: tuple[SourceDefinition, ...] = (
     SourceDefinition(
         "SRC_NAVER_TREND",
         "NAVER Cloud",
-        "https://naveropenapi.apigw.ntruss.com/datalab/v1/search",
-        "https://api.ncloud-docs.com/docs/ai-naver-searchtrend-search",
+        "https://naverapihub.apigw.ntruss.com/search-trend/v1/search",
+        "https://api.ncloud-docs.com/docs/naver-api-hub-search-trend",
         "json_api",
         "client_credentials",
         "B",
@@ -329,7 +329,7 @@ SOURCES: tuple[SourceDefinition, ...] = (
         "https://www.data.go.kr/data/3068846/openapi.do",
         "json_api",
         "api_key",
-        "B",
+        "C",
     ),
     SourceDefinition(
         "SRC_BOK_ECOS",

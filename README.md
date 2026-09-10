@@ -48,18 +48,22 @@ curl -fsS --get https://api.edenapi.org/v1/trends \
 
 API endpoint 구현 여부와 실제 데이터 가용성은 서로 다릅니다.
 
-- YouTube와 X는 집계 adapter가 구현되어 있습니다. 실제 수집에는 유효한 자격 증명과
-  승인 범위가 필요합니다.
+- YouTube는 검색 결과 영상의 공개 지표를 집계합니다. 검색 국가 조건은 시청자 국적을
+  나타내지 않으므로 국가별 실제 관심도로 사용하지 않습니다.
 - NAVER 검색 추세 adapter가 구현되어 있습니다. 저장 및 재게시 권리가 확인되기 전에는
   영구 저장을 활성화하지 않습니다.
-- Instagram, Facebook, TikTok, Reddit은 플랫폼 승인을 확보하기 전까지 명시적으로
+- Instagram, Facebook, Reddit은 플랫폼 승인을 확보하기 전까지 명시적으로
   `unavailable`을 반환합니다.
-- Weibo, Douyin, Xiaohongshu, LINE도 현재 승인 범위에서 사용할 수 없으며 명시적으로
-  `unavailable`을 반환합니다.
+- X와 TikTok은 사용 범위에서 제외합니다. Weibo와 Douyin 및 Xiaohongshu와 LINE도
+  수집과 공개 지표에서 제외합니다.
 - 공공데이터와 날씨 및 환율과 ECOS 원천도 각 서비스의 승인과 자격 증명 및 게시된
   snapshot 상태에 따라 가용성이 달라집니다.
-- 공지 번역과 요약은 LLM 설정이 없으면 해당 block만 `unavailable`로 표시합니다.
+- 공지 번역과 요약은 Upstage Solar를 사용합니다. `LLM_API_KEY`에는 Upstage 키를,
+  `LLM_MODEL`에는 `solar-pro4`를 설정합니다. 설정이 없으면 해당 block만
+  `unavailable`로 표시합니다.
   원문 공지의 가용성과는 별도로 처리합니다.
+- 한국은행 ECOS의 일반여행 수지는 한국 전체의 월간 수입에서 지출을 뺀 값입니다.
+  국가별 양자 수지가 아니며 방한시장 화면에서 발표월과 함께 별도로 표시합니다.
 
 따라서 HTTP 200이나 endpoint 목록만으로 모든 원천 연동이 끝났다고 판단하지 않습니다.
 응답의 `meta.availability`, `meta.reason`, `meta.sources`를 함께 확인해야 합니다.

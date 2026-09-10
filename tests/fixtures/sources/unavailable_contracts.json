@@ -15,13 +15,6 @@
       }
     },
     {
-      "source_id": "SRC_X",
-      "expected_credentials": ["X_BEARER_TOKEN"],
-      "scope": {
-        "targets": [{"country": "US", "keyword": "Korea travel"}]
-      }
-    },
-    {
       "source_id": "SRC_KEXIM_FX",
       "expected_credentials": ["KEXIM_API_KEY"],
       "scope": {}
@@ -41,6 +34,7 @@
     "SRC_INSTAGRAM",
     "SRC_FACEBOOK",
     "SRC_TIKTOK",
+    "SRC_X",
     "SRC_REDDIT",
     "SRC_WEIBO",
     "SRC_DOUYIN",

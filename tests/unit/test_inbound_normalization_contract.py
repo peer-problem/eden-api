@@ -80,6 +80,26 @@ def test_ecos_general_travel_contract_and_unit_mapping() -> None:
         inbound_sources.ecos_row_value(rows[1], item_code)
 
 
+def test_ecos_daily_fx_contract_and_unit_mapping() -> None:
+    fx = _fixture()["ecos"]["fx"]
+    currency, item_code, rows = inbound_sources.ecos_fx_document_contract(fx)
+    period, value = inbound_sources.ecos_fx_row_value(rows[0], item_code)
+    zero_period, zero_value = inbound_sources.ecos_fx_row_value(rows[2], item_code)
+
+    assert currency == "TWD"
+    assert item_code == "0000031"
+    assert period == datetime(2026, 9, 9)
+    assert value == Decimal("42.55000000")
+    assert zero_period == datetime(2026, 9, 10)
+    assert zero_value == Decimal("0E-8")
+    with pytest.raises(ValueError, match="unsupported source date"):
+        inbound_sources.ecos_fx_row_value(rows[1], item_code)
+
+    drifted = {**fx, "currency": "PHP"}
+    with pytest.raises(ValueError, match="does not match currency"):
+        inbound_sources.ecos_fx_document_contract(drifted)
+
+
 class _Context:
     def __init__(self, session: object) -> None:
         self.session = session
@@ -153,3 +173,54 @@ def test_kexim_normalizer_keeps_good_rates_after_bad_rate(
         statement.compile().params["source_updated_at"] == source_updated_at.replace(tzinfo=None)
         for statement in inserts
     )
+
+
+def test_bok_normalizer_keeps_good_fx_rows_after_bad_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = SimpleNamespace(
+        raw_record_id=72,
+        body_json=_fixture()["ecos"]["fx"],
+        observed_at=datetime(2026, 9, 10, 1, tzinfo=UTC),
+        source_updated_at=datetime(2026, 9, 10, 0, tzinfo=UTC),
+        ingested_at=datetime(2026, 9, 10, 2, tzinfo=UTC),
+    )
+
+    class Session:
+        def __init__(self) -> None:
+            self.statements: list[Any] = []
+
+        def execute(self, statement: object) -> None:
+            self.statements.append(statement)
+
+        def scalar(self, _statement: object) -> int:
+            return 82
+
+    session = Session()
+    dead_letters: list[str] = []
+    monkeypatch.setattr(inbound_sources, "_run_records", lambda *_args: [raw])
+    monkeypatch.setattr(inbound_sources, "_provenance", lambda *_args: None)
+    monkeypatch.setattr(inbound_sources, "_finish_run", lambda *_args: None)
+    monkeypatch.setattr(
+        inbound_sources,
+        "_add_dead_letter",
+        lambda _session, _raw, code, _exc: dead_letters.append(code),
+    )
+
+    count = inbound_sources.normalize_bok_run(_Factory(session), "run-bok-fx")  # type: ignore[arg-type]
+
+    assert count == 2
+    assert dead_letters == ["bok_ecos_fx_row_schema"]
+    inserts = [
+        statement
+        for statement in session.statements
+        if getattr(getattr(statement, "table", None), "name", None) == "fx_observation"
+    ]
+    assert len(inserts) == 2
+    params = [statement.compile().params for statement in inserts]
+    assert {row["currency"] for row in params} == {"TWD"}
+    assert {row["rate_date"] for row in params} == {
+        datetime(2026, 9, 9),
+        datetime(2026, 9, 10),
+    }
+    assert all(row["source_updated_at"] == row["rate_date"] for row in params)

@@ -1009,6 +1009,18 @@ tbody tr:hover td {
   border-bottom: 1px solid var(--line);
 }
 
+@media (min-width: 561px) {
+  .market-row > .metric-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    row-gap: 16px;
+  }
+}
+
+.market-row .metric-value dd {
+  overflow-wrap: normal;
+}
+
 .market-title h3 {
   margin: 0 0 28px;
   font-family: Georgia, serif;

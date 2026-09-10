@@ -231,6 +231,8 @@ EXPECTED_NESTED_OUTPUT_FIELDS = {
         "flight_schedule",
         "fx",
         "tourism_balance_usd",
+        "tourism_balance_scope",
+        "tourism_balance_period",
         "social_interest",
         "source_availability",
         "inbound_score",
@@ -370,13 +372,7 @@ def test_openapi_query_defaults_and_bounds_match_phase_one(contract_client: Test
     assert _enum(_array_items(trends["social_sources"]["schema"])) == {
         "youtube",
         "instagram",
-        "tiktok",
-        "x",
         "reddit",
-        "weibo",
-        "douyin",
-        "xiaohongshu",
-        "line",
         "facebook",
     }
     assert _enum(trends["period"]["schema"]) == {"7d", "30d", "90d"}
@@ -457,7 +453,12 @@ def test_openapi_query_defaults_and_bounds_match_phase_one(contract_client: Test
         "tourism_balance",
         "social_interest",
     }
-    assert "youtube" in _enum(_array_items(inbound["social_sources"]["schema"]))
+    assert _enum(_array_items(inbound["social_sources"]["schema"])) == {
+        "youtube",
+        "instagram",
+        "reddit",
+        "facebook",
+    }
 
     alerts = _parameters(openapi, "/v1/markets/{country}/alerts")
     assert alerts["country"]["required"] is True

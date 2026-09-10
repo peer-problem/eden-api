@@ -9,6 +9,7 @@ from xml.etree.ElementTree import ParseError
 import pytest
 
 from app.sources.alerts import (
+    OfficialNoticeAdapter,
     extract_notice_links,
     parse_notice_detail,
     parse_notice_feed,
@@ -123,6 +124,79 @@ def test_notice_html_link_parser_recovers_only_allowlisted_entries(
     )
 
     assert [urlparse(url).path for url, _title in links] == expected_paths
+
+
+def test_notice_link_parser_recovers_mofa_board_javascript_detail() -> None:
+    links = extract_notice_links(
+        b'''<a href="/jp-ko/brd/m_1083/list.do">Notice navigation</a>
+        <a href="#" onclick="f_view('1945804'); return false;">
+        Travel safety notice</a>''',
+        "https://overseas.mofa.go.kr/jp-ko/brd/m_26893/list.do",
+        {"overseas.mofa.go.kr"},
+        1,
+    )
+
+    assert links == [
+        (
+            "https://overseas.mofa.go.kr/jp-ko/brd/m_26893/view.do?seq=1945804&page=1",
+            "Travel safety notice",
+        )
+    ]
+
+
+def test_notice_fetch_descends_into_first_listing_before_sibling_navigation() -> None:
+    root = b"""
+        <html><body>
+          <a href="/news/first/">News One</a>
+          <a href="/news/second/">News Two</a>
+          <a href="/news/third/">News Three</a>
+          <a href="/news/fourth/">News Four</a>
+          <a href="/news/fifth/">News Five</a>
+        </body></html>
+    """
+    listing = b"""
+        <html><body>
+          <a href="/news/first/travel-advisory.html">Travel advisory</a>
+        </body></html>
+    """
+    detail = b"""
+        <html><head><meta name="date" content="2026-09-10"></head>
+        <body><article><h1>Travel advisory</h1>
+        <p>Visitors should review the official entry conditions before travel.</p>
+        </article></body></html>
+    """
+    calls: list[str] = []
+
+    def get(url: str) -> tuple[bytes, str, str]:
+        calls.append(url)
+        if url == "https://embassy.example/":
+            return root, "text/html", url
+        if url == "https://embassy.example/news/first/":
+            return listing, "text/html", url
+        if url == "https://embassy.example/news/first/travel-advisory.html":
+            return detail, "text/html", url
+        raise AssertionError(f"unexpected sibling navigation request: {url}")
+
+    adapter = OfficialNoticeAdapter("SRC_TEST", {"embassy.example"}, 5, 1024 * 1024)
+    adapter.client.get = get  # type: ignore[method-assign]
+    result = adapter.fetch(
+        {
+            "targets": [
+                {
+                    **NOTICE_TARGET,
+                    "url": "https://embassy.example/",
+                    "max_items": 1,
+                }
+            ]
+        }
+    )
+
+    assert len(result.items) == 1
+    assert calls == [
+        "https://embassy.example/",
+        "https://embassy.example/news/first/",
+        "https://embassy.example/news/first/travel-advisory.html",
+    ]
 
 
 def test_notice_html_detail_removes_active_content_and_forms() -> None:

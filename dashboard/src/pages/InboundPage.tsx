@@ -9,6 +9,24 @@ import { useApiQuery } from "../state/useApiQuery";
 import { useFormQuery } from "../state/urlState";
 import { csvValues, formValues, queryValue } from "./helpers";
 
+const fxFormat = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 4 });
+
+function NationalTourismBalance({ data }: { data: InboundData }) {
+  const observation = data.markets.find((market) => market.tourism_balance_scope === "KR_total");
+  if (!observation) return null;
+  return (
+    <ResultSection>
+      <SectionHeading
+        title="한국 전체 여행수지"
+        description={`${observation.tourism_balance_period ?? "최신 발표월"} 한국은행 일반여행 수입에서 지출을 뺀 값입니다. 국가별 수지가 아닙니다.`}
+      />
+      <dl className="metric-row">
+        <MetricValue label="월간 여행수지" value={observation.tourism_balance_usd} suffix=" USD" />
+      </dl>
+    </ResultSection>
+  );
+}
+
 export function InboundPage() {
   const { query, commit, enabled } = useFormQuery("inbound");
   const cacheKey = query.toString();
@@ -67,6 +85,8 @@ export function InboundPage() {
       </QueryForm>
       <ApiResult state={state} initialMessage="한 개 이상의 국가 코드를 입력하면 방한시장 게시 데이터를 조회합니다.">
         {(data) => (
+          <>
+          <NationalTourismBalance data={data} />
           <ResultSection>
             <SectionHeading title="국가별 시장 현황" description={`${data.period} 기준, 서버가 계산한 시장 점수를 사용합니다.`} />
             <div className="market-list">
@@ -82,8 +102,13 @@ export function InboundPage() {
                     <MetricValue label="방한객 변화" value={market.visitor_change_rate} suffix="%" />
                     <MetricValue label="도착 항공편" value={market.arriving_flights} />
                     <MetricValue label="탑승객" value={market.passengers} />
-                    <MetricValue label="관광수지" value={market.tourism_balance_usd} suffix=" USD" />
-                    <MetricValue label="원화 환율" value={market.fx?.krw_rate} suffix=" KRW" />
+                    <MetricValue
+                      label={market.fx?.currency ? `원화 환율 (1 ${market.fx.currency})` : "원화 환율"}
+                      value={market.fx?.krw_rate}
+                      suffix=" KRW"
+                      formatter={(value) => fxFormat.format(Number(value))}
+                      hint={market.fx?.rate_date ? `${market.fx.rate_date} 기준` : undefined}
+                    />
                   </dl>
                   <details className="market-sources">
                     <summary>원천 블록 상태</summary>
@@ -102,6 +127,7 @@ export function InboundPage() {
               ))}
             </div>
           </ResultSection>
+          </>
         )}
       </ApiResult>
     </>

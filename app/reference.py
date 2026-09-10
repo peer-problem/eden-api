@@ -36,6 +36,7 @@ from app.sources.plans import (
     public_data_refresh_scope,
     social_refresh_scope,
 )
+from app.sources.social import EXCLUDED_SOCIAL_SOURCE_IDS
 
 MOIS_STYLE_AREA_SOURCES = {
     "SRC_KTO_RESOURCE_DEMAND",
@@ -99,14 +100,10 @@ def seed_reference_data(session: Session) -> None:
             Area.eden_area_id,
             Area.center_lat,
             Area.center_lng,
-        ).where(
-                Area.active.is_(True), Area.administrative_code.is_not(None)
-        )
+        ).where(Area.active.is_(True), Area.administrative_code.is_not(None))
     ).all()
     active_area_codes = [row.administrative_code for row in active_areas]
-    area_id_by_code = {
-        row.administrative_code: row.eden_area_id for row in active_areas
-    }
+    area_id_by_code = {row.administrative_code: row.eden_area_id for row in active_areas}
     place_centroids = {
         area_id: (float(lat), float(lng))
         for area_id, lat, lng in session.execute(
@@ -125,7 +122,8 @@ def seed_reference_data(session: Session) -> None:
         for row in active_areas
         if row.administrative_code is not None
         and (
-            row.center_lat is not None and row.center_lng is not None
+            row.center_lat is not None
+            and row.center_lng is not None
             or (centroid := place_centroids.get(row.eden_area_id)) is not None
         )
     }
@@ -141,7 +139,7 @@ def seed_reference_data(session: Session) -> None:
         if source.source_id == "SRC_KTO_INBOUND_STATS":
             refresh_scope = {"months": 2, "countries": DEFAULT_COUNTRIES}
         elif source.source_id == "SRC_BOK_ECOS":
-            refresh_scope = {"months": 48}
+            refresh_scope = {"months": 48, "fx_days": 14}
         elif social_scope := social_refresh_scope(source.source_id):
             refresh_scope = social_scope
         elif source.source_id == "SRC_EMBASSY_NOTICE":
@@ -205,7 +203,7 @@ def seed_reference_data(session: Session) -> None:
                 "documented_auth_type": source.auth_type,
                 "documentation_url": source.docs_url,
             },
-            "enabled": True,
+            "enabled": source.source_id not in EXCLUDED_SOCIAL_SOURCE_IDS,
             "created_at": now,
             "updated_at": now,
         }
@@ -222,6 +220,8 @@ def seed_reference_data(session: Session) -> None:
                 "created_at",
             }
         }
+        if source.source_id in EXCLUDED_SOCIAL_SOURCE_IDS:
+            source_update["enabled"] = False
         session.execute(
             insert(SourceRegistry).values(**values).on_duplicate_key_update(**source_update)
         )

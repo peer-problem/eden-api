@@ -17,6 +17,23 @@ from app.sources.base import (
 )
 from app.sources.http import SecureSourceClient, SourceCredentialHttpError
 
+EXCLUDED_SOCIAL_SOURCE_IDS = frozenset(
+    {
+        "SRC_X",
+        "SRC_TIKTOK",
+        "SRC_WEIBO",
+        "SRC_DOUYIN",
+        "SRC_XIAOHONGSHU",
+        "SRC_LINE",
+    }
+)
+REQUESTABLE_SOCIAL_SOURCES = {
+    "youtube": "SRC_YOUTUBE",
+    "instagram": "SRC_INSTAGRAM",
+    "reddit": "SRC_REDDIT",
+    "facebook": "SRC_FACEBOOK",
+}
+
 
 def _targets(scope: dict[str, Any]) -> list[dict[str, str]]:
     targets = scope.get("targets")
@@ -43,6 +60,7 @@ def _raw_aggregate(
     reaction_count: int | None = None,
     search_ratio: float | None = None,
     grain: str = "day",
+    quality_flags: tuple[str, ...] = ("query_market_proxy", "aggregate_only"),
 ) -> RawItem:
     return RawItem(
         external_key=(
@@ -62,7 +80,7 @@ def _raw_aggregate(
             "view_count": view_count,
             "reaction_count": reaction_count,
             "search_ratio": search_ratio,
-            "quality_flags": ["query_market_proxy", "aggregate_only"],
+            "quality_flags": list(quality_flags),
         },
     )
 
@@ -141,8 +159,7 @@ class NaverTrendAdapter(SourceAdapter):
                 raise ValueError("NAVER response does not contain results")
             items: list[RawItem] = []
             by_name = {
-                f"{target['country']}:{index}": target
-                for index, target in enumerate(targets)
+                f"{target['country']}:{index}": target for index, target in enumerate(targets)
             }
             for result in results:
                 if not isinstance(result, dict) or result.get("title") not in by_name:
@@ -207,7 +224,7 @@ class YouTubeAggregateAdapter(SourceAdapter):
     def fetch(self, scope: dict[str, Any]) -> FetchResult:
         if self.api_key is None:
             return _missing_credentials(self.source_id, ["YOUTUBE_API_KEY"])
-        targets = _targets(scope)
+        targets = _targets(scope)[:5]
         if not targets:
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
@@ -238,15 +255,17 @@ class YouTubeAggregateAdapter(SourceAdapter):
                 search_rows = search.get("items") if isinstance(search, dict) else None
                 if not isinstance(search_rows, list):
                     raise ValueError("YouTube search response does not contain items")
-                video_ids = [
-                    str(row["id"]["videoId"])
-                    for row in search_rows
-                    if isinstance(row, dict)
-                    and isinstance(row.get("id"), dict)
-                    and row["id"].get("videoId")
-                ]
-                views = 0
-                reactions = 0
+                video_ids = list(
+                    dict.fromkeys(
+                        str(row["id"]["videoId"])
+                        for row in search_rows
+                        if isinstance(row, dict)
+                        and isinstance(row.get("id"), dict)
+                        and row["id"].get("videoId")
+                    )
+                )
+                views: int | None = None
+                reactions: int | None = None
                 if video_ids:
                     stats_payload, _, _ = self.client.get(
                         f"{self.base_url}/videos",
@@ -260,12 +279,34 @@ class YouTubeAggregateAdapter(SourceAdapter):
                     stat_rows = stats.get("items") if isinstance(stats, dict) else None
                     if not isinstance(stat_rows, list):
                         raise ValueError("YouTube video response does not contain items")
+                    view_values: list[int] = []
+                    reaction_values: list[int] = []
+                    complete_reactions = True
+                    returned_ids: list[str] = []
                     for row in stat_rows:
                         values = row.get("statistics", {}) if isinstance(row, dict) else {}
                         if isinstance(values, dict):
-                            views += int(values.get("viewCount", 0))
-                            reactions += int(values.get("likeCount", 0))
-                            reactions += int(values.get("commentCount", 0))
+                            if isinstance(row, dict) and row.get("id"):
+                                returned_ids.append(str(row["id"]))
+                            if "viewCount" in values:
+                                view_values.append(int(values["viewCount"]))
+                            if "likeCount" in values and "commentCount" in values:
+                                reaction_values.append(
+                                    int(values["likeCount"]) + int(values["commentCount"])
+                                )
+                            else:
+                                complete_reactions = False
+                    complete_stats = len(returned_ids) == len(video_ids) and set(
+                        returned_ids
+                    ) == set(video_ids)
+                    if complete_stats and len(view_values) == len(video_ids):
+                        views = sum(view_values)
+                    if (
+                        complete_stats
+                        and complete_reactions
+                        and len(reaction_values) == len(video_ids)
+                    ):
+                        reactions = sum(reaction_values)
                 items.append(
                     _raw_aggregate(
                         self.source_id,
@@ -274,6 +315,12 @@ class YouTubeAggregateAdapter(SourceAdapter):
                         post_count=len(video_ids),
                         view_count=views,
                         reaction_count=reactions,
+                        quality_flags=(
+                            "query_language_market_proxy",
+                            "youtube_region_availability_filter",
+                            "latest_results_sample_max_50",
+                            "aggregate_only",
+                        ),
                     )
                 )
             except SourceCredentialHttpError as exc:
@@ -285,11 +332,7 @@ class YouTubeAggregateAdapter(SourceAdapter):
             except Exception as exc:
                 errors.append(f"{target['country']}:{type(exc).__name__}")
         return FetchResult(
-            status=(
-                SourceStatus.AVAILABLE
-                if items and not errors
-                else SourceStatus.DEGRADED
-            ),
+            status=(SourceStatus.AVAILABLE if items and not errors else SourceStatus.DEGRADED),
             items=tuple(items),
             data_as_of=now if items else None,
             reason="일부 YouTube 시장 집계 실패" if errors else None,
@@ -337,9 +380,7 @@ class XCountAdapter(SourceAdapter):
                         "end_time": now.isoformat().replace("+00:00", "Z"),
                         "granularity": "day",
                     },
-                    headers={
-                        "Authorization": f"Bearer {self.bearer_token.get_secret_value()}"
-                    },
+                    headers={"Authorization": f"Bearer {self.bearer_token.get_secret_value()}"},
                 )
                 document = json.loads(payload)
                 data = document.get("data") if isinstance(document, dict) else None

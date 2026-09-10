@@ -43,6 +43,7 @@ from app.observability.soak import (
 )
 from app.repositories.database import create_database_engine, create_session_factory
 from app.repositories.models import Area, Country, PlaceSourceMap
+from app.sources.social import REQUESTABLE_SOCIAL_SOURCES
 
 DEFAULT_EVIDENCE_PATH = Path("/opt/eden/phase1-evidence/soak.jsonl")
 BASE_URL = "http://127.0.0.1:8000"
@@ -144,18 +145,7 @@ def probe_public_routes() -> list[dict[str, Any]]:
     encoded_area = quote(area_code, safe="")
     encoded_place = quote(place_id, safe="")
     encoded_country = quote(country, safe="")
-    social_sources = (
-        "youtube",
-        "instagram",
-        "tiktok",
-        "x",
-        "reddit",
-        "weibo",
-        "douyin",
-        "xiaohongshu",
-        "line",
-        "facebook",
-    )
+    social_sources = sorted(REQUESTABLE_SOCIAL_SOURCES)
     trend_query = urlencode(
         [
             ("keyword", "phase1-soak"),

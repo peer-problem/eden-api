@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -12,10 +12,15 @@ from app.sources.base import FetchReasonCode, FetchResult, RawItem, SourceAdapte
 from app.sources.http import SecureSourceClient, SourceCredentialHttpError
 
 SOURCE_ID = "SRC_BOK_ECOS"
-STAT_CODE = "301Y013"
+TOURISM_STAT_CODE = "301Y013"
 GENERAL_TRAVEL_ITEMS = {
     "2C1Y00": "receipt",
     "2C2Y00": "expenditure",
+}
+FX_STAT_CODE = "731Y001"
+SUPPLEMENTAL_FX_ITEMS = {
+    "0000031": "TWD",
+    "0000034": "PHP",
 }
 
 
@@ -64,6 +69,7 @@ class BokEcosAdapter(SourceAdapter):
                 reason_code=FetchReasonCode.CREDENTIAL_MISSING,
             )
         months = min(max(int(scope.get("months", 48)), 2), 120)
+        fx_days = min(max(int(scope.get("fx_days", 14)), 1), 90)
         now = datetime.now(UTC)
         end = _shift_month(now, -1)
         start = _shift_month(end, -(months - 1))
@@ -77,7 +83,7 @@ class BokEcosAdapter(SourceAdapter):
         for item_code, metric in GENERAL_TRAVEL_ITEMS.items():
             url = (
                 f"{self.base_url}/StatisticSearch/{api_key}/json/kr/1/1000/"
-                f"{STAT_CODE}/M/{start_month}/{end_month}/{item_code}/"
+                f"{TOURISM_STAT_CODE}/M/{start_month}/{end_month}/{item_code}/"
             )
             try:
                 payload, content_type, _ = self.client.get(url)
@@ -103,13 +109,13 @@ class BokEcosAdapter(SourceAdapter):
                 items.append(
                     RawItem(
                         external_key=(
-                            f"{STAT_CODE}:{item_code}:{start_month}-{end_month}"
+                            f"{TOURISM_STAT_CODE}:{item_code}:{start_month}-{end_month}"
                         ),
                         source_updated_at=latest,
                         observed_at=now,
                         content_type=content_type or "application/json",
                         body={
-                            "stat_code": STAT_CODE,
+                            "stat_code": TOURISM_STAT_CODE,
                             "item_code": item_code,
                             "metric": metric,
                             "unit": "million_usd",
@@ -124,16 +130,73 @@ class BokEcosAdapter(SourceAdapter):
                     reason_code=FetchReasonCode.CREDENTIAL_REJECTED,
                 )
             except Exception as exc:
-                errors.append(f"{item_code}:{type(exc).__name__}")
+                errors.append(f"tourism:{item_code}:{type(exc).__name__}")
+
+        end_day = now.date()
+        start_day = end_day - timedelta(days=fx_days - 1)
+        start_date = start_day.strftime("%Y%m%d")
+        end_date = end_day.strftime("%Y%m%d")
+        for item_code, currency in SUPPLEMENTAL_FX_ITEMS.items():
+            url = (
+                f"{self.base_url}/StatisticSearch/{api_key}/json/kr/1/1000/"
+                f"{FX_STAT_CODE}/D/{start_date}/{end_date}/{item_code}/"
+            )
+            try:
+                payload, content_type, _ = self.client.get(url)
+                rows = _ecos_rows(json.loads(payload))
+                safe_rows = [
+                    {
+                        "TIME": row.get("TIME"),
+                        "DATA_VALUE": row.get("DATA_VALUE"),
+                        "ITEM_CODE1": row.get("ITEM_CODE1"),
+                        "UNIT_NAME": row.get("UNIT_NAME"),
+                    }
+                    for row in rows
+                ]
+                row_dates = [
+                    str(row["TIME"])
+                    for row in safe_rows
+                    if isinstance(row.get("TIME"), str)
+                ]
+                if not row_dates:
+                    raise ValueError("ECOS returned no daily FX observations")
+                latest = datetime.strptime(max(row_dates), "%Y%m%d").replace(tzinfo=UTC)
+                data_as_of = max(data_as_of or latest, latest)
+                items.append(
+                    RawItem(
+                        external_key=(
+                            f"{FX_STAT_CODE}:{item_code}:{start_date}-{end_date}"
+                        ),
+                        source_updated_at=latest,
+                        observed_at=now,
+                        content_type=content_type or "application/json",
+                        body={
+                            "stat_code": FX_STAT_CODE,
+                            "item_code": item_code,
+                            "metric": "fx",
+                            "currency": currency,
+                            "unit": "krw_per_currency",
+                            "rows": safe_rows,
+                        },
+                    )
+                )
+            except SourceCredentialHttpError as exc:
+                return FetchResult(
+                    status=SourceStatus.UNAVAILABLE,
+                    reason=f"ECOS 자격 증명 또는 승인 범위가 거절되었습니다: {exc}",
+                    reason_code=FetchReasonCode.CREDENTIAL_REJECTED,
+                )
+            except Exception as exc:
+                errors.append(f"fx:{item_code}:{type(exc).__name__}")
 
         return FetchResult(
             status=(
                 SourceStatus.AVAILABLE
-                if len(items) == len(GENERAL_TRAVEL_ITEMS)
+                if len(items) == len(GENERAL_TRAVEL_ITEMS) + len(SUPPLEMENTAL_FX_ITEMS)
                 else SourceStatus.DEGRADED
             ),
             items=tuple(items),
             data_as_of=data_as_of,
-            reason="일반여행 수입 및 지급 중 일부 수집 실패" if errors else None,
+            reason="일반여행 수입 및 지급 또는 보완 환율 중 일부 수집 실패" if errors else None,
             partial_errors=tuple(errors),
         )

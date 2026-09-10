@@ -17,6 +17,7 @@ from app.products.refresh_requests import (
 )
 from app.products.registry import ProductFamily, product_families_for_source
 from app.repositories.models import ProductRefreshRequest
+from app.sources.social import EXCLUDED_SOCIAL_SOURCE_IDS
 
 
 @pytest.fixture
@@ -26,9 +27,9 @@ def refresh_factory():
     return sessionmaker(engine, expire_on_commit=False)
 
 
-def test_five_sources_coalesce_to_one_request_per_family(refresh_factory) -> None:
+def test_four_sources_coalesce_to_one_request_per_family(refresh_factory) -> None:
     requested_at = datetime(2026, 8, 29, 1, 2, 3)
-    source_ids = ["SRC_X", "SRC_REDDIT", "SRC_WEIBO", "SRC_LINE", "SRC_FACEBOOK"]
+    source_ids = ["SRC_YOUTUBE", "SRC_INSTAGRAM", "SRC_REDDIT", "SRC_FACEBOOK"]
 
     for index, source_id in enumerate(source_ids):
         mark_products_dirty(
@@ -39,19 +40,17 @@ def test_five_sources_coalesce_to_one_request_per_family(refresh_factory) -> Non
         )
 
     with refresh_factory() as session:
-        rows = {
-            row.family: row
-            for row in session.scalars(select(ProductRefreshRequest)).all()
-        }
+        rows = {row.family: row for row in session.scalars(select(ProductRefreshRequest)).all()}
     assert set(rows) == {ProductFamily.INBOUND.value, ProductFamily.TRENDS.value}
-    for row in rows.values():
-        assert row.status == PENDING
-        assert row.source_ids == sorted(source_ids)
-        assert len(row.request_watermark) == 5
+    assert rows[ProductFamily.TRENDS.value].source_ids == sorted(source_ids)
+    assert rows[ProductFamily.INBOUND.value].source_ids == sorted(
+        set(source_ids) - {"SRC_YOUTUBE"}
+    )
+    assert all(row.status == PENDING for row in rows.values())
 
 
-def test_five_dirty_sources_trigger_one_family_build(monkeypatch, refresh_factory) -> None:
-    source_ids = ["SRC_X", "SRC_REDDIT", "SRC_WEIBO", "SRC_LINE", "SRC_FACEBOOK"]
+def test_four_dirty_sources_trigger_one_family_build(monkeypatch, refresh_factory) -> None:
+    source_ids = ["SRC_YOUTUBE", "SRC_INSTAGRAM", "SRC_REDDIT", "SRC_FACEBOOK"]
     for source_id in source_ids:
         mark_products_dirty(source_id, refresh_factory)
     builds: list[object] = []
@@ -68,6 +67,14 @@ def test_five_dirty_sources_trigger_one_family_build(monkeypatch, refresh_factor
 
     assert len(builds) == 1
     assert claim_product_refresh(ProductFamily.INBOUND, refresh_factory) is None
+
+
+def test_excluded_social_sources_do_not_dirty_products(refresh_factory) -> None:
+    for source_id in EXCLUDED_SOCIAL_SOURCE_IDS:
+        mark_products_dirty(source_id, refresh_factory)
+
+    with refresh_factory() as session:
+        assert session.scalars(select(ProductRefreshRequest)).all() == []
 
 
 def test_new_dirty_watermark_survives_an_in_progress_build(refresh_factory) -> None:
@@ -187,11 +194,14 @@ def test_failed_product_refresh_waits_for_exponential_backoff(refresh_factory) -
         )
         is None
     )
-    assert claim_product_refresh(
-        ProductFamily.TRENDS,
-        refresh_factory,
-        claimed_at=started_at + timedelta(seconds=180),
-    ) is not None
+    assert (
+        claim_product_refresh(
+            ProductFamily.TRENDS,
+            refresh_factory,
+            claimed_at=started_at + timedelta(seconds=180),
+        )
+        is not None
+    )
 
 
 def test_family_dispatch_builds_only_the_requested_product(monkeypatch) -> None:

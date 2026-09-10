@@ -14,6 +14,7 @@ from app.sources.kto_inbound import KtoInboundAdapter
 from app.sources.public_data import PublicDataAdapter
 from app.sources.reference import MoisAreaAdapter
 from app.sources.social import (
+    EXCLUDED_SOCIAL_SOURCE_IDS,
     ApprovedAggregateAdapter,
     NaverTrendAdapter,
     XCountAdapter,
@@ -32,6 +33,12 @@ def build_adapter(
 ) -> SourceAdapter:
     scope = scope or {}
     source = source_definition(source_id)
+    if source_id in EXCLUDED_SOCIAL_SOURCE_IDS:
+        return UnavailableAdapter(
+            source_id,
+            "사용자가 확정한 EDEN 제품 범위에서 제외된 SNS 원천입니다.",
+            FetchReasonCode.UNSUPPORTED_ACCESS,
+        )
     if source_id == "SRC_MOIS_ADMIN_CODES":
         return MoisAreaAdapter(
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
@@ -64,8 +71,8 @@ def build_adapter(
     if source_id == "SRC_TOURISM_ADMISSION":
         return UnavailableAdapter(
             source_id,
-            "공식 명세가 HTTP 전용 legacy origin만 제공하고 현재 공공데이터 키를 "
-            "SERVICE_KEY_IS_NOT_REGISTERED로 거절하여 안전하게 수집할 수 없습니다.",
+            "공식 서비스가 HTTP 전용이고 HTTPS 연결을 제공하지 않아 인증키를 "
+            "안전하게 전송할 수 없습니다.",
             FetchReasonCode.UNSUPPORTED_ACCESS,
         )
     if source_id == "SRC_NAVER_TREND":
@@ -76,7 +83,8 @@ def build_adapter(
         ):
             return UnavailableAdapter(
                 source_id,
-                "NAVER 검색 데이터의 저장 및 재게시 정책 승인이 확인되지 않았습니다.",
+                "NAVER 결과 데이터를 DB에 저장해 가공한 뒤 공개 API로 재게시할 "
+                "권리가 확인되지 않았습니다.",
                 FetchReasonCode.UNSUPPORTED_ACCESS,
             )
         return NaverTrendAdapter(

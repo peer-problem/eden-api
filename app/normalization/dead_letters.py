@@ -19,6 +19,7 @@ DEAD_LETTER_MAX_ATTEMPTS = 5
 @dataclass(frozen=True)
 class DeadLetterClaim:
     dead_letter_id: int
+    raw_record_id: int
     source_id: str
     run_id: str
     error_code: str
@@ -35,7 +36,7 @@ class DeadLetterBatchResult:
     pause_reason: str | None
 
 
-Normalizer = Callable[[str, sessionmaker[Session], str], object]
+Normalizer = Callable[[str, sessionmaker[Session], str, tuple[int, ...]], object]
 DirtyMarker = Callable[..., object]
 PauseReason = Callable[[], str | None]
 Clock = Callable[[], datetime]
@@ -102,7 +103,12 @@ def reprocess_dead_letters(
             )
         group_ids = [claim.dead_letter_id for claim in group]
         try:
-            normalizer(source_id, session_factory, run_id)
+            normalizer(
+                source_id,
+                session_factory,
+                run_id,
+                tuple(sorted({claim.raw_record_id for claim in group})),
+            )
             if _resolved_candidate_count(session_factory, group_ids) > 0:
                 dirty_marker(
                     source_id,
@@ -230,6 +236,7 @@ def _claim_batch(
             claims.append(
                 DeadLetterClaim(
                     dead_letter_id=row.dead_letter_id,
+                    raw_record_id=row.raw_record_id,
                     source_id=source_id,
                     run_id=run_id,
                     error_code=row.error_code,

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.ids import stable_eden_id
 from app.repositories.models import OfficialSourceInventory, SocialSourceInventory
+from app.sources.social import EXCLUDED_SOCIAL_SOURCE_IDS
 
 OFFICIAL_INVENTORY = (
     (
@@ -169,6 +170,7 @@ SOCIAL_REASONS = {
     "SRC_REDDIT": "Reddit Data API 사전 요청 승인과 OAuth 자격 증명이 없습니다.",
     "SRC_LINE": "관광시장 검색용 공개 API가 아니며 공식계정 소유자 insight만 제공합니다.",
 }
+EXCLUDED_SOCIAL_REASON = "사용자가 확정한 EDEN 제품 범위에서 제외되었습니다."
 
 
 def _upsert(session: Session, table, values: dict[str, Any], keys: set[str]) -> None:
@@ -208,6 +210,7 @@ def seed_source_inventories(session: Session, now: datetime) -> None:
         )
 
     for country, source_id, platform, tier in SOCIAL_INVENTORY:
+        excluded = source_id in EXCLUDED_SOCIAL_SOURCE_IDS
         _upsert(
             session,
             SocialSourceInventory.__table__,
@@ -217,12 +220,18 @@ def seed_source_inventories(session: Session, now: datetime) -> None:
                 "source_id": source_id,
                 "platform_name": platform,
                 "relevance_tier": tier,
-                "status": "unavailable",
-                "status_reason": SOCIAL_REASONS[source_id],
+                "status": "excluded" if excluded else "unavailable",
+                "status_reason": (
+                    EXCLUDED_SOCIAL_REASON if excluded else SOCIAL_REASONS[source_id]
+                ),
                 "docs_url": SOCIAL_DOCS[source_id],
                 "verified_at": checked_at,
                 "evidence": {
-                    "verification": "official platform developer documentation",
+                    "verification": (
+                        "explicit product scope exclusion"
+                        if excluded
+                        else "official platform developer documentation"
+                    ),
                     "checked_on": "2026-08-11",
                 },
                 "created_at": now,

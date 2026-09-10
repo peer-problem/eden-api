@@ -41,19 +41,14 @@ from app.repositories.models import (
     SourceRegistry,
     SourceState,
 )
+from app.sources.social import REQUESTABLE_SOCIAL_SOURCES
 
 ENDPOINT_SOURCES: dict[str, tuple[str, ...]] = {
     "trends": (
         "SRC_NAVER_TREND",
         "SRC_YOUTUBE",
         "SRC_INSTAGRAM",
-        "SRC_TIKTOK",
-        "SRC_X",
         "SRC_REDDIT",
-        "SRC_WEIBO",
-        "SRC_DOUYIN",
-        "SRC_XIAOHONGSHU",
-        "SRC_LINE",
         "SRC_FACEBOOK",
         "SRC_KTO_RESOURCE_DEMAND",
     ),
@@ -86,13 +81,7 @@ ENDPOINT_SOURCES: dict[str, tuple[str, ...]] = {
         "SRC_BOK_ECOS",
         "SRC_YOUTUBE",
         "SRC_INSTAGRAM",
-        "SRC_TIKTOK",
-        "SRC_X",
         "SRC_REDDIT",
-        "SRC_WEIBO",
-        "SRC_DOUYIN",
-        "SRC_XIAOHONGSHU",
-        "SRC_LINE",
         "SRC_FACEBOOK",
     ),
     "market_alerts": ("SRC_EMBASSY_NOTICE", "SRC_KETA", "SRC_KTO_MARKET_TREND"),
@@ -104,18 +93,7 @@ ENDPOINT_SOURCES: dict[str, tuple[str, ...]] = {
     ),
 }
 
-TREND_SOCIAL_SOURCES = {
-    "youtube": "SRC_YOUTUBE",
-    "instagram": "SRC_INSTAGRAM",
-    "tiktok": "SRC_TIKTOK",
-    "x": "SRC_X",
-    "reddit": "SRC_REDDIT",
-    "weibo": "SRC_WEIBO",
-    "douyin": "SRC_DOUYIN",
-    "xiaohongshu": "SRC_XIAOHONGSHU",
-    "line": "SRC_LINE",
-    "facebook": "SRC_FACEBOOK",
-}
+TREND_SOCIAL_SOURCES = REQUESTABLE_SOCIAL_SOURCES
 INBOUND_SOCIAL_SOURCES = dict(TREND_SOCIAL_SOURCES)
 INBOUND_SCORE_BLOCKS = frozenset({"visitors", "flights", "fx", "social_interest"})
 PLACE_LANGUAGE_SOURCES = {
@@ -147,11 +125,7 @@ def _request_source_ids(endpoint: str, scope: dict[str, object]) -> tuple[str, .
             "diversity": "SRC_KTO_DIVERSITY",
         }
         return tuple(
-            sorted(
-                sources_by_block[block]
-                for block in blocks
-                if block in sources_by_block
-            )
+            sorted(sources_by_block[block] for block in blocks if block in sources_by_block)
         )
     if endpoint == "visitor_timeseries":
         return (
@@ -200,13 +174,11 @@ def _request_source_ids(endpoint: str, scope: dict[str, object]) -> tuple[str, .
             "visitors": ("SRC_KTO_INBOUND_STATS",),
             "flights": ("SRC_AIRPORT_COUNTRY",),
             "flight_schedule": ("SRC_AIRPORT_WEEKLY",),
-            "fx": ("SRC_KEXIM_FX",),
+            "fx": ("SRC_KEXIM_FX", "SRC_BOK_ECOS"),
             "tourism_balance": ("SRC_BOK_ECOS",),
         }
         source_ids = {
-            source_id
-            for block in blocks
-            for source_id in sources_by_block.get(str(block), ())
+            source_id for block in blocks for source_id in sources_by_block.get(str(block), ())
         }
         if "social_interest" in blocks:
             requested = scope.get("social_sources")
@@ -229,10 +201,43 @@ def _request_source_ids(endpoint: str, scope: dict[str, object]) -> tuple[str, .
 def _included_inbound_score(
     visitor_data: dict[str, object],
     include: set[str],
+    *,
+    excluded_social_contributed: bool = False,
 ) -> object | None:
-    if not INBOUND_SCORE_BLOCKS.issubset(include):
+    if excluded_social_contributed or not INBOUND_SCORE_BLOCKS.issubset(include):
         return None
     return visitor_data.get("inbound_score")
+
+
+def _selected_inbound_social_interest(
+    value: object,
+    requested_sources: set[str],
+) -> tuple[dict[str, object] | None, bool]:
+    if not isinstance(value, dict):
+        return None, False
+    youtube_value = value.get("youtube")
+    youtube_contributed = isinstance(youtube_value, dict) and (
+        youtube_value.get("availability") != "unavailable" or youtube_value.get("score") is not None
+    )
+    excluded_contributed = (
+        any(source not in INBOUND_SOCIAL_SOURCES for source in value) or youtube_contributed
+    )
+    selected = {
+        source: source_value
+        for source, source_value in value.items()
+        if source in INBOUND_SOCIAL_SOURCES
+        and (not requested_sources or source in requested_sources)
+    }
+    if "youtube" in selected:
+        selected["youtube"] = {
+            "posts": None,
+            "views": None,
+            "reactions": None,
+            "score": None,
+            "availability": "unavailable",
+            "reason": "YouTube 지역 필터는 재생 가능 지역이며 시청자 거주 국가가 아닙니다.",
+        }
+    return selected or None, excluded_contributed
 
 
 class ReadRepository(Protocol):
@@ -282,9 +287,7 @@ def _selected_snapshot_as_of(
     if watermarks:
         return min(value.astimezone(UTC) for value in watermarks)
     fallback = [
-        value
-        for snapshot in snapshots
-        if (value := _as_aware_utc(snapshot.as_of)) is not None
+        value for snapshot in snapshots if (value := _as_aware_utc(snapshot.as_of)) is not None
     ]
     return min(fallback) if fallback else None
 
@@ -386,12 +389,9 @@ class MariaDBReadRepository:
             if existing is not None:
                 self._payload_cache_bytes -= existing[1]
             while (
-                self._payload_cache
-                and self._payload_cache_bytes + size > PAYLOAD_CACHE_MAX_BYTES
+                self._payload_cache and self._payload_cache_bytes + size > PAYLOAD_CACHE_MAX_BYTES
             ):
-                _evicted_id, (_evicted_data, evicted_size) = self._payload_cache.popitem(
-                    last=False
-                )
+                _evicted_id, (_evicted_data, evicted_size) = self._payload_cache.popitem(last=False)
                 self._payload_cache_bytes -= evicted_size
             self._payload_cache[payload_id] = (data, size)
             self._payload_cache_bytes += size
@@ -409,9 +409,7 @@ class MariaDBReadRepository:
                 mapped_ids = tuple(
                     session.scalars(
                         select(PlaceSourceMap.eden_place_id)
-                        .where(
-                        PlaceSourceMap.external_content_id == identifier
-                        )
+                        .where(PlaceSourceMap.external_content_id == identifier)
                         .distinct()
                         .order_by(PlaceSourceMap.eden_place_id)
                     )
@@ -660,9 +658,7 @@ class MariaDBReadRepository:
         phi1, phi2 = radians(lat1), radians(lat2)
         delta_phi = radians(lat2 - lat1)
         delta_lambda = radians(lng2 - lng1)
-        value = sin(delta_phi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(
-            delta_lambda / 2
-        ) ** 2
+        value = sin(delta_phi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(delta_lambda / 2) ** 2
         return radius * 2 * asin(sqrt(value))
 
     def _fetch_place_detail(self, session: Session, key: str) -> ReadResult:
@@ -794,9 +790,7 @@ class MariaDBReadRepository:
                             PlaceLocalization.eden_place_id == relation.to_place_id,
                             PlaceLocalization.language.in_((requested_language, "ko")),
                         )
-                        .order_by(
-                            (PlaceLocalization.language == requested_language).desc()
-                        )
+                        .order_by((PlaceLocalization.language == requested_language).desc())
                         .limit(1)
                     )
                     if title is None:
@@ -852,10 +846,7 @@ class MariaDBReadRepository:
                         select(NearbyShop)
                         .join(
                             latest_shops,
-                            (
-                                NearbyShop.external_shop_id
-                                == latest_shops.c.external_shop_id
-                            )
+                            (NearbyShop.external_shop_id == latest_shops.c.external_shop_id)
                             & (NearbyShop.observed_at == latest_shops.c.observed_at),
                         )
                         .where(NearbyShop.area_id == place.area_id)
@@ -875,15 +866,8 @@ class MariaDBReadRepository:
                     )
                     for shop in candidates
                 ]
-                shop_rows = [
-                    shop
-                    for shop, distance in with_distance
-                    if distance <= radius_m
-                ]
-                if (
-                    candidates
-                    or source_status.get("SRC_SEMAS_SHOPS") == SourceStatus.AVAILABLE
-                ):
+                shop_rows = [shop for shop, distance in with_distance if distance <= radius_m]
+                if candidates or source_status.get("SRC_SEMAS_SHOPS") == SourceStatus.AVAILABLE:
                     nearby_data = [
                         {
                             "shop_id": shop.eden_shop_id,
@@ -930,9 +914,7 @@ class MariaDBReadRepository:
             "category": place.category,
             "address": selected.address,
             "location": (
-                {"lat": float(place.lat), "lng": float(place.lng)}
-                if has_location
-                else None
+                {"lat": float(place.lat), "lng": float(place.lng)} if has_location else None
             ),
             "location_availability": {
                 "availability": "available" if has_location else "unavailable",
@@ -946,9 +928,7 @@ class MariaDBReadRepository:
         }
         return ReadResult(
             data=data,
-            availability=(
-                Availability.PARTIAL if partial_reasons else Availability.AVAILABLE
-            ),
+            availability=(Availability.PARTIAL if partial_reasons else Availability.AVAILABLE),
             reason=" ".join(partial_reasons) or None,
             as_of=as_of,
             calculated_at=as_of,
@@ -1008,7 +988,9 @@ class MariaDBReadRepository:
         include = set(scope.get("include") or [])
         currency = scope.get("currency")
         forecast_days = int(scope.get("forecast_days", 7))
-        requested_social_sources = set(scope.get("social_sources") or [])
+        requested_social_sources = set(scope.get("social_sources") or []).intersection(
+            INBOUND_SOCIAL_SOURCES
+        )
         snapshots: list[ReadModelSnapshot] = []
         markets: list[dict[str, object]] = []
         block_states: list[Availability] = []
@@ -1039,23 +1021,12 @@ class MariaDBReadRepository:
             fx = visitor_data.get("fx")
             if currency is not None:
                 fx_by_currency = visitor_data.get("fx_by_currency")
-                fx = (
-                    fx_by_currency.get(currency)
-                    if isinstance(fx_by_currency, dict)
-                    else None
-                )
-            schedule = _project_flight_schedule(
-                visitor_data.get("flight_schedule"), forecast_days
+                fx = fx_by_currency.get(currency) if isinstance(fx_by_currency, dict) else None
+            schedule = _project_flight_schedule(visitor_data.get("flight_schedule"), forecast_days)
+            social_interest, excluded_social_contributed = _selected_inbound_social_interest(
+                visitor_data.get("social_interest"),
+                requested_social_sources,
             )
-            social_interest = visitor_data.get("social_interest")
-            if not isinstance(social_interest, dict):
-                social_interest = None
-            elif requested_social_sources:
-                social_interest = {
-                    source: value
-                    for source, value in social_interest.items()
-                    if source in requested_social_sources
-                } or None
             source_availability: dict[str, dict[str, str | None]] = {}
             for block in sorted(include):
                 block_data = snapshot_blocks.get(block, {})
@@ -1085,17 +1056,33 @@ class MariaDBReadRepository:
                         "availability": schedule["availability"],
                         "reason": schedule["reason"],
                     }
-                elif block == "social_interest" and requested_social_sources:
-                    available_count = len(social_interest or {})
+                elif block == "social_interest":
+                    available_count = sum(
+                        isinstance(value, dict) and value.get("availability") != "unavailable"
+                        for value in (social_interest or {}).values()
+                    )
+                    expected_count = (
+                        len(requested_social_sources)
+                        if requested_social_sources
+                        else len(INBOUND_SOCIAL_SOURCES)
+                    )
                     if available_count == 0:
                         block_data = {
                             "availability": "unavailable",
-                            "reason": "요청한 SNS 원천의 관측이 없습니다.",
+                            "reason": (
+                                "요청한 SNS 원천의 관측이 없습니다."
+                                if requested_social_sources
+                                else "제품 범위에 포함된 SNS 원천의 관측이 없습니다."
+                            ),
                         }
-                    elif available_count < len(requested_social_sources):
+                    elif available_count < expected_count:
                         block_data = {
                             "availability": "partial",
-                            "reason": "요청한 일부 SNS 원천의 관측이 없습니다.",
+                            "reason": (
+                                "요청한 일부 SNS 원천의 관측이 없습니다."
+                                if requested_social_sources
+                                else "제품 범위에 포함된 일부 SNS 원천의 관측이 없습니다."
+                            ),
                         }
                 raw_availability = block_data.get("availability", "unavailable")
                 try:
@@ -1117,23 +1104,33 @@ class MariaDBReadRepository:
                 "arriving_flights": (
                     visitor_data.get("arriving_flights") if "flights" in include else None
                 ),
-                "passengers": (
-                    visitor_data.get("passengers") if "flights" in include else None
-                ),
-                "flight_schedule": (
-                    schedule if "flight_schedule" in include else None
-                ),
+                "passengers": (visitor_data.get("passengers") if "flights" in include else None),
+                "flight_schedule": (schedule if "flight_schedule" in include else None),
                 "fx": fx if "fx" in include else None,
                 "tourism_balance_usd": (
                     visitor_data.get("tourism_balance_usd")
                     if "tourism_balance" in include
                     else None
                 ),
-                "social_interest": (
-                    social_interest if "social_interest" in include else None
+                "tourism_balance_period": (
+                    visitor_data.get("tourism_balance_period")
+                    if "tourism_balance" in include
+                    else None
                 ),
+                "tourism_balance_scope": (
+                    visitor_data.get("tourism_balance_scope")
+                    if "tourism_balance" in include
+                    else None
+                ),
+                "social_interest": (social_interest if "social_interest" in include else None),
                 "source_availability": source_availability,
-                "inbound_score": _included_inbound_score(visitor_data, include),
+                "inbound_score": (
+                    _included_inbound_score(
+                        visitor_data,
+                        include,
+                        excluded_social_contributed=excluded_social_contributed,
+                    )
+                ),
                 "sources": source_rows,
             }
             markets.append(market)
@@ -1250,12 +1247,8 @@ class MariaDBReadRepository:
         items: list[dict[str, object]] = []
         fallback_used = False
         for document, revision in rows:
-            requested_title = (
-                revision.title_en if language == "en" else revision.title_ko
-            )
-            requested_summary = (
-                revision.summary_en if language == "en" else revision.summary_ko
-            )
+            requested_title = revision.title_en if language == "en" else revision.title_ko
+            requested_summary = revision.summary_en if language == "en" else revision.summary_ko
             fallback = requested_title is None
             fallback_used = fallback_used or fallback
             items.append(
@@ -1272,9 +1265,7 @@ class MariaDBReadRepository:
                     "translation_availability": {
                         "availability": "unavailable" if fallback else "available",
                         "reason": (
-                            "요청 언어 번역이 없어 원문 제목을 반환합니다."
-                            if fallback
-                            else None
+                            "요청 언어 번역이 없어 원문 제목을 반환합니다." if fallback else None
                         ),
                     },
                     "summary_availability": {
@@ -1376,8 +1367,7 @@ class MariaDBReadRepository:
             stale_by_age = bool(
                 data_as_of is not None
                 and policy is not None
-                and (now - data_as_of).total_seconds()
-                > policy.max_acceptable_age_seconds
+                and (now - data_as_of).total_seconds() > policy.max_acceptable_age_seconds
             )
             if status == SourceStatus.AVAILABLE and stale_by_age:
                 status = SourceStatus.STALE

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -28,6 +28,7 @@ from app.repositories.models import (
     PlaceLocalization,
     PlaceRelation,
     PlaceSourceMap,
+    ProvenanceEdge,
     RawRecord,
 )
 
@@ -40,9 +41,19 @@ TOUR_LANGUAGES = {
 HUB_SOURCE = "SRC_KTO_PLACE_HUB"
 RELATED_SOURCE = "SRC_KTO_PLACE_RELATED"
 SHOP_SOURCE = "SRC_SEMAS_SHOPS"
+SHOP_WRITE_BATCH_SIZE = 100
 
 
 def _coordinates(row: dict[str, Any], x: str, y: str) -> tuple[Decimal | None, Decimal | None]:
+    if (x, y) == ("mapx", "mapy"):
+        row = {
+            **row,
+            **{
+                key: None
+                for key in (x, y)
+                if isinstance(row.get(key), str) and row[key].strip().lower() == "null"
+            },
+        }
     lng = _decimal(row, x)
     lat = _decimal(row, y)
     if lng is None or lat is None:
@@ -127,6 +138,10 @@ def _upsert_place(
 ) -> str:
     now = datetime.now(UTC).replace(tzinfo=None)
     place_id = _existing_place_id(session, source_id, external_id, lat, lng, namespace)
+    source_updated_at = getattr(raw, "source_updated_at", None)
+    incoming_timestamp = (
+        _database_time(source_updated_at) if source_updated_at is not None else None
+    )
     place_values = {
         "eden_place_id": place_id,
         "area_id": area_id,
@@ -137,18 +152,25 @@ def _upsert_place(
         "created_at": now,
         "updated_at": now,
     }
-    session.execute(
-        insert(Place)
-        .values(**place_values)
-        .on_duplicate_key_update(
-            area_id=area_id,
-            category=category,
-            lat=lat,
-            lng=lng,
-            merge_status="active",
-            updated_at=now,
-        )
+    place_is_current = _output_accepts_raw(
+        session,
+        "place",
+        place_id,
+        incoming_timestamp,
     )
+    if place_is_current:
+        session.execute(
+            insert(Place)
+            .values(**place_values)
+            .on_duplicate_key_update(
+                area_id=area_id,
+                category=category,
+                lat=lat,
+                lng=lng,
+                merge_status="active",
+                updated_at=now,
+            )
+        )
     session.execute(
         insert(PlaceSourceMap)
         .values(
@@ -160,41 +182,91 @@ def _upsert_place(
         )
         .on_duplicate_key_update(eden_place_id=place_id, updated_at=now)
     )
-    session.execute(
-        insert(PlaceLocalization)
-        .values(
-            eden_place_id=place_id,
-            language=language,
-            title=title[:500],
-            address=address[:1000] if address else None,
-            overview=overview,
-            is_fallback=False,
-            created_at=now,
-            updated_at=now,
-        )
-        .on_duplicate_key_update(
-            title=title[:500],
-            address=address[:1000] if address else None,
-            overview=overview,
-            is_fallback=False,
-            updated_at=now,
-        )
+    localization_id = _existing_localization_id(session, place_id, language)
+    localization_is_current = localization_id is None or _output_accepts_raw(
+        session,
+        "place_localization",
+        str(localization_id),
+        incoming_timestamp,
     )
-    localization_id = session.scalar(
-        select(PlaceLocalization.id).where(
-            PlaceLocalization.eden_place_id == place_id,
-            PlaceLocalization.language == language,
+    if localization_is_current:
+        session.execute(
+            insert(PlaceLocalization)
+            .values(
+                eden_place_id=place_id,
+                language=language,
+                title=title[:500],
+                address=address[:1000] if address else None,
+                overview=overview,
+                is_fallback=False,
+                created_at=now,
+                updated_at=now,
+            )
+            .on_duplicate_key_update(
+                title=title[:500],
+                address=address[:1000] if address else None,
+                overview=overview,
+                is_fallback=False,
+                updated_at=now,
+            )
         )
-    )
+    if localization_id is None:
+        localization_id = session.scalar(
+            select(PlaceLocalization.id).where(
+                PlaceLocalization.eden_place_id == place_id,
+                PlaceLocalization.language == language,
+            )
+        )
+        session.info.setdefault("eden_place_localization", {})[
+            (place_id, language)
+        ] = localization_id
     if localization_id is None:
         raise RuntimeError("place localization was not resolved")
     _place_provenance(session, place_id, localization_id, raw.raw_record_id)
     session.info.setdefault("eden_place_source_map", {})[(source_id, external_id)] = place_id
     if source_id in TOUR_LANGUAGES:
         session.info.setdefault("eden_tour_content_map", {})[external_id] = place_id
-    if lat is not None and lng is not None:
+    if place_is_current and lat is not None and lng is not None:
         session.info.setdefault("eden_place_coordinate_map", {})[(lat, lng)] = place_id
     return place_id
+
+
+def _existing_localization_id(
+    session: Session,
+    place_id: str,
+    language: str,
+) -> int | None:
+    cache = session.info.setdefault("eden_place_localization", {})
+    cache_key = (place_id, language)
+    if cache_key not in cache:
+        cache[cache_key] = session.scalar(
+            select(PlaceLocalization.id).where(
+                PlaceLocalization.eden_place_id == place_id,
+                PlaceLocalization.language == language,
+            )
+        )
+    return cache[cache_key]
+
+
+def _output_accepts_raw(
+    session: Session,
+    output_type: str,
+    output_id: str,
+    incoming_timestamp: datetime | None,
+) -> bool:
+    if incoming_timestamp is None:
+        return True
+    latest_timestamp = session.scalar(
+        select(func.max(RawRecord.source_updated_at))
+        .select_from(ProvenanceEdge)
+        .join(RawRecord, RawRecord.raw_record_id == ProvenanceEdge.raw_record_id)
+        .where(
+            ProvenanceEdge.output_type == output_type,
+            ProvenanceEdge.output_id == output_id,
+            ProvenanceEdge.formula_version == "place_identity_v1",
+        )
+    )
+    return latest_timestamp is None or latest_timestamp <= incoming_timestamp
 
 
 def _place_provenance(
@@ -524,22 +596,97 @@ def normalize_shop_run(session_factory: sessionmaker[Session], run_id: str) -> i
                 except Exception as exc:
                     _add_dead_letter(session, raw, "nearby_shop_row_schema", exc)
             session.commit()
-        for group in groups.values():
-            values = group["values"]
-            session.execute(insert(NearbyShop).values(**values).on_duplicate_key_update(**values))
-            shop_id = session.scalar(
-                select(NearbyShop.id).where(
-                    NearbyShop.source_id == SHOP_SOURCE,
-                    NearbyShop.external_shop_id == values["external_shop_id"],
-                    NearbyShop.observed_at == values["observed_at"],
-                )
-            )
-            if shop_id is None:
-                raise RuntimeError("nearby shop was not resolved")
-            _provenance(session, "nearby_shop", shop_id, group["raw_record_ids"])
-            normalized += 1
-            if normalized % 500 == 0:
-                session.commit()
+        normalized = _write_shop_groups(session, list(groups.values()))
         _finish_run(session, run_id, normalized)
         session.commit()
     return normalized
+
+
+def _write_shop_groups(session: Session, groups: list[dict[str, Any]]) -> int:
+    normalized = 0
+    for offset in range(0, len(groups), SHOP_WRITE_BATCH_SIZE):
+        batch = groups[offset : offset + SHOP_WRITE_BATCH_SIZE]
+        _write_shop_batch(session, batch)
+        normalized += len(batch)
+        if normalized % 500 == 0:
+            session.commit()
+    return normalized
+
+
+def _write_shop_batch(session: Session, groups: list[dict[str, Any]]) -> None:
+    if not groups:
+        return
+    if len(groups) > SHOP_WRITE_BATCH_SIZE:
+        raise ValueError(f"shop write batch exceeds {SHOP_WRITE_BATCH_SIZE} rows")
+
+    rows = [group["values"] for group in groups]
+    upsert = insert(NearbyShop).values(rows)
+    incoming_is_current = NearbyShop.source_updated_at <= upsert.inserted.source_updated_at
+    update_values = [
+        (
+            name,
+            func.if_(
+                incoming_is_current,
+                upsert.inserted[name],
+                NearbyShop.__table__.c[name],
+            ),
+        )
+        for name in rows[0]
+        if name != "source_updated_at"
+    ]
+    # MariaDB evaluates assignments from left to right. Keep this assignment last so
+    # every condition above compares against the previously stored source timestamp.
+    update_values.append(
+        (
+            "source_updated_at",
+            func.if_(
+                incoming_is_current,
+                upsert.inserted.source_updated_at,
+                NearbyShop.source_updated_at,
+            ),
+        )
+    )
+    session.execute(upsert.on_duplicate_key_update(update_values))
+
+    keys = [(row["external_shop_id"], row["observed_at"]) for row in rows]
+    resolved = session.execute(
+        select(
+            NearbyShop.external_shop_id,
+            NearbyShop.observed_at,
+            NearbyShop.id,
+        ).where(
+            NearbyShop.source_id == SHOP_SOURCE,
+            tuple_(NearbyShop.external_shop_id, NearbyShop.observed_at).in_(keys),
+        )
+    ).all()
+    shop_ids = {
+        (external_id, observed_at): shop_id
+        for external_id, observed_at, shop_id in resolved
+    }
+
+    provenance_rows: list[dict[str, Any]] = []
+    for group, row in zip(groups, rows, strict=True):
+        key = (row["external_shop_id"], row["observed_at"])
+        shop_id = shop_ids.get(key)
+        if shop_id is None:
+            raise RuntimeError("nearby shop was not resolved")
+        created_at = datetime.now(UTC).replace(tzinfo=None)
+        provenance_rows.extend(
+            {
+                "output_type": "nearby_shop",
+                "output_id": str(shop_id),
+                "raw_record_id": raw_record_id,
+                "formula_version": "identity_v1",
+                "created_at": created_at,
+            }
+            for raw_record_id in sorted(set(group["raw_record_ids"]))
+        )
+
+    for offset in range(0, len(provenance_rows), SHOP_WRITE_BATCH_SIZE):
+        edge_batch = provenance_rows[offset : offset + SHOP_WRITE_BATCH_SIZE]
+        edge_upsert = insert(ProvenanceEdge).values(edge_batch)
+        session.execute(
+            edge_upsert.on_duplicate_key_update(
+                provenance_id=ProvenanceEdge.provenance_id
+            )
+        )

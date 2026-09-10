@@ -3,9 +3,29 @@ from __future__ import annotations
 import sys
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import scripts.phase1_soak as phase1_soak
+from app.api.v1.routes import InboundSocialSource, TrendSocialSource
 from app.observability.soak import PHASE1_SOAK_REQUIRED_SECONDS, evaluate_samples
+
+
+def test_public_probes_only_request_supported_social_sources(monkeypatch: Any) -> None:
+    from typing import get_args
+
+    monkeypatch.setattr(phase1_soak, "_reference_identifiers", lambda: ("11", "1", "JP"))
+    monkeypatch.setattr(
+        phase1_soak,
+        "_probe",
+        lambda endpoint, path, **kwargs: {"endpoint": endpoint, "path": path},
+    )
+    probes = phase1_soak.probe_public_routes()
+    social_probes = [p for p in probes if p["endpoint"] in {"trends", "inbound_markets"}]
+    assert len(social_probes) == 2
+    for probe in social_probes:
+        sources = parse_qs(urlsplit(probe["path"]).query)["social_sources"]
+        source_type = TrendSocialSource if probe["endpoint"] == "trends" else InboundSocialSource
+        assert set(sources) == set(get_args(source_type))
 
 
 def _sample(

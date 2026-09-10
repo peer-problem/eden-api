@@ -62,6 +62,9 @@ SKIP_EXTENSIONS = (
     ".pdf",
 )
 DATE_PATTERN = re.compile(r"(?<!\d)(20\d{2})[./-](0?[1-9]|1[0-2])[./-](0?[1-9]|[12]\d|3[01])(?!\d)")
+MOFA_VIEW_PATTERN = re.compile(
+    r'''^\s*(?:return\s+)?f_view\(\s*['"](\d{1,20})['"]\s*\)\s*;'''
+)
 
 
 def sanitize_html(payload: bytes) -> str:
@@ -91,9 +94,20 @@ def extract_notice_links(
     soup = BeautifulSoup(payload, "html.parser")
     found: list[tuple[str, str]] = []
     seen: set[str] = set()
-    for anchor in soup.find_all("a", href=True):
+    anchors = soup.find_all("a", href=True)
+    if urlparse(base_url).path.endswith("/list.do"):
+        anchors.sort(
+            key=lambda anchor: (
+                MOFA_VIEW_PATTERN.match(str(anchor.get("onclick", ""))) is None
+            )
+        )
+    for anchor in anchors:
         title = " ".join(anchor.get_text(" ", strip=True).split())
         href = str(anchor.get("href", "")).strip()
+        if href.startswith("#") and urlparse(base_url).path.endswith("/list.do"):
+            view_match = MOFA_VIEW_PATTERN.match(str(anchor.get("onclick", "")))
+            if view_match:
+                href = f"./view.do?seq={view_match.group(1)}&page=1"
         absolute = urljoin(base_url, href)
         parsed_href = urlparse(absolute)
         searchable = f"{title} {parsed_href.path} {parsed_href.query}".lower()
@@ -335,10 +349,12 @@ class OfficialNoticeAdapter(SourceAdapter):
                                 self.allowed_hosts,
                                 limit,
                             )
+                            next_links: list[tuple[str, str, int]] = []
                             for nested_url, nested_title in nested_links:
                                 if nested_url not in seen:
                                     seen.add(nested_url)
-                                    queue.append((nested_url, nested_title, depth + 1))
+                                    next_links.append((nested_url, nested_title, depth + 1))
+                            queue[0:0] = next_links
                             continue
                         items.append(
                             parse_notice_detail(detail, canonical, title_hint, target, now)

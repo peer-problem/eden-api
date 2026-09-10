@@ -38,7 +38,7 @@ export function TrendsPage() {
       <PageHeader
         eyebrow="Trend intelligence"
         title="트렌드"
-        description="검색 관심과 소셜 신호를 서버가 게시한 지수 그대로 비교합니다."
+        description="검색 관심과 소셜 신호를 비교합니다. YouTube 값은 검색 결과 영상의 표본 집계이며 시청자 국적별 통계가 아닙니다."
       />
       <QueryForm
         onSubmit={(event) => {
@@ -65,6 +65,7 @@ export function TrendsPage() {
             <option value="JP">일본</option>
             <option value="CN">중국</option>
             <option value="TW">대만</option>
+            <option value="PH">필리핀</option>
           </select>
         </Field>
         <Field label="기간">

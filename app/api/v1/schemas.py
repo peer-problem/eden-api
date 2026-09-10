@@ -285,7 +285,12 @@ class InboundMarket(ApiModel):
     passengers: int | None = Field(default=None, ge=0)
     flight_schedule: FlightSchedule | None = None
     fx: FxData | None = None
-    tourism_balance_usd: float | None = None
+    tourism_balance_usd: float | None = Field(
+        default=None,
+        description="한국 전체의 월간 일반여행 수지(USD). 해당 국가와의 양자 수지가 아닙니다.",
+    )
+    tourism_balance_scope: Literal["KR_total"] | None = None
+    tourism_balance_period: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
     social_interest: dict[str, SocialInterest] | None = None
     source_availability: dict[str, BlockAvailability]
     inbound_score: float | None = Field(default=None, ge=0, le=100)

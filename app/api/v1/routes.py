@@ -43,25 +43,13 @@ RepositoryDep = Annotated[ReadRepository, Depends(get_read_repository)]
 TrendSocialSource = Literal[
     "youtube",
     "instagram",
-    "tiktok",
-    "x",
     "reddit",
-    "weibo",
-    "douyin",
-    "xiaohongshu",
-    "line",
     "facebook",
 ]
 InboundSocialSource = Literal[
     "youtube",
     "instagram",
-    "tiktok",
-    "x",
     "reddit",
-    "weibo",
-    "douyin",
-    "xiaohongshu",
-    "line",
     "facebook",
 ]
 

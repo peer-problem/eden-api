@@ -19,6 +19,7 @@ from app.normalization.public_data import (
 )
 from app.normalization.raw_content import decoded_raw_json
 from app.repositories.models import Country, SocialObservation
+from app.sources.social import EXCLUDED_SOCIAL_SOURCE_IDS
 
 SOCIAL_SOURCES = {
     "SRC_NAVER_TREND",
@@ -32,7 +33,7 @@ SOCIAL_SOURCES = {
     "SRC_XIAOHONGSHU",
     "SRC_LINE",
     "SRC_FACEBOOK",
-}
+} - EXCLUDED_SOCIAL_SOURCE_IDS
 
 
 def _nonnegative_integer(row: dict[str, object], name: str) -> int | None:
@@ -63,9 +64,7 @@ def normalize_social_run(
                     raise ValueError("social raw record source_id mismatch")
                 country_code = (_text(row, "country", required=True) or "").upper()
                 country_id = session.scalar(
-                    select(Country.eden_country_id).where(
-                        Country.iso_alpha2 == country_code
-                    )
+                    select(Country.eden_country_id).where(Country.iso_alpha2 == country_code)
                 )
                 if country_id is None:
                     raise ValueError("social country is outside market_cohort_v1")
@@ -77,9 +76,7 @@ def normalize_social_run(
                 if ratio is not None:
                     ratio = _bounded_index(row, "search_ratio")
                 flags = row.get("quality_flags")
-                if not isinstance(flags, list) or not all(
-                    isinstance(flag, str) for flag in flags
-                ):
+                if not isinstance(flags, list) or not all(isinstance(flag, str) for flag in flags):
                     raise ValueError("social quality_flags must be a string list")
                 tombstone = bool(raw.tombstone)
                 if tombstone and "source_tombstone" not in flags:
@@ -117,9 +114,7 @@ def normalize_social_run(
                 ):
                     raise ValueError("social aggregate contains no metric")
                 session.execute(
-                    insert(SocialObservation)
-                    .values(**values)
-                    .on_duplicate_key_update(**values)
+                    insert(SocialObservation).values(**values).on_duplicate_key_update(**values)
                 )
                 observation_id = session.scalar(
                     select(SocialObservation.observation_id).where(

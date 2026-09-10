@@ -5,7 +5,9 @@ from datetime import UTC, datetime
 from math import cos, floor, log, pi, sin, tan
 from typing import Any
 
-DOCUMENTATION_VERIFIED_AT = datetime(2026, 8, 11, tzinfo=UTC)
+DOCUMENTATION_VERIFIED_AT = datetime(2026, 9, 10, tzinfo=UTC)
+
+KTO_RELATED_PLACES_PER_RUN = 20
 
 KTO_ADMINISTRATIVE_AREA_CODES = (
     "11",
@@ -38,8 +40,7 @@ SOCIAL_SCOPE_SOURCES = {
     "SRC_NAVER_TREND",
     "SRC_YOUTUBE",
     "SRC_INSTAGRAM",
-    "SRC_TIKTOK",
-    "SRC_X",
+    "SRC_FACEBOOK",
     "SRC_REDDIT",
 }
 
@@ -195,7 +196,10 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                     "response_field": "baseYmd",
                     "format": "%Y%m%d",
                 },
-                "max_pages": 100,
+                # The local-government operation currently declares about
+                # 340 pages for this window. Keep the collection bounded while
+                # allowing a complete published response.
+                "max_pages": 400,
             }
             for operation in ("metcoRegnVisitrDDList", "locgoRegnVisitrDDList")
         ]
@@ -221,9 +225,11 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
     "SRC_TOUR_EN": _TOURAPI_CATALOG,
     "SRC_TOUR_JA": _TOURAPI_CATALOG,
     "SRC_TOUR_ZH_CN": _TOURAPI_CATALOG,
-    # These three scopes are populated from the authoritative MOIS sigungu
-    # dimension after that dimension is imported.  An empty operation list is
-    # intentionally unavailable rather than issuing an invalid broad request.
+    # Hub, visitor forecast and weather scopes are populated from the
+    # authoritative MOIS sigungu dimension. Related-place collection also
+    # requires a real hub-place name and is populated at runtime. An empty
+    # operation list is intentionally unavailable rather than issuing an
+    # invalid broad request.
     "SRC_KTO_PLACE_HUB": {"operations": []},
     "SRC_KTO_PLACE_RELATED": {"operations": []},
     "SRC_KTO_VISITOR_FORECAST": {"operations": []},
@@ -236,8 +242,8 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "external_key": "festival:all",
                 "response_type_param": "type",
                 "watermark": {
-                    "response_field": "modifiedtime",
-                    "format": "%Y%m%d%H%M%S",
+                    "response_field": "referenceDate",
+                    "format": "%Y-%m-%d",
                 },
                 "max_pages": 100,
             }
@@ -318,13 +324,11 @@ def kto_sigungu_operations(
     """Build bounded, documented KTO operations for active MOIS sigungu codes."""
     if source_id not in {
         "SRC_KTO_PLACE_HUB",
-        "SRC_KTO_PLACE_RELATED",
         "SRC_KTO_VISITOR_FORECAST",
     }:
         return []
     operation = {
         "SRC_KTO_PLACE_HUB": "areaBasedList1",
-        "SRC_KTO_PLACE_RELATED": "areaBasedList1",
         "SRC_KTO_VISITOR_FORECAST": "tatsCnctrRatedList",
     }[source_id]
     rows: list[dict[str, Any]] = []
@@ -355,7 +359,51 @@ def kto_sigungu_operations(
         }
         if "baseYm" in params:
             request["watermark"] = {"param": "baseYm", "format": "%Y%m"}
+        elif source_id == "SRC_KTO_VISITOR_FORECAST":
+            request["watermark"] = {
+                "response_field": "baseYmd",
+                "format": "%Y%m%d",
+            }
         rows.append(request)
+    return rows
+
+
+def kto_related_place_operations(
+    places: list[tuple[str, str, str]],
+) -> list[dict[str, Any]]:
+    """Build one bounded batch of documented related-place keyword requests."""
+    rows: list[dict[str, Any]] = []
+    for place_id, code, raw_keyword in places:
+        keyword = raw_keyword.strip()
+        if (
+            len(code) != 10
+            or not code.isdigit()
+            or not code.endswith("00000")
+            or code.endswith("00000000")
+            or not place_id
+            or not keyword
+        ):
+            continue
+        rows.append(
+            {
+                "operation": "searchKeyword1",
+                "external_key": (
+                    f"searchKeyword1:place={place_id}:month=$month_minus_2"
+                ),
+                "params": {
+                    "MobileOS": "ETC",
+                    "MobileApp": "EDEN",
+                    "baseYm": "$month_minus_2",
+                    "areaCd": code[:2],
+                    "signguCd": code[:5],
+                    "keyword": keyword,
+                },
+                "watermark": {"param": "baseYm", "format": "%Y%m"},
+                "max_pages": 10,
+            }
+        )
+        if len(rows) >= KTO_RELATED_PLACES_PER_RUN:
+            break
     return rows
 
 

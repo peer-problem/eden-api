@@ -211,3 +211,120 @@ def test_scheduler_registers_single_source_and_product_workstreams(monkeypatch) 
     assert {job["executor"] for job in product_jobs} == {"product"}
     assert scheduler_runtime.scheduler.kwargs["executors"]["source"]._pool._max_workers == 1
     assert scheduler_runtime.scheduler.kwargs["executors"]["product"]._pool._max_workers == 1
+
+
+def test_inbound_result_object_marks_products_dirty_from_persisted_count(monkeypatch) -> None:
+    from app.normalization.inbound import NormalizationResult
+
+    source_id = "SRC_KTO_INBOUND_STATS"
+    run_id = "inbound-refresh"
+    registry = SimpleNamespace(source_id=source_id, evidence={})
+    policy = SimpleNamespace(interval_seconds=3600, jitter_seconds=0, retry_limit=3)
+    results = iter([
+        (registry, policy, None),
+        SimpleNamespace(raw_count=0, error_summary=None),
+        SimpleNamespace(status="succeeded", raw_count=1, error_summary=None),
+        ("succeeded", None, 12),
+        ("succeeded", 1),
+    ])
+    completed = []
+    dirty = []
+
+    class FakeResult:
+        def __init__(self, value):
+            self.value = value
+
+        def one(self):
+            return self.value
+
+        def one_or_none(self):
+            return self.value
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def execute(self, _statement):
+            return FakeResult(next(results))
+
+    class Factory:
+        kw = {"bind": FakeEngine()}
+
+        def __call__(self):
+            return FakeSession()
+
+    class Ingestion:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def schedule_run(self, *_args):
+            return False, run_id
+
+        def run(self, *_args, **_kwargs):
+            return run_id
+
+        def complete_pipeline(self, value):
+            completed.append(value)
+
+        def fail_pipeline(self, *_args):
+            raise AssertionError("Structured normalizer result must not fail the pipeline")
+
+    monkeypatch.setattr(runtime, "IngestionService", Ingestion)
+    monkeypatch.setattr(runtime, "MariaDBAdvisoryLock", AcquiredLock)
+    monkeypatch.setattr(runtime, "build_adapter", lambda *_args: object())
+    monkeypatch.setattr(
+        runtime, "normalize_run", lambda *_args: NormalizationResult(run_id, 12, (1,))
+    )
+    monkeypatch.setattr(
+        runtime, "mark_products_dirty", lambda source, *_args, **_kwargs: dirty.append(source)
+    )
+    runtime.run_source_if_due(SimpleNamespace(RAW_PERSIST_BATCH_SIZE=100), Factory(), source_id)
+
+    assert completed == [run_id]
+    assert dirty == [source_id]
+
+
+def test_related_scope_uses_stored_hub_names_instead_of_obsolete_area_operation() -> None:
+    class Result:
+        def all(self):
+            return [("place-palace", "1111000000", "경복궁")]
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def execute(self, _statement):
+            return Result()
+
+    scope = runtime._runtime_scope(
+        "SRC_KTO_PLACE_RELATED",
+        {"operations": [{"operation": "areaBasedList1"}]},
+        Session,
+    )
+    assert len(scope["operations"]) == 1
+    operation = scope["operations"][0]
+    assert operation["operation"] == "searchKeyword1"
+    assert operation["params"]["keyword"] == "경복궁"
+    assert operation["params"]["signguCd"] == "11110"
+    assert scope["batch_count"] == 1
+
+
+def test_alert_enrichment_skips_paid_calls_when_another_worker_holds_lock(monkeypatch) -> None:
+    class BusyLock(AcquiredLock):
+        def __init__(self, *_args, **_kwargs):
+            self.acquired = False
+
+    monkeypatch.setattr(runtime, "MariaDBAdvisoryLock", BusyLock)
+    monkeypatch.setattr(
+        runtime,
+        "enrich_pending_alert_revisions",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("paid call must not run")),
+    )
+    factory = SimpleNamespace(kw={"bind": FakeEngine()})
+    assert runtime.run_alert_enrichment(SimpleNamespace(), factory) is None

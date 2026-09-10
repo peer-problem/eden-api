@@ -13,20 +13,10 @@ from app.products.formulas import (
     interest_index,
     minmax_score,
 )
+from app.sources.social import REQUESTABLE_SOCIAL_SOURCES
 
 PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90}
-SOURCE_NAMES = {
-    "youtube": "SRC_YOUTUBE",
-    "instagram": "SRC_INSTAGRAM",
-    "tiktok": "SRC_TIKTOK",
-    "x": "SRC_X",
-    "reddit": "SRC_REDDIT",
-    "weibo": "SRC_WEIBO",
-    "douyin": "SRC_DOUYIN",
-    "xiaohongshu": "SRC_XIAOHONGSHU",
-    "line": "SRC_LINE",
-    "facebook": "SRC_FACEBOOK",
-}
+SOURCE_NAMES = REQUESTABLE_SOCIAL_SOURCES
 ALWAYS_INCLUDED_SOURCES = {"SRC_NAVER_TREND", "SRC_KTO_RESOURCE_DEMAND"}
 RISING_MIN_OBSERVATIONS_PER_WINDOW = 2
 
@@ -297,6 +287,14 @@ def build_trend_view(
             }
             continue
         score = source_scores.get(source_id)
+        source_reason = (
+            "최근 공개 동영상 최대 50건의 표본이며 지역 필터는 시청자 거주 국가가 "
+            "아닌 재생 가능 지역입니다."
+            if source_id == "SRC_YOUTUBE"
+            else None
+            if score is not None
+            else "정규화 모집단이 부족합니다."
+        )
         source_metrics.append(
             {
                 "source_id": source_id,
@@ -316,12 +314,12 @@ def build_trend_view(
                 ),
                 "score": score,
                 "availability": "available" if score is not None else "partial",
-                "reason": None if score is not None else "정규화 모집단이 부족합니다.",
+                "reason": source_reason,
             }
         )
         source_availability[source_id] = {
             "availability": "available" if score is not None else "partial",
-            "reason": None if score is not None else "정규화 모집단이 부족합니다.",
+            "reason": source_reason,
         }
 
     period_score = _combined_score(source_scores, selected_source_ids)

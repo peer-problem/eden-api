@@ -8,9 +8,15 @@ from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 
+from app.normalization import registry
 from app.normalization.dead_letters import reprocess_dead_letters
-from app.normalization.public_data import _add_dead_letter
-from app.repositories.models import DeadLetter, RawRecord
+from app.normalization.public_data import (
+    _REPLAY_RAW_RECORD_IDS,
+    _add_dead_letter,
+    _finish_run,
+    _raw_record_replay_scope,
+)
+from app.repositories.models import DeadLetter, IngestionRun, RawRecord
 
 
 @compiles(LONGTEXT, "sqlite")
@@ -26,11 +32,28 @@ def _compile_bigint_as_integer(_type, _compiler, **_kwargs) -> str:
 @pytest.fixture
 def dead_letter_factory():
     engine = create_engine("sqlite+pysqlite:///:memory:")
+    IngestionRun.__table__.create(engine)
     RawRecord.__table__.create(engine)
     DeadLetter.__table__.create(engine)
-    factory = sessionmaker(engine, expire_on_commit=False)
+    factory = sessionmaker(engine, autoflush=False, expire_on_commit=False)
     now = datetime(2026, 8, 29, 0, 0, 0)
     with factory.begin() as session:
+        session.add(
+            IngestionRun(
+                run_id="run-1",
+                job_id="job-1",
+                source_id="SRC_NAVER_TREND",
+                idempotency_key="run-1",
+                status="failed",
+                request_scope={},
+                started_at=now,
+                finished_at=now,
+                raw_count=2,
+                normalized_count=7,
+                error_summary=None,
+                test_run_id=None,
+            )
+        )
         for index in range(3):
             raw_id = index + 1
             session.add(
@@ -76,7 +99,7 @@ def test_reprocessor_claims_only_one_run_per_batch_and_is_resumable(
     result = reprocess_dead_letters(
         dead_letter_factory,
         batch_size=2,
-        normalizer=lambda source_id, _factory, run_id: normalized.append(
+        normalizer=lambda source_id, _factory, run_id, _raw_ids: normalized.append(
             (source_id, run_id)
         ),
         dirty_marker=lambda source_id, _factory, *, watermark: dirtied.append(
@@ -102,7 +125,7 @@ def test_reprocessor_claims_only_one_run_per_batch_and_is_resumable(
     resumed = reprocess_dead_letters(
         dead_letter_factory,
         batch_size=2,
-        normalizer=lambda source_id, _factory, run_id: normalized.append(
+        normalizer=lambda source_id, _factory, run_id, _raw_ids: normalized.append(
             (source_id, run_id)
         ),
         dirty_marker=lambda source_id, _factory, *, watermark: dirtied.append(
@@ -135,7 +158,7 @@ def test_reprocessor_claims_up_to_batch_size_from_the_selected_run(
     result = reprocess_dead_letters(
         dead_letter_factory,
         batch_size=2,
-        normalizer=lambda source_id, _factory, run_id: normalized.append(
+        normalizer=lambda source_id, _factory, run_id, _raw_ids: normalized.append(
             (source_id, run_id)
         ),
         dirty_marker=lambda *_args, **_kwargs: None,
@@ -163,7 +186,7 @@ def test_failed_attempt_records_backoff_then_quarantine(dead_letter_factory) -> 
         session.get(DeadLetter, 1).attempt_count = 3
         session.get(DeadLetter, 2).attempt_count = 4
 
-    def fail(_source_id, _factory, _run_id):
+    def fail(_source_id, _factory, _run_id, _raw_ids):
         raise ValueError("still invalid")
 
     result = reprocess_dead_letters(
@@ -196,7 +219,7 @@ def test_normalizer_rejected_record_counts_as_retry_without_raising(
     now = datetime(2026, 8, 29, 1, 0, 0)
     dirtied: list[str] = []
 
-    def reject_record(_source_id, factory, _run_id) -> None:
+    def reject_record(_source_id, factory, _run_id, _raw_ids) -> None:
         with factory.begin() as session:
             row = session.get(DeadLetter, 1)
             row.reprocess_status = "pending"
@@ -265,16 +288,22 @@ def test_full_run_replay_preserves_other_raw_terminal_dead_letter(
         terminal.attempt_count = 4
         terminal.last_attempt_at = now - timedelta(hours=2)
 
-    def replay_entire_run(_source_id, factory, run_id) -> None:
+    replayed_raw_ids: list[tuple[int, ...]] = []
+
+    def replay_entire_run(_source_id, factory, run_id, raw_record_ids) -> None:
+        replayed_raw_ids.append(raw_record_ids)
         with factory.begin() as session:
             raw_records = list(
                 session.scalars(
                     select(RawRecord)
-                    .where(RawRecord.run_id == run_id)
+                    .where(
+                        RawRecord.run_id == run_id,
+                        RawRecord.raw_record_id.in_(raw_record_ids),
+                    )
                     .order_by(RawRecord.raw_record_id)
                 )
             )
-            assert [raw.raw_record_id for raw in raw_records] == [1, 2]
+            assert [raw.raw_record_id for raw in raw_records] == [1]
             for raw in raw_records:
                 _add_dead_letter(
                     session,
@@ -294,6 +323,7 @@ def test_full_run_replay_preserves_other_raw_terminal_dead_letter(
     assert result.claimed_count == 1
     assert result.resolved_count == 0
     assert result.retry_count == 1
+    assert replayed_raw_ids == [(1,)]
     with dead_letter_factory() as session:
         assert session.scalar(select(func.count()).select_from(DeadLetter)) == 3
         claimed = session.get(DeadLetter, 1)
@@ -359,3 +389,68 @@ def test_add_dead_letter_records_a_genuinely_new_raw_failure(
         assert added.raw_record_id == 1
         assert added.reprocess_status == "pending"
         assert added.error_detail == "ValueError: new failure"
+
+
+def test_add_dead_letter_deduplicates_repeated_failure_with_autoflush_disabled(
+    dead_letter_factory,
+) -> None:
+    with dead_letter_factory.begin() as session:
+        raw = session.get(RawRecord, 1)
+        for index in range(100):
+            _add_dead_letter(
+                session,
+                raw,
+                "repeated_schema_drift",
+                ValueError(f"failure {index}"),
+            )
+
+    with dead_letter_factory() as session:
+        rows = list(
+            session.scalars(
+                select(DeadLetter).where(
+                    DeadLetter.raw_record_id == 1,
+                    DeadLetter.error_code == "repeated_schema_drift",
+                )
+            )
+        )
+        assert len(rows) == 1
+        assert rows[0].error_detail == "ValueError: failure 99"
+
+
+def test_targeted_replay_preserves_original_run_totals(dead_letter_factory) -> None:
+    with dead_letter_factory.begin() as session, _raw_record_replay_scope((1,)):
+        _finish_run(session, "run-1", 1)
+
+    with dead_letter_factory() as session:
+        run = session.get(IngestionRun, "run-1")
+        assert run.normalized_count == 7
+        assert run.status == "failed"
+
+
+def test_registry_targets_only_row_identity_normalizers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[tuple[str, frozenset[int] | None]] = []
+
+    def capture(source_id, _factory, _run_id):
+        observed.append((source_id, _REPLAY_RAW_RECORD_IDS.get()))
+
+    monkeypatch.setattr(registry, "_normalize_run", capture)
+
+    registry.reprocess_normalization_run(
+        "SRC_SEMAS_SHOPS",
+        object(),
+        "run-shops",
+        (4, 7),
+    )
+    registry.reprocess_normalization_run(
+        "SRC_KTO_REGIONAL_VISITORS",
+        object(),
+        "run-aggregate",
+        (9,),
+    )
+
+    assert observed == [
+        ("SRC_SEMAS_SHOPS", frozenset({4, 7})),
+        ("SRC_KTO_REGIONAL_VISITORS", None),
+    ]

@@ -12,6 +12,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 _JITTER = SystemRandom()
+_NAT64_WELL_KNOWN_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
 
 
 class SourceHttpError(RuntimeError):
@@ -90,7 +91,12 @@ class SecureSourceClient:
             ) from exc
         for address in addresses:
             ip = ipaddress.ip_address(address[4][0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            # DNS64 can synthesize a reserved IPv6 address for a public IPv4
+            # origin. Validate its actual destination, including private IPv4
+            # addresses embedded in the well-known translation prefix.
+            if isinstance(ip, ipaddress.IPv6Address) and ip in _NAT64_WELL_KNOWN_PREFIX:
+                ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+            if not ip.is_global or ip.is_multicast or ip.is_reserved:
                 raise SourceHttpError(f"Registered host resolved to a non-public address: {host}")
 
     def _request(self, method: str, url: str, **kwargs: object) -> tuple[bytes, str, str]:

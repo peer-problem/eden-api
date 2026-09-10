@@ -9,9 +9,45 @@ from app.sources.base import FetchReasonCode
 from app.sources.http import (
     SecureSourceClient,
     SourceCredentialHttpError,
+    SourceHttpError,
     SourceTransientHttpError,
 )
-from app.sources.social import NaverTrendAdapter
+from app.sources.social import NaverTrendAdapter, YouTubeAggregateAdapter
+
+
+@pytest.mark.parametrize(
+    ("addresses", "allowed"),
+    [
+        (["64:ff9b::808:808", "8.8.8.8"], True),
+        (["64:ff9b::808:808"], True),
+        (["2606:4700:4700::1111"], True),
+        (["64:ff9b::7f00:1"], False),
+        (["64:ff9b::a00:1"], False),
+        (["64:ff9b::a9fe:a9fe"], False),
+        (["64:ff9b::6440:1"], False),
+        (["64:ff9b::e000:1"], False),
+        (["8.8.8.8", "127.0.0.1"], False),
+        (["64:ff9b:1::808:808"], False),
+    ],
+)
+def test_dns64_preserves_public_destination_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    addresses: list[str],
+    allowed: bool,
+) -> None:
+    monkeypatch.setattr(
+        "app.sources.http.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [(0, 0, 0, "", (address, 443)) for address in addresses],
+    )
+    client = SecureSourceClient({"source.example"})
+    try:
+        if allowed:
+            client._validate_url("https://source.example/data")
+        else:
+            with pytest.raises(SourceHttpError, match="non-public"):
+                client._validate_url("https://source.example/data")
+    finally:
+        client.close()
 
 
 def _client(handler: Callable[[httpx.Request], httpx.Response]) -> SecureSourceClient:
@@ -118,11 +154,42 @@ def test_credential_backed_adapter_exposes_stable_rejection_reason(
         raise SourceCredentialHttpError("Source rejected credentials with HTTP 403")
 
     monkeypatch.setattr(adapter.client, "post_json", reject)
-    result = adapter.fetch(
-        {"targets": [{"country": "KR", "keyword": "서울 여행"}]}
-    )
+    result = adapter.fetch({"targets": [{"country": "KR", "keyword": "서울 여행"}]})
     adapter.client.close()
 
     assert result.status is SourceStatus.UNAVAILABLE
     assert result.reason_code is FetchReasonCode.CREDENTIAL_REJECTED
     assert result.items == ()
+
+
+def test_youtube_does_not_publish_partial_statistics_as_complete_aggregate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = YouTubeAggregateAdapter(
+        "https://source.example",
+        SecretStr("api-key"),
+        2,
+        1024,
+    )
+    responses = iter(
+        (
+            b'{"items":[{"id":{"videoId":"one"}},{"id":{"videoId":"two"}}]}',
+            b'{"items":[{"id":"one","statistics":{"viewCount":"10",'
+            b'"likeCount":"2","commentCount":"1"}}]}',
+        )
+    )
+
+    def get(*_args: object, **_kwargs: object) -> tuple[bytes, str, str]:
+        return next(responses), "application/json", "https://source.example"
+
+    monkeypatch.setattr(adapter.client, "get", get)
+    result = adapter.fetch(
+        {"targets": [{"country": "JP", "keyword": "韓国旅行"}], "lookback_days": 1}
+    )
+    adapter.client.close()
+
+    assert result.status is SourceStatus.AVAILABLE
+    assert result.items[0].body["post_count"] == 2
+    assert result.items[0].body["view_count"] is None
+    assert result.items[0].body["reaction_count"] is None
+    assert "youtube_region_availability_filter" in result.items[0].body["quality_flags"]

@@ -159,6 +159,47 @@ def ecos_row_value(row: Any, item_code: str) -> tuple[datetime, Decimal]:
     return period, (value * Decimal("1000000")).quantize(Decimal("0.01"))
 
 
+ECOS_FX_ITEM_CURRENCIES = {
+    "0000031": "TWD",
+    "0000034": "PHP",
+}
+
+
+def ecos_fx_document_contract(body: Any) -> tuple[str, str, list[Any]]:
+    if (
+        not isinstance(body, dict)
+        or body.get("stat_code") != "731Y001"
+        or body.get("metric") != "fx"
+        or body.get("unit") != "krw_per_currency"
+    ):
+        raise ValueError("ECOS raw record is not a supported daily FX document")
+    item_code = _text(body, "item_code", required=True) or ""
+    currency = _text(body, "currency", required=True) or ""
+    if ECOS_FX_ITEM_CURRENCIES.get(item_code) != currency:
+        raise ValueError("ECOS daily FX item code does not match currency")
+    rows = body.get("rows")
+    if not isinstance(rows, list):
+        raise ValueError("ECOS daily FX record does not contain rows")
+    return currency, item_code, rows
+
+
+def ecos_fx_row_value(row: Any, item_code: str) -> tuple[datetime, Decimal]:
+    if not isinstance(row, dict):
+        raise ValueError("ECOS daily FX observation is not an object")
+    row_code = _text(row, "ITEM_CODE1")
+    if row_code is not None and row_code != item_code:
+        raise ValueError("ECOS daily FX item code drifted")
+    unit = _text(row, "UNIT_NAME")
+    if unit is not None and unit != "원":
+        raise ValueError("ECOS daily FX unit drifted")
+    period = _date(_text(row, "TIME", required=True) or "", ("%Y%m%d",))
+    value = _decimal(row, "DATA_VALUE", required=True)
+    assert value is not None
+    if value < 0:
+        raise ValueError("exchange rate cannot be negative")
+    return period, value.quantize(Decimal("0.00000001"))
+
+
 def normalize_airport_country_run(session_factory: sessionmaker[Session], run_id: str) -> int:
     normalized = 0
     calculated_at = datetime.now(UTC).replace(tzinfo=None)
@@ -468,7 +509,59 @@ def normalize_bok_run(session_factory: sessionmaker[Session], run_id: str) -> in
     with session_factory.begin() as session:
         grouped: dict[datetime, dict[str, Any]] = {}
         for raw in _run_records(session, run_id, BOK_SOURCE):
-            body = decoded_raw_json(raw)
+            try:
+                body = decoded_raw_json(raw)
+            except Exception as exc:
+                _add_dead_letter(session, raw, "bok_ecos_schema", exc)
+                continue
+
+            if isinstance(body, dict) and body.get("metric") == "fx":
+                try:
+                    currency, item_code, rows = ecos_fx_document_contract(body)
+                except Exception as exc:
+                    _add_dead_letter(session, raw, "bok_ecos_fx_schema", exc)
+                    continue
+                for row in rows:
+                    try:
+                        rate_date, rate = ecos_fx_row_value(row, item_code)
+                        values = {
+                            "currency": currency,
+                            "rate_date": rate_date,
+                            "krw_rate": rate,
+                            "observed_at": _database_time(raw.observed_at),
+                            "source_updated_at": rate_date,
+                            "ingested_at": _database_time(raw.ingested_at),
+                            "calculated_at": calculated_at,
+                            "source_id": BOK_SOURCE,
+                            "availability": "available",
+                            "quality_flags": [],
+                        }
+                        session.execute(
+                            insert(FxObservation)
+                            .values(**values)
+                            .on_duplicate_key_update(**values)
+                        )
+                        observation_id = session.scalar(
+                            select(FxObservation.observation_id).where(
+                                FxObservation.source_id == BOK_SOURCE,
+                                FxObservation.currency == currency,
+                                FxObservation.rate_date == rate_date,
+                            )
+                        )
+                        if observation_id is None:
+                            raise RuntimeError("ECOS FX observation was not resolved")
+                        _provenance(
+                            session,
+                            "fx_observation",
+                            observation_id,
+                            (raw.raw_record_id,),
+                            "ecos_daily_fx_krw_v1",
+                        )
+                        normalized += 1
+                    except Exception as exc:
+                        _add_dead_letter(session, raw, "bok_ecos_fx_row_schema", exc)
+                continue
+
             try:
                 metric, item_code, rows = ecos_document_contract(body)
             except Exception as exc:

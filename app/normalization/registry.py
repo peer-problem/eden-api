@@ -29,6 +29,7 @@ from app.normalization.places import (
     normalize_tour_catalog_run,
 )
 from app.normalization.public_data import (
+    _raw_record_replay_scope,
     normalize_regional_demand_run,
     normalize_regional_diversity_run,
     normalize_regional_visitors_run,
@@ -36,6 +37,14 @@ from app.normalization.public_data import (
 )
 from app.normalization.social import SOCIAL_SOURCES, normalize_social_run
 from app.repositories.models import DeadLetter, IngestionRun, RawRecord
+
+ROW_IDENTITY_REPLAY_SOURCES = {
+    *TOUR_LANGUAGES,
+    "SRC_KTO_PLACE_HUB",
+    "SRC_KTO_PLACE_RELATED",
+    "SRC_SEMAS_SHOPS",
+    "SRC_FESTIVAL",
+}
 
 
 def normalize_run(
@@ -167,6 +176,10 @@ def reprocess_normalization_run(
     source_id: str,
     session_factory: sessionmaker[Session],
     run_id: str,
+    raw_record_ids: tuple[int, ...],
 ) -> NormalizationResult | int | None:
-    """Run the current source normalizer under an external dead-letter claim."""
+    """Limit row-identity replay without corrupting run-wide aggregates."""
+    if source_id in ROW_IDENTITY_REPLAY_SOURCES:
+        with _raw_record_replay_scope(raw_record_ids):
+            return _normalize_run(source_id, session_factory, run_id)
     return _normalize_run(source_id, session_factory, run_id)

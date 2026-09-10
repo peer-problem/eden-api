@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import BigInteger, create_engine
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -21,6 +22,15 @@ def _compile_big_integer_as_integer(
     return "INTEGER"
 
 
+@compiles(LONGTEXT, "sqlite")
+def _compile_longtext_as_text(
+    _type: LONGTEXT,
+    _compiler: object,
+    **_kwargs: object,
+) -> str:
+    return "TEXT"
+
+
 def _factory() -> sessionmaker[Session]:
     engine = create_engine("sqlite://", poolclass=StaticPool)
     Base.metadata.create_all(engine)
@@ -34,6 +44,8 @@ def _social_row(
     count: int | None,
     updated_at: datetime,
     availability: Availability = Availability.AVAILABLE,
+    source_id: str = "SRC_INSTAGRAM",
+    bucket_start: datetime | None = None,
 ) -> SocialObservation:
     return SocialObservation(
         observation_id=observation_id,
@@ -41,7 +53,7 @@ def _social_row(
         keyword="서울",
         country_id="eden_country_kr",
         area_id=None,
-        bucket_start=datetime(2026, 8, 28),
+        bucket_start=bucket_start or datetime(2026, 8, 28),
         bucket_grain="day",
         post_count=count,
         view_count=None,
@@ -52,7 +64,7 @@ def _social_row(
         source_updated_at=updated_at,
         ingested_at=updated_at,
         calculated_at=updated_at,
-        source_id="SRC_INSTAGRAM",
+        source_id=source_id,
         availability=availability,
         quality_flags=(
             ["query_market_proxy", "aggregate_only", "source_tombstone"]
@@ -136,3 +148,36 @@ def test_latest_social_tombstone_removes_prior_value_from_current_product() -> N
         assert snapshot.availability == Availability.UNAVAILABLE
         assert snapshot.data == {"observations": []}
         assert snapshot.quality_flags == ["all_latest_observations_tombstoned"]
+
+
+def test_trend_product_excludes_preexisting_removed_platform_observations() -> None:
+    factory = _factory()
+    now = (datetime.now(UTC) - timedelta(minutes=1)).replace(tzinfo=None)
+    _seed_country(factory, now)
+    with factory.begin() as session:
+        session.add_all(
+            [
+                _social_row(1, 101, count=25, updated_at=now),
+                _social_row(
+                    2,
+                    102,
+                    count=999,
+                    updated_at=now,
+                    source_id="SRC_TIKTOK",
+                    bucket_start=datetime(2026, 9, 1),
+                ),
+            ]
+        )
+
+    result = build_trend_snapshot(factory)
+
+    assert result.observation_count == 1
+    repository = MariaDBReadRepository(factory)
+    with factory() as session:
+        snapshot = repository._current_snapshot(
+            session,
+            "social_signal",
+            lookup_key(scope="global"),
+        )
+        assert snapshot is not None
+        assert {row["source_id"] for row in snapshot.data["observations"]} == {"SRC_INSTAGRAM"}

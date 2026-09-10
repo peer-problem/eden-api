@@ -43,6 +43,18 @@
       "rows": [
         {"TIME": "202607", "DATA_VALUE": "100", "ITEM_CODE1": "2C2Y00"}
       ]
+    },
+    "fx": {
+      "stat_code": "731Y001",
+      "unit": "krw_per_currency",
+      "metric": "fx",
+      "currency": "TWD",
+      "item_code": "0000031",
+      "rows": [
+        {"TIME": "20260909", "DATA_VALUE": "42.55", "ITEM_CODE1": "0000031", "UNIT_NAME": "원"},
+        {"TIME": "bad", "DATA_VALUE": "42.50", "ITEM_CODE1": "0000031", "UNIT_NAME": "원"},
+        {"TIME": "20260910", "DATA_VALUE": "0", "ITEM_CODE1": "0000031", "UNIT_NAME": "원"}
+      ]
     }
   }
 }

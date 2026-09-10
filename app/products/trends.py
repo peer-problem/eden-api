@@ -11,9 +11,17 @@ from app.products.formulas import INTEREST_FORMULA_VERSION, RISING_KEYWORD_FORMU
 from app.products.snapshots import SnapshotCandidate, SnapshotPublisher
 from app.readmodels.keys import lookup_key
 from app.repositories.models import Area, Country, SocialObservation
+from app.sources.social import REQUESTABLE_SOCIAL_SOURCES
 
 MAX_HISTORY_DAYS = 190
 MAX_AGE_SECONDS = 30 * 24 * 3600
+PUBLISHABLE_TREND_SOURCE_IDS = frozenset(
+    {
+        *REQUESTABLE_SOCIAL_SOURCES.values(),
+        "SRC_NAVER_TREND",
+        "SRC_KTO_RESOURCE_DEMAND",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,9 +40,12 @@ def build_trend_snapshot(
     session_factory: sessionmaker[Session],
 ) -> TrendProductResult:
     with session_factory() as session:
-        latest = session.scalar(select(SocialObservation.bucket_start).order_by(
-            SocialObservation.bucket_start.desc()
-        ).limit(1))
+        latest = session.scalar(
+            select(SocialObservation.bucket_start)
+            .where(SocialObservation.source_id.in_(PUBLISHABLE_TREND_SOURCE_IDS))
+            .order_by(SocialObservation.bucket_start.desc())
+            .limit(1)
+        )
         if latest is None:
             return TrendProductResult(0, 0)
         cutoff = latest - timedelta(days=MAX_HISTORY_DAYS)
@@ -58,7 +69,10 @@ def build_trend_snapshot(
                 )
                 .label("version_rank"),
             )
-            .where(SocialObservation.bucket_start >= cutoff)
+            .where(
+                SocialObservation.bucket_start >= cutoff,
+                SocialObservation.source_id.in_(PUBLISHABLE_TREND_SOURCE_IDS),
+            )
             .subquery()
         )
         latest_observations = list(
@@ -132,18 +146,12 @@ def build_trend_snapshot(
                 "rising_keywords": RISING_KEYWORD_FORMULA_VERSION,
             },
             observed_at=max(_aware_utc(row.observed_at) for row in latest_observations),
-            source_updated_at=max(
-                _aware_utc(row.source_updated_at) for row in latest_observations
-            ),
+            source_updated_at=max(_aware_utc(row.source_updated_at) for row in latest_observations),
             ingested_at=max(_aware_utc(row.ingested_at) for row in latest_observations),
             calculated_at=calculated_at,
-            availability=(
-                Availability.AVAILABLE if observations else Availability.UNAVAILABLE
-            ),
+            availability=(Availability.AVAILABLE if observations else Availability.UNAVAILABLE),
             quality_flags=("all_latest_observations_tombstoned",) if not observations else (),
-            raw_record_ids=tuple(
-                sorted({row.raw_record_id for row in latest_observations})
-            ),
+            raw_record_ids=tuple(sorted({row.raw_record_id for row in latest_observations})),
         )
     )
     return TrendProductResult(1, len(observations))

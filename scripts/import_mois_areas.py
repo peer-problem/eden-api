@@ -3,11 +3,13 @@ from __future__ import annotations
 import base64
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.mysql import insert
 
 from app.config import get_settings
 from app.ingestion.service import IngestionService
+from app.normalization.raw_content import decoded_raw_json
+from app.reference import seed_reference_data
 from app.repositories.database import create_scheduler_database_engine, create_session_factory
 from app.repositories.models import Area, AreaSourceMap, RawRecord, SourceRegistry, SourceState
 from app.sources.reference import MoisAreaAdapter, parse_mois_archive
@@ -24,7 +26,7 @@ def main() -> None:
     run_id = IngestionService(factory).run(
         adapter,
         {},
-        "SRC_MOIS_ADMIN_CODES:2026-02-01",
+        "SRC_MOIS_ADMIN_CODES:2026-07-20",
     )
     with factory() as session:
         raw = session.scalar(
@@ -32,9 +34,10 @@ def main() -> None:
             .where(RawRecord.run_id == run_id)
             .order_by(RawRecord.raw_record_id.desc())
         )
-        if raw is None or not isinstance(raw.body_json, dict):
+        document = decoded_raw_json(raw) if raw is not None else None
+        if not isinstance(document, dict):
             raise RuntimeError("MOIS raw archive was not persisted")
-        payload = base64.b64decode(raw.body_json["base64"], validate=True)
+        payload = base64.b64decode(document["base64"], validate=True)
     areas = parse_mois_archive(payload)
     now = datetime.now(UTC)
     with factory.begin() as session:
@@ -61,6 +64,8 @@ def main() -> None:
                     name_ko=area.name_ko,
                     parent_area_id=area.parent_area_id,
                     level=area.level,
+                    valid_from=datetime.fromisoformat(area.valid_from).replace(tzinfo=UTC),
+                    valid_to=None,
                     active=True,
                     updated_at=now,
                 )
@@ -81,13 +86,29 @@ def main() -> None:
                     updated_at=now,
                 )
             )
+        current_codes = tuple(area.administrative_code for area in areas)
+        retired_area_ids = select(AreaSourceMap.eden_area_id).where(
+            AreaSourceMap.source_id == "SRC_MOIS_ADMIN_CODES",
+            AreaSourceMap.external_area_code.not_in(current_codes),
+        )
+        session.execute(
+            update(Area)
+            .where(Area.eden_area_id.in_(retired_area_ids), Area.active.is_(True))
+            .values(
+                active=False,
+                # This archive proves retirement, but does not contain the old code's end date.
+                valid_to=None,
+                updated_at=now,
+            )
+        )
+        seed_reference_data(session)
         session.query(SourceState).filter_by(
             source_id="SRC_MOIS_ADMIN_CODES", scope_key="global"
         ).update(
             {
                 "last_attempt_at": now,
                 "last_success_at": now,
-                "data_as_of": datetime(2026, 2, 1, tzinfo=UTC),
+                "data_as_of": datetime(2026, 7, 20, tzinfo=UTC),
                 "consecutive_failures": 0,
                 "status": "available",
                 "reason": None,

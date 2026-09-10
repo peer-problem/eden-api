@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, tuple_
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -31,6 +33,12 @@ REGIONAL_VISIT_SOURCE = "SRC_KTO_REGIONAL_VISITORS"
 REGIONAL_DEMAND_SOURCE = "SRC_KTO_DEMAND_INTENSITY"
 REGIONAL_DIVERSITY_SOURCE = "SRC_KTO_DIVERSITY"
 RESOURCE_DEMAND_SOURCE = "SRC_KTO_RESOURCE_DEMAND"
+REGIONAL_VISIT_WRITE_BATCH_SIZE = 100
+
+_REPLAY_RAW_RECORD_IDS: ContextVar[frozenset[int] | None] = ContextVar(
+    "eden_replay_raw_record_ids",
+    default=None,
+)
 
 
 @dataclass(slots=True)
@@ -124,7 +132,7 @@ def _date(value: str, formats: Iterable[str]) -> datetime:
     raise ValueError(f"unsupported source date: {value[:32]}")
 
 
-def _area_code(row: dict[str, Any]) -> str:
+def _area_code(row: dict[str, Any]) -> str | None:
     for name in ("signguCode", "signguCd"):
         value = _text(row, name)
         if value not in {None, "0", "_"}:
@@ -132,23 +140,32 @@ def _area_code(row: dict[str, Any]) -> str:
     legal_region = _text(row, "lDongRegnCd")
     legal_sigungu = _text(row, "lDongSignguCd")
     if legal_region and legal_sigungu:
+        if (
+            legal_region == legal_sigungu
+            and len(legal_sigungu) == 5
+            and legal_sigungu.isdigit()
+        ):
+            return legal_sigungu
         return f"{legal_region}{legal_sigungu.zfill(3)}"
-    return _text(row, "areaCode", "areaCd", "areacode", required=True) or ""
+    return _text(row, "areaCode", "areaCd", "areacode")
 
 
 def _resolve_area_id(session: Session, source_id: str, row: dict[str, Any]) -> str:
     code = _area_code(row)
     area_map_cache = session.info.setdefault("eden_area_source_map", {})
-    cache_key = (source_id, code)
-    cached_area_id = area_map_cache.get(cache_key)
-    if cached_area_id is not None:
-        return cached_area_id
-    area_id = session.scalar(
-        select(AreaSourceMap.eden_area_id).where(
-            AreaSourceMap.source_id == source_id,
-            AreaSourceMap.external_area_code == code,
+    cache_key = (source_id, code) if code is not None else None
+    if cache_key is not None:
+        cached_area_id = area_map_cache.get(cache_key)
+        if cached_area_id is not None:
+            return cached_area_id
+        area_id = session.scalar(
+            select(AreaSourceMap.eden_area_id).where(
+                AreaSourceMap.source_id == source_id,
+                AreaSourceMap.external_area_code == code,
+            )
         )
-    )
+    else:
+        area_id = None
     if area_id is None:
         address = _text(row, "addr1", "rdnmadr", "lnmadr")
         if address:
@@ -173,8 +190,11 @@ def _resolve_area_id(session: Session, source_id: str, row: dict[str, Any]) -> s
             if len(resolved) == 1:
                 area_id = resolved[0].eden_area_id
     if area_id is None:
+        if code is None:
+            raise ValueError(f"missing {source_id} area code and unresolvable address")
         raise ValueError(f"unmapped {source_id} area code: {code}")
-    area_map_cache[cache_key] = area_id
+    if cache_key is not None:
+        area_map_cache[cache_key] = area_id
     return area_id
 
 
@@ -196,35 +216,39 @@ def _mean(values: list[Decimal]) -> Decimal | None:
 
 
 def _add_dead_letter(session: Session, raw: RawRecord, code: str, exc: Exception) -> None:
-    existing = session.scalar(
-        select(DeadLetter)
-        .where(
-            DeadLetter.raw_record_id == raw.raw_record_id,
-            DeadLetter.error_code == code,
+    cache = session.info.setdefault("eden_dead_letter_by_raw_error", {})
+    cache_key = (raw.raw_record_id, code)
+    if cache_key not in cache:
+        cache[cache_key] = session.scalar(
+            select(DeadLetter)
+            .where(
+                DeadLetter.raw_record_id == raw.raw_record_id,
+                DeadLetter.error_code == code,
+            )
+            .order_by(
+                case(
+                    (DeadLetter.reprocess_status == "retrying", 0),
+                    (DeadLetter.reprocess_status == "pending", 1),
+                    else_=2,
+                ),
+                DeadLetter.dead_letter_id.desc(),
+            )
+            .limit(1)
+            .with_for_update()
         )
-        .order_by(
-            case(
-                (DeadLetter.reprocess_status == "retrying", 0),
-                (DeadLetter.reprocess_status == "pending", 1),
-                else_=2,
-            ),
-            DeadLetter.dead_letter_id.desc(),
-        )
-        .limit(1)
-        .with_for_update()
-    )
+    existing = cache[cache_key]
     detail = f"{type(exc).__name__}: {str(exc)[:1900]}"
     if existing is None:
-        session.add(
-            DeadLetter(
-                raw_record_id=raw.raw_record_id,
-                error_code=code,
-                error_detail=detail,
-                created_at=datetime.now(UTC).replace(tzinfo=None),
-                reprocess_status="pending",
-                reprocessed_at=None,
-            )
+        existing = DeadLetter(
+            raw_record_id=raw.raw_record_id,
+            error_code=code,
+            error_detail=detail,
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            reprocess_status="pending",
+            reprocessed_at=None,
         )
+        session.add(existing)
+        cache[cache_key] = existing
     elif existing.reprocess_status in {"pending", "retrying"}:
         existing.error_detail = detail
         existing.reprocess_status = "pending"
@@ -253,12 +277,26 @@ def _provenance(
         )
 
 
+@contextmanager
+def _raw_record_replay_scope(raw_record_ids: Iterable[int]):
+    token = _REPLAY_RAW_RECORD_IDS.set(frozenset(raw_record_ids))
+    try:
+        yield
+    finally:
+        _REPLAY_RAW_RECORD_IDS.reset(token)
+
+
 def _run_records(session: Session, run_id: str, source_id: str) -> list[RawRecord]:
+    statement = select(RawRecord).where(
+        RawRecord.run_id == run_id,
+        RawRecord.source_id == source_id,
+    )
+    replay_raw_ids = _REPLAY_RAW_RECORD_IDS.get()
+    if replay_raw_ids is not None:
+        statement = statement.where(RawRecord.raw_record_id.in_(replay_raw_ids))
     return list(
         session.scalars(
-            select(RawRecord)
-            .where(RawRecord.run_id == run_id, RawRecord.source_id == source_id)
-            .order_by(RawRecord.raw_record_id)
+            statement.order_by(RawRecord.raw_record_id)
         ).all()
     )
 
@@ -279,8 +317,10 @@ def _finish_run(session: Session, run_id: str, count: int) -> None:
         )
         or 0
     )
-    run.normalized_count = count
-    if dead_letter_count:
+    replay_raw_ids = _REPLAY_RAW_RECORD_IDS.get()
+    if replay_raw_ids is None:
+        run.normalized_count = count
+    if replay_raw_ids is None and dead_letter_count:
         run.status = RunStatus.PARTIAL if count else RunStatus.FAILED
 
 
@@ -355,36 +395,134 @@ def normalize_regional_visitors_run(session_factory: sessionmaker[Session], run_
                 except Exception as exc:
                     _add_dead_letter(session, raw, "regional_visit_row_schema", exc)
             session.commit()
-        for aggregate in groups.values():
-            values = aggregate.values
-            session.execute(
-                insert(RegionalVisitObservation).values(**values).on_duplicate_key_update(**values)
-            )
-            observation_id = session.scalar(
-                select(RegionalVisitObservation.observation_id).where(
-                    RegionalVisitObservation.source_id == REGIONAL_VISIT_SOURCE,
-                    RegionalVisitObservation.area_id == values["area_id"],
-                    RegionalVisitObservation.subject_type == "area",
-                    RegionalVisitObservation.subject_key == "area",
-                    RegionalVisitObservation.visitor_type == values["visitor_type"],
-                    RegionalVisitObservation.grain == "day",
-                    RegionalVisitObservation.period_start == values["period_start"],
-                )
-            )
-            if observation_id is None:
-                raise RuntimeError("regional visitor observation was not resolved")
-            _provenance(
-                session,
-                "regional_visit_observation",
-                observation_id,
-                aggregate.raw_record_ids,
-            )
-            normalized += 1
-            if normalized % 500 == 0:
-                session.commit()
+        normalized = _write_regional_visit_groups(session, list(groups.values()))
         _finish_run(session, run_id, normalized)
         session.commit()
     return normalized
+
+
+def _write_regional_visit_groups(
+    session: Session,
+    groups: list[_VisitorAggregate],
+) -> int:
+    normalized = 0
+    for offset in range(0, len(groups), REGIONAL_VISIT_WRITE_BATCH_SIZE):
+        batch = groups[offset : offset + REGIONAL_VISIT_WRITE_BATCH_SIZE]
+        _write_regional_visit_batch(session, batch)
+        normalized += len(batch)
+        if normalized % 500 == 0:
+            session.commit()
+    return normalized
+
+
+def _write_regional_visit_batch(
+    session: Session,
+    groups: list[_VisitorAggregate],
+) -> None:
+    if not groups:
+        return
+    if len(groups) > REGIONAL_VISIT_WRITE_BATCH_SIZE:
+        raise ValueError(
+            f"regional visitor write batch exceeds {REGIONAL_VISIT_WRITE_BATCH_SIZE} rows"
+        )
+
+    rows = [group.values for group in groups]
+    upsert = insert(RegionalVisitObservation).values(rows)
+    incoming_is_newest = (
+        upsert.inserted.source_updated_at
+        > RegionalVisitObservation.source_updated_at
+    ) | (
+        (
+            upsert.inserted.source_updated_at
+            == RegionalVisitObservation.source_updated_at
+        )
+        & (upsert.inserted.ingested_at >= RegionalVisitObservation.ingested_at)
+    )
+    update_fields = (
+        "visitor_count",
+        "concentration_rate",
+        "completeness_ratio",
+        "observed_at",
+        "calculated_at",
+        "availability",
+        "quality_flags",
+        "ingested_at",
+        "source_updated_at",
+    )
+    update_values = [
+        (
+            name,
+            case(
+                (incoming_is_newest, upsert.inserted[name]),
+                else_=getattr(RegionalVisitObservation, name),
+            ),
+        )
+        for name in update_fields
+    ]
+    session.execute(upsert.on_duplicate_key_update(update_values))
+
+    key_fields = (
+        "source_id",
+        "area_id",
+        "subject_type",
+        "subject_key",
+        "visitor_type",
+        "grain",
+        "period_start",
+    )
+    keys = [tuple(row[name] for name in key_fields) for row in rows]
+    resolved = session.execute(
+        select(
+            RegionalVisitObservation.source_id,
+            RegionalVisitObservation.area_id,
+            RegionalVisitObservation.subject_type,
+            RegionalVisitObservation.subject_key,
+            RegionalVisitObservation.visitor_type,
+            RegionalVisitObservation.grain,
+            RegionalVisitObservation.period_start,
+            RegionalVisitObservation.observation_id,
+        ).where(
+            tuple_(
+                RegionalVisitObservation.source_id,
+                RegionalVisitObservation.area_id,
+                RegionalVisitObservation.subject_type,
+                RegionalVisitObservation.subject_key,
+                RegionalVisitObservation.visitor_type,
+                RegionalVisitObservation.grain,
+                RegionalVisitObservation.period_start,
+            ).in_(keys)
+        )
+    ).all()
+    observation_ids = {
+        tuple(result[:7]): result[7]
+        for result in resolved
+    }
+
+    provenance_rows: list[dict[str, Any]] = []
+    created_at = datetime.now(UTC).replace(tzinfo=None)
+    for aggregate, key in zip(groups, keys, strict=True):
+        observation_id = observation_ids.get(key)
+        if observation_id is None:
+            raise RuntimeError("regional visitor observation was not resolved")
+        provenance_rows.extend(
+            {
+                "output_type": "regional_visit_observation",
+                "output_id": str(observation_id),
+                "raw_record_id": raw_record_id,
+                "formula_version": "identity_v1",
+                "created_at": created_at,
+            }
+            for raw_record_id in sorted(aggregate.raw_record_ids)
+        )
+
+    for offset in range(0, len(provenance_rows), REGIONAL_VISIT_WRITE_BATCH_SIZE):
+        edge_batch = provenance_rows[offset : offset + REGIONAL_VISIT_WRITE_BATCH_SIZE]
+        edge_upsert = insert(ProvenanceEdge).values(edge_batch)
+        session.execute(
+            edge_upsert.on_duplicate_key_update(
+                provenance_id=ProvenanceEdge.provenance_id
+            )
+        )
 
 
 def _aggregate_index_rows(

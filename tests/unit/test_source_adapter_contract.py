@@ -13,10 +13,9 @@ from app.sources.base import FetchReasonCode, UnavailableAdapter
 from app.sources.catalog import EXPECTED_PUBLISH_LAG_SECONDS, SOURCES, source_definition
 from app.sources.http import SecureSourceClient
 from app.sources.registry import build_adapter
+from app.sources.social import EXCLUDED_SOCIAL_SOURCE_IDS
 
-FIXTURE_PATH = (
-    Path(__file__).parents[1] / "fixtures" / "sources" / "unavailable_contracts.json"
-)
+FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "sources" / "unavailable_contracts.json"
 CREDENTIAL_FIELDS = (
     "PUBLIC_DATA_SERVICE_KEY",
     "KMA_SERVICE_KEY",
@@ -113,7 +112,7 @@ def test_monthly_sources_keep_publish_lag_separate_from_daily_polling() -> None:
 def test_naver_uses_api_hub_endpoint() -> None:
     source = source_definition("SRC_NAVER_TREND")
 
-    assert source.base_url == "https://naveropenapi.apigw.ntruss.com/datalab/v1/search"
+    assert source.base_url == "https://naverapihub.apigw.ntruss.com/search-trend/v1/search"
 
 
 def test_naver_credentials_cannot_bypass_storage_policy_approval() -> None:
@@ -137,3 +136,16 @@ def test_naver_credentials_cannot_bypass_storage_policy_approval() -> None:
         {},
     )
     assert not isinstance(approved, UnavailableAdapter)
+
+
+def test_explicitly_excluded_social_sources_stay_disabled_with_credentials() -> None:
+    settings = _settings(X_BEARER_TOKEN=SecretStr("configured-but-excluded"))
+
+    for source_id in EXCLUDED_SOCIAL_SOURCE_IDS:
+        adapter = build_adapter(source_id, settings, {})
+        result = adapter.fetch({})
+
+        assert isinstance(adapter, UnavailableAdapter)
+        assert result.status is SourceStatus.UNAVAILABLE
+        assert result.reason_code is FetchReasonCode.UNSUPPORTED_ACCESS
+        assert result.reason and "제품 범위에서 제외" in result.reason

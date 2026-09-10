@@ -14,9 +14,9 @@ from app.sources.base import FetchResult, RawItem, SourceAdapter
 from app.sources.http import SecureSourceClient
 
 MOIS_CODE_URL = (
-    "https://www.mois.go.kr/cmm/fms/FileDown.do?atchFileId=FILE_00141445_RCEOIj&fileSn=8"
+    "https://www.mois.go.kr/cmm/fms/FileDown.do?atchFileId=FILE_00147311ctH5-ah&fileSn=1"
 )
-MOIS_EFFECTIVE_DATE = "2026-02-01"
+MOIS_EFFECTIVE_DATE = "2026-07-20"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,12 +47,12 @@ class MoisAreaAdapter(SourceAdapter):
             )
         return FetchResult(
             status=SourceStatus.AVAILABLE,
-            data_as_of=datetime(2026, 2, 1, tzinfo=UTC),
+            data_as_of=datetime(2026, 7, 20, tzinfo=UTC),
             items=(
                 RawItem(
-                    external_key="jscode20260201.zip",
-                    source_updated_at=datetime(2025, 12, 22, tzinfo=UTC),
-                    observed_at=datetime(2026, 2, 1, tzinfo=UTC),
+                    external_key="jscode20260720.zip",
+                    source_updated_at=datetime(2026, 7, 20, tzinfo=UTC),
+                    observed_at=datetime(2026, 7, 20, tzinfo=UTC),
                     content_type=content_type or "application/zip",
                     body={
                         "source_url": final_url,
@@ -85,11 +85,12 @@ def parse_mois_archive(payload: bytes) -> list[ParsedArea]:
             parent_id = None
         elif code.endswith("00000"):
             level = "sigungu"
-            name = tokens[2] if len(tokens) >= 4 and not tokens[2].isdigit() else tokens[1]
+            name = tokens[-2]
             parent_code = f"{code[:2]}00000000"
             parent_id = stable_eden_id("area", "MOIS_ADMIN", parent_code)
         else:
             continue
+        valid_from = datetime.strptime(tokens[-1], "%Y%m%d").date().isoformat()
         areas.append(
             ParsedArea(
                 eden_area_id=stable_eden_id("area", "MOIS_ADMIN", code),
@@ -97,7 +98,7 @@ def parse_mois_archive(payload: bytes) -> list[ParsedArea]:
                 name_ko=name,
                 parent_area_id=parent_id,
                 level=level,
-                valid_from=MOIS_EFFECTIVE_DATE,
+                valid_from=valid_from,
             )
         )
     if len({area.administrative_code for area in areas}) != 296:

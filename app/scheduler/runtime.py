@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 from app.ingestion.service import IngestionService
-from app.llm.alerts import enrich_pending_alert_revisions
+from app.llm.alerts import AlertEnrichmentBatchResult, enrich_pending_alert_revisions
 from app.normalization.dead_letters import reprocess_dead_letters
 from app.normalization.registry import normalize_run
 from app.observability.metrics import (
@@ -39,9 +39,11 @@ from app.products.refresh_requests import (
 from app.products.registry import PRODUCT_FAMILIES, ProductFamily, refresh_product_family
 from app.products.snapshots import SnapshotPublishBusy, retain_snapshots
 from app.repositories.models import (
+    Area,
     DeadLetter,
     IngestionRun,
     Place,
+    PlaceLocalization,
     PlaceSourceMap,
     RefreshPolicy,
     SourceRegistry,
@@ -50,11 +52,16 @@ from app.repositories.models import (
 from app.repositories.retry import run_with_disconnect_retry
 from app.scheduler.capacity import SchedulerCapacityGate
 from app.scheduler.locks import MariaDBAdvisoryLock
-from app.sources.plans import semas_place_operations
+from app.sources.plans import (
+    KTO_RELATED_PLACES_PER_RUN,
+    kto_related_place_operations,
+    semas_place_operations,
+)
 from app.sources.registry import build_adapter
 
 logger = logging.getLogger("eden.scheduler")
 SEMAS_CANDIDATE_LIMIT = 900
+RELATED_CANDIDATE_LIMIT = 900
 SEMAS_PLACES_PER_RUN = 50
 PLACE_PIPELINE_SOURCES = frozenset(
     {
@@ -214,6 +221,38 @@ def _runtime_scope(
     configured_scope: dict[str, object],
     factory: sessionmaker[Session],
 ) -> dict[str, object]:
+    if source_id == "SRC_KTO_PLACE_RELATED":
+        with factory() as session:
+            rows = session.execute(
+                select(Place.eden_place_id, Area.administrative_code, PlaceLocalization.title)
+                .join(Area, Area.eden_area_id == Place.area_id)
+                .join(PlaceSourceMap, PlaceSourceMap.eden_place_id == Place.eden_place_id)
+                .join(PlaceLocalization, PlaceLocalization.eden_place_id == Place.eden_place_id)
+                .where(
+                    Place.merge_status == "active",
+                    PlaceSourceMap.source_id == "SRC_KTO_PLACE_HUB",
+                    PlaceLocalization.language == "ko",
+                    Area.active.is_(True),
+                    Area.administrative_code.like("%00000"),
+                    ~Area.administrative_code.like("%00000000"),
+                )
+                .distinct()
+                .order_by(Place.eden_place_id)
+                .limit(RELATED_CANDIDATE_LIMIT)
+            ).all()
+        candidates = [(place_id, code, title) for place_id, code, title in rows if code and title]
+        if not candidates:
+            return {"operations": []}
+        batch_count = math.ceil(len(candidates) / KTO_RELATED_PLACES_PER_RUN)
+        batch_index = datetime.now(UTC).date().toordinal() % batch_count
+        start = batch_index * KTO_RELATED_PLACES_PER_RUN
+        return {
+            "operations": kto_related_place_operations(
+                candidates[start : start + KTO_RELATED_PLACES_PER_RUN]
+            ),
+            "batch_index": batch_index,
+            "batch_count": batch_count,
+        }
     if source_id != "SRC_SEMAS_SHOPS":
         return configured_scope
     with factory() as session:
@@ -318,7 +357,9 @@ def run_source_if_due(
     try:
         configured_scope = (registry.evidence or {}).get("refresh_scope", {})
         scope = _runtime_scope(registry.source_id, configured_scope, factory)
-        if registry.source_id == "SRC_SEMAS_SHOPS" and not scope.get("operations"):
+        if registry.source_id in {"SRC_SEMAS_SHOPS", "SRC_KTO_PLACE_RELATED"} and not scope.get(
+            "operations"
+        ):
             logger.info(
                 "source_waiting_for_place_dependencies",
                 extra={
@@ -429,14 +470,19 @@ def run_source_if_due(
                         )
                         run_raw_count = run_info.raw_count
                     if should_normalize:
-                        normalized_count = run_with_disconnect_retry(
+                        run_with_disconnect_retry(
                             lambda: normalize_run(registry.source_id, factory, run_id)
                         )
                         with factory() as session:
-                            normalized_status, normalization_error = session.execute(
+                            (
+                                normalized_status,
+                                normalization_error,
+                                normalized_count,
+                            ) = session.execute(
                                 select(
                                     IngestionRun.status,
                                     IngestionRun.error_summary,
+                                    IngestionRun.normalized_count,
                                 ).where(IngestionRun.run_id == run_id)
                             ).one()
                         if normalized_status == "failed":
@@ -798,27 +844,38 @@ def run_snapshot_retention(
 
 
 @observe_scheduler_job("alert")
-def run_alert_enrichment(settings: Settings, factory: sessionmaker[Session]) -> None:
+def run_alert_enrichment(
+    settings: Settings, factory: sessionmaker[Session],
+) -> AlertEnrichmentBatchResult | None:
+    engine: Engine = factory.kw["bind"]
+    connection = _open_job_lock_connection(engine)
     try:
-        result = enrich_pending_alert_revisions(settings, factory)
-        record_alert_enrichment(
-            available=result.available,
-            pending_count=result.pending_count,
-            processed_count=result.processed_count,
-            failed_count=result.failed_count,
-        )
-        logger.info(
-            "alert_enrichment_batch",
-            extra={
-                "available": result.available,
-                "pending_count": result.pending_count,
-                "processed_count": result.processed_count,
-                "failed_count": result.failed_count,
-                "reason": result.reason,
-            },
-        )
+        with MariaDBAdvisoryLock(connection, "eden:alert-enrichment") as enrichment_lock:
+            if not enrichment_lock.acquired:
+                return None
+            result = enrich_pending_alert_revisions(settings, factory)
+            record_alert_enrichment(
+                available=result.available,
+                pending_count=result.pending_count,
+                processed_count=result.processed_count,
+                failed_count=result.failed_count,
+            )
+            logger.info(
+                "alert_enrichment_batch",
+                extra={
+                    "available": result.available,
+                    "pending_count": result.pending_count,
+                    "processed_count": result.processed_count,
+                    "failed_count": result.failed_count,
+                    "reason": result.reason,
+                },
+            )
+            return result
     except Exception:
         logger.exception("alert_enrichment_job_failed")
+        return None
+    finally:
+        connection.close()
 
 
 def start_scheduler(settings: Settings, factory: sessionmaker[Session]) -> SchedulerRuntime | None:

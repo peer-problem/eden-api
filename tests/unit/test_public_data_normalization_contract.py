@@ -43,6 +43,38 @@ def test_numeric_parser_preserves_zero_and_null() -> None:
         public_data._decimal({"value": "not-a-number"}, "value", required=True)
 
 
+def test_tourapi_sejong_full_legal_codes_are_not_concatenated() -> None:
+    assert (
+        public_data._area_code(
+            {"lDongRegnCd": "36110", "lDongSignguCd": "36110"}
+        )
+        == "36110"
+    )
+
+
+def test_missing_area_code_can_resolve_from_one_official_address_match() -> None:
+    area = SimpleNamespace(
+        eden_area_id="area-sejong",
+        name_ko="세종특별자치시",
+        parent_area_id="country-kr",
+    )
+
+    class Result:
+        def all(self):
+            return [area]
+
+    session = SimpleNamespace(info={}, execute=lambda _statement: Result())
+
+    assert (
+        public_data._resolve_area_id(
+            session,
+            "SRC_TOUR_KO",
+            {"addr1": "세종특별자치시 도움6로 42"},
+        )
+        == "area-sejong"
+    )
+
+
 def test_index_aggregation_keeps_good_rows_around_a_malformed_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
