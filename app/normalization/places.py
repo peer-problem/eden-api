@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import and_, func, select, tuple_
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -16,6 +16,7 @@ from app.normalization.public_data import (
     _decimal,
     _document,
     _finish_run,
+    _is_raw_record_replay,
     _provenance,
     _resolve_area_id,
     _run_records,
@@ -292,6 +293,37 @@ def _place_provenance(
         )
 
 
+def _successfully_provenanced_tour_content_ids(
+    session: Session,
+    source_id: str,
+    raw_record_id: int,
+) -> set[str]:
+    rows = session.execute(
+        select(
+            PlaceSourceMap.eden_place_id,
+            PlaceSourceMap.external_content_id,
+        )
+        .join(
+            ProvenanceEdge,
+            and_(
+                ProvenanceEdge.output_id == PlaceSourceMap.eden_place_id,
+                ProvenanceEdge.output_type == "place",
+                ProvenanceEdge.formula_version == "place_identity_v1",
+                ProvenanceEdge.raw_record_id == raw_record_id,
+            ),
+        )
+        .where(PlaceSourceMap.source_id == source_id)
+    ).all()
+    content_ids_by_place: dict[str, set[str]] = {}
+    for place_id, external_content_id in rows:
+        content_ids_by_place.setdefault(place_id, set()).add(external_content_id)
+    return {
+        next(iter(content_ids))
+        for content_ids in content_ids_by_place.values()
+        if len(content_ids) == 1
+    }
+
+
 def normalize_tour_catalog_run(
     source_id: str,
     session_factory: sessionmaker[Session],
@@ -307,6 +339,15 @@ def normalize_tour_catalog_run(
                 _add_dead_letter(session, raw, "tour_catalog_schema", exc)
                 session.commit()
                 continue
+            successfully_provenanced_ids = (
+                _successfully_provenanced_tour_content_ids(
+                    session,
+                    source_id,
+                    raw.raw_record_id,
+                )
+                if _is_raw_record_replay()
+                else set()
+            )
             for row in rows:
                 try:
                     with session.begin_nested():
@@ -321,19 +362,25 @@ def normalize_tour_catalog_run(
                             )
                             or None
                         )
+                        area_id = _resolve_area_id(session, source_id, row)
+                        category = _text(row, "lclsSystm1", "cat1")
+                        overview = _text(row, "overview")
+                        if external_id in successfully_provenanced_ids:
+                            normalized += 1
+                            continue
                         _upsert_place(
                             session,
                             raw,
                             source_id,
                             external_id,
-                            _resolve_area_id(session, source_id, row),
+                            area_id,
                             title,
                             language,
-                            _text(row, "lclsSystm1", "cat1"),
+                            category,
                             lat,
                             lng,
                             address,
-                            _text(row, "overview"),
+                            overview,
                             "KTO_CONTENT",
                         )
                     normalized += 1

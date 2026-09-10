@@ -20,6 +20,7 @@ from app.repositories.models import (
     AreaSourceMap,
     DeadLetter,
     IngestionRun,
+    Place,
     ProvenanceEdge,
     RawRecord,
     RegionalDemandObservation,
@@ -34,6 +35,10 @@ REGIONAL_DEMAND_SOURCE = "SRC_KTO_DEMAND_INTENSITY"
 REGIONAL_DIVERSITY_SOURCE = "SRC_KTO_DIVERSITY"
 RESOURCE_DEMAND_SOURCE = "SRC_KTO_RESOURCE_DEMAND"
 REGIONAL_VISIT_WRITE_BATCH_SIZE = 100
+TOUR_AREA_SOURCES = frozenset(
+    {"SRC_TOUR_KO", "SRC_TOUR_EN", "SRC_TOUR_JA", "SRC_TOUR_ZH_CN"}
+)
+_STORED_COORDINATE_QUANTUM = Decimal("0.0000001")
 
 _REPLAY_RAW_RECORD_IDS: ContextVar[frozenset[int] | None] = ContextVar(
     "eden_replay_raw_record_ids",
@@ -150,6 +155,106 @@ def _area_code(row: dict[str, Any]) -> str | None:
     return _text(row, "areaCode", "areaCd", "areacode")
 
 
+def _active_areas(session: Session) -> list[Any]:
+    cached = session.info.get("eden_active_area_names")
+    if cached is None:
+        cached = session.execute(
+            select(Area.eden_area_id, Area.name_ko, Area.parent_area_id).where(
+                Area.active.is_(True)
+            )
+        ).all()
+        session.info["eden_active_area_names"] = cached
+    return cached
+
+
+def _resolve_area_from_address(session: Session, address: str | None) -> str | None:
+    if not address:
+        return None
+    areas = _active_areas(session)
+    areas_by_id = {item.eden_area_id: item for item in areas}
+    matches = [item for item in areas if item.name_ko and item.name_ko in address]
+    if not matches:
+        return None
+
+    matched_names = {item.name_ko for item in matches}
+
+    def lineage(item: Any) -> list[Any]:
+        resolved = [item]
+        seen = {item.eden_area_id}
+        parent_id = item.parent_area_id
+        while parent_id is not None:
+            if parent_id in seen:
+                return []
+            seen.add(parent_id)
+            parent = areas_by_id.get(parent_id)
+            if parent is None:
+                break
+            resolved.append(parent)
+            parent_id = parent.parent_area_id
+        return resolved
+
+    evidence = []
+    for item in matches:
+        candidate_lineage = lineage(item)
+        lineage_names = {candidate.name_ko for candidate in candidate_lineage}
+        if (
+            candidate_lineage
+            and item.parent_area_id is not None
+            and matched_names.issubset(lineage_names)
+        ):
+            evidence.append(item)
+    if len(evidence) != 1:
+        return None
+    return evidence[0].eden_area_id
+
+
+def _tour_coordinates(row: dict[str, Any]) -> tuple[Decimal, Decimal] | None:
+    try:
+        lng = _decimal(row, "mapx")
+        lat = _decimal(row, "mapy")
+    except ValueError:
+        return None
+    if lng is None or lat is None:
+        return None
+    if not (-180 <= lng <= 180 and -90 <= lat <= 90):
+        return None
+    try:
+        return (
+            lat.quantize(_STORED_COORDINATE_QUANTUM, rounding=ROUND_HALF_UP),
+            lng.quantize(_STORED_COORDINATE_QUANTUM, rounding=ROUND_HALF_UP),
+        )
+    except InvalidOperation:
+        return None
+
+
+def _resolve_tour_area_from_coordinates(
+    session: Session,
+    source_id: str,
+    row: dict[str, Any],
+) -> str | None:
+    if source_id not in TOUR_AREA_SOURCES:
+        return None
+    coordinates = _tour_coordinates(row)
+    if coordinates is None:
+        return None
+    lat, lng = coordinates
+    matches = session.execute(
+        select(Place.area_id, Area.active)
+        .join(Area, Area.eden_area_id == Place.area_id)
+        .where(
+            Place.lat == lat,
+            Place.lng == lng,
+            Place.merge_status == "active",
+        )
+    ).all()
+    if not matches or any(not item.active for item in matches):
+        return None
+    area_ids = {item.area_id for item in matches}
+    if len(area_ids) != 1:
+        return None
+    return next(iter(area_ids))
+
+
 def _resolve_area_id(session: Session, source_id: str, row: dict[str, Any]) -> str:
     code = _area_code(row)
     area_map_cache = session.info.setdefault("eden_area_source_map", {})
@@ -164,37 +269,20 @@ def _resolve_area_id(session: Session, source_id: str, row: dict[str, Any]) -> s
                 AreaSourceMap.external_area_code == code,
             )
         )
+        if area_id is not None:
+            area_map_cache[cache_key] = area_id
+            return area_id
     else:
         area_id = None
     if area_id is None:
         address = _text(row, "addr1", "rdnmadr", "lnmadr")
-        if address:
-            cached = session.info.get("eden_active_area_names")
-            if cached is None:
-                cached = session.execute(
-                    select(Area.eden_area_id, Area.name_ko, Area.parent_area_id).where(
-                        Area.active.is_(True)
-                    )
-                ).all()
-                session.info["eden_active_area_names"] = cached
-            parent_names = {item.eden_area_id: item.name_ko for item in cached}
-            matches = [
-                item
-                for item in cached
-                if item.name_ko and item.name_ko in address and item.parent_area_id is not None
-            ]
-            parent_matches = [
-                item for item in matches if parent_names.get(item.parent_area_id, "") in address
-            ]
-            resolved = parent_matches if len(parent_matches) == 1 else matches
-            if len(resolved) == 1:
-                area_id = resolved[0].eden_area_id
+        area_id = _resolve_area_from_address(session, address)
+    if area_id is None:
+        area_id = _resolve_tour_area_from_coordinates(session, source_id, row)
     if area_id is None:
         if code is None:
             raise ValueError(f"missing {source_id} area code and unresolvable address")
         raise ValueError(f"unmapped {source_id} area code: {code}")
-    if cache_key is not None:
-        area_map_cache[cache_key] = area_id
     return area_id
 
 
@@ -284,6 +372,10 @@ def _raw_record_replay_scope(raw_record_ids: Iterable[int]):
         yield
     finally:
         _REPLAY_RAW_RECORD_IDS.reset(token)
+
+
+def _is_raw_record_replay() -> bool:
+    return _REPLAY_RAW_RECORD_IDS.get() is not None
 
 
 def _run_records(session: Session, run_id: str, source_id: str) -> list[RawRecord]:
