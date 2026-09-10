@@ -139,9 +139,26 @@ def build_recommendation_snapshot(
         if not places:
             return RecommendationProductResult(0, 0)
         place_ids = [place.eden_place_id for place in places]
+        latest_relation_observed = (
+            select(
+                PlaceRelation.from_place_id.label("from_place_id"),
+                func.max(PlaceRelation.observed_at).label("observed_at"),
+            )
+            .where(
+                PlaceRelation.from_place_id.in_(place_ids),
+                PlaceRelation.relation_type == "related",
+            )
+            .group_by(PlaceRelation.from_place_id)
+            .subquery()
+        )
         relations = list(
             session.scalars(
                 select(PlaceRelation)
+                .join(
+                    latest_relation_observed,
+                    (latest_relation_observed.c.from_place_id == PlaceRelation.from_place_id)
+                    & (latest_relation_observed.c.observed_at == PlaceRelation.observed_at),
+                )
                 .where(
                     PlaceRelation.from_place_id.in_(place_ids),
                     PlaceRelation.relation_type == "related",

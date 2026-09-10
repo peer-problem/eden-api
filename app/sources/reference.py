@@ -32,8 +32,22 @@ class ParsedArea:
 class MoisAreaAdapter(SourceAdapter):
     source_id = "SRC_MOIS_ADMIN_CODES"
 
-    def __init__(self, timeout_seconds: float, max_response_bytes: int) -> None:
-        self.client = SecureSourceClient({"www.mois.go.kr"}, timeout_seconds, max_response_bytes)
+    def __init__(
+        self,
+        timeout_seconds: float,
+        max_response_bytes: int,
+        max_requests: int = 20,
+        max_total_bytes: int = 8 * 1024 * 1024,
+        max_run_seconds: float = 120.0,
+    ) -> None:
+        self.client = SecureSourceClient(
+            {"www.mois.go.kr"},
+            timeout_seconds,
+            max_response_bytes,
+            max_requests,
+            max_total_bytes,
+            max_run_seconds,
+        )
 
     def fetch(self, scope: dict[str, Any]) -> FetchResult:
         del scope

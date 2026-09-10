@@ -22,10 +22,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import Settings
 from app.repositories.models import AlertDocument, AlertRevision
 
-PROMPT_VERSION = "upstage_official_alert_translation_summary_v3"
-MAX_LLM_BODY_CHARS = 30_000
+PROMPT_VERSION = "upstage_official_alert_translation_summary_v4"
+MAX_LLM_BODY_CHARS = 12_000
 MAX_ENRICHMENT_BATCH_SIZE = 20
-LLM_REQUEST_TIMEOUT_SECONDS = 120.0
+LLM_REQUEST_TIMEOUT_SECONDS = 60.0
 logger = logging.getLogger("eden.llm.alerts")
 
 
@@ -131,7 +131,7 @@ class UpstageAlertEnricher:
             api_key=api_key.get_secret_value(),
             base_url="https://api.upstage.ai/v1",
             timeout=timeout_seconds,
-            max_retries=2,
+            max_retries=0,
         )
 
     def close(self) -> None:
@@ -201,10 +201,12 @@ class UpstageAlertEnricher:
         return AlertEnrichmentPayload.model_validate(merged)
 
     def enrich(self, title: str, body: str) -> AlertEnrichmentPayload:
+        body_truncated = len(body) > MAX_LLM_BODY_CHARS
         source_text = (
             "<UNTRUSTED_OFFICIAL_NOTICE>\n"
             f"<TITLE>{title[:1000]}</TITLE>\n"
-            f"<BODY>{body[:MAX_LLM_BODY_CHARS]}</BODY>\n"
+            f'<BODY truncated="{str(body_truncated).lower()}">'
+            f"{body[:MAX_LLM_BODY_CHARS]}</BODY>\n"
             "</UNTRUSTED_OFFICIAL_NOTICE>"
         )
         response = self.client.chat.completions.create(
@@ -224,6 +226,8 @@ class UpstageAlertEnricher:
                         "Preserve names, numbers, dates, requirements, exceptions, and "
                         "uncertainty. A permission or option (may/can) must remain an option, "
                         "never a promise, requirement, or automatic action. "
+                        "When BODY has truncated=true, summarize only the supplied excerpt and "
+                        "do not imply that it covers the full notice. "
                         "Do not add facts, scores, rankings, forecasts, or source-status claims. "
                         "Each language summary must use at most six concise sentences, "
                         "prioritizing dates, eligibility, required actions, and exceptions. "

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.domain.enums import Availability
@@ -20,6 +20,8 @@ from app.repositories.models import (
 
 REGIONAL_PRODUCT_VERSION = "regional_product_v1"
 REGIONAL_MAX_AGE_SECONDS = 3 * 24 * 3600
+REGIONAL_VISIT_HISTORY_DAYS = 731
+REGIONAL_METRIC_HISTORY_DAYS = 365
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,16 +64,39 @@ def build_regional_snapshots(
     session_factory: sessionmaker[Session],
 ) -> RegionalProductResult:
     with session_factory() as session:
+        visit_latest = {
+            (area_id, subject_type): latest
+            for area_id, subject_type, latest in session.execute(
+                select(
+                    RegionalVisitObservation.area_id,
+                    RegionalVisitObservation.subject_type,
+                    func.max(RegionalVisitObservation.period_start),
+                ).group_by(
+                    RegionalVisitObservation.area_id,
+                    RegionalVisitObservation.subject_type,
+                )
+            ).all()
+        }
+        demand_latest = dict(
+            session.execute(
+                select(
+                    RegionalDemandObservation.area_id,
+                    func.max(RegionalDemandObservation.period_start),
+                ).group_by(RegionalDemandObservation.area_id)
+            ).all()
+        )
+        diversity_latest = dict(
+            session.execute(
+                select(
+                    RegionalDiversityObservation.area_id,
+                    func.max(RegionalDiversityObservation.period_start),
+                ).group_by(RegionalDiversityObservation.area_id)
+            ).all()
+        )
         area_ids = sorted(
-            set(
-                session.scalars(select(RegionalVisitObservation.area_id).distinct()).all()
-            )
-            | set(
-                session.scalars(select(RegionalDemandObservation.area_id).distinct()).all()
-            )
-            | set(
-                session.scalars(select(RegionalDiversityObservation.area_id).distinct()).all()
-            )
+            {area_id for area_id, _subject_type in visit_latest}
+            | set(demand_latest)
+            | set(diversity_latest)
         )
 
     publisher = SnapshotPublisher(session_factory)
@@ -81,29 +106,68 @@ def build_regional_snapshots(
             area = session.get(Area, area_id)
             if area is None:
                 continue
-            visits = list(
-                session.scalars(
-                    select(RegionalVisitObservation)
-                    .where(RegionalVisitObservation.area_id == area_id)
-                    .order_by(
-                        RegionalVisitObservation.period_start,
-                        RegionalVisitObservation.visitor_type,
-                    )
-                ).all()
+            visit_windows = [
+                and_(
+                    RegionalVisitObservation.subject_type == subject_type,
+                    RegionalVisitObservation.period_start
+                    >= latest - timedelta(days=REGIONAL_VISIT_HISTORY_DAYS - 1),
+                    RegionalVisitObservation.period_start <= latest,
+                )
+                for (candidate_area_id, subject_type), latest in visit_latest.items()
+                if candidate_area_id == area_id
+            ]
+            visits = (
+                list(
+                    session.scalars(
+                        select(RegionalVisitObservation)
+                        .where(
+                            RegionalVisitObservation.area_id == area_id,
+                            or_(*visit_windows),
+                        )
+                        .order_by(
+                            RegionalVisitObservation.period_start,
+                            RegionalVisitObservation.visitor_type,
+                        )
+                    ).all()
+                )
+                if visit_windows
+                else []
             )
-            demand = list(
-                session.scalars(
-                    select(RegionalDemandObservation)
-                    .where(RegionalDemandObservation.area_id == area_id)
-                    .order_by(RegionalDemandObservation.period_start)
-                ).all()
+            latest_demand = demand_latest.get(area_id)
+            demand = (
+                list(
+                    session.scalars(
+                        select(RegionalDemandObservation)
+                        .where(
+                            RegionalDemandObservation.area_id == area_id,
+                            RegionalDemandObservation.period_start
+                            >= latest_demand
+                            - timedelta(days=REGIONAL_METRIC_HISTORY_DAYS - 1),
+                            RegionalDemandObservation.period_start <= latest_demand,
+                        )
+                        .order_by(RegionalDemandObservation.period_start)
+                    ).all()
+                )
+                if latest_demand is not None
+                else []
             )
-            diversity = list(
-                session.scalars(
-                    select(RegionalDiversityObservation)
-                    .where(RegionalDiversityObservation.area_id == area_id)
-                    .order_by(RegionalDiversityObservation.period_start)
-                ).all()
+            latest_diversity = diversity_latest.get(area_id)
+            diversity = (
+                list(
+                    session.scalars(
+                        select(RegionalDiversityObservation)
+                        .where(
+                            RegionalDiversityObservation.area_id == area_id,
+                            RegionalDiversityObservation.period_start
+                            >= latest_diversity
+                            - timedelta(days=REGIONAL_METRIC_HISTORY_DAYS - 1),
+                            RegionalDiversityObservation.period_start <= latest_diversity,
+                        )
+                        .order_by(RegionalDiversityObservation.period_start)
+                    ).all()
+                )
+                if latest_diversity is not None
+                else []
             )
             all_rows: list[Any] = [*visits, *demand, *diversity]
             if not all_rows:

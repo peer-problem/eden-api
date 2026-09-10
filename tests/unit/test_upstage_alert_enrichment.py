@@ -42,7 +42,7 @@ def test_llm_generation_timeout_is_independent_of_short_source_fetch_timeout(mon
         LLM_API_KEY=SecretStr("test-key"), LLM_MODEL="solar-pro4",
         SOURCE_HTTP_TIMEOUT_SECONDS=20,
     ))
-    assert captured["timeout"] == 120
+    assert captured["timeout"] == 60
 
 
 def _enricher(
@@ -99,6 +99,7 @@ def test_alert_credentials_and_json_schema_are_sent_to_upstage(monkeypatch):
     assert request.headers["authorization"] == "Bearer test-key"
     body = json.loads(request.content)
     assert body["max_tokens"] == 4096
+    assert enricher.client.max_retries == 0
     assert body["response_format"]["type"] == "json_schema"
     assert body["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
     assert "<UNTRUSTED_OFFICIAL_NOTICE>" in body["messages"][1]["content"]
@@ -106,6 +107,21 @@ def test_alert_credentials_and_json_schema_are_sent_to_upstage(monkeypatch):
     assert "title_ko and summary_ko in Korean" in system_prompt
     assert "title_en and summary_en in English" in system_prompt
     assert "never copy source-language prose" in system_prompt
+
+
+def test_alert_body_is_bounded_and_marks_truncated_excerpt(monkeypatch) -> None:
+    enricher, requests = _enricher(monkeypatch, content=json.dumps(PAYLOAD))
+
+    enricher.enrich("Long notice", "A" * (alerts.MAX_LLM_BODY_CHARS + 500))
+
+    request_body = json.loads(requests[0].content)
+    user_content = request_body["messages"][1]["content"]
+    body_excerpt = user_content.split('truncated="true">', 1)[1].split("</BODY>", 1)[0]
+    assert len(body_excerpt) == alerts.MAX_LLM_BODY_CHARS
+    assert body_excerpt == "A" * alerts.MAX_LLM_BODY_CHARS
+    assert "do not imply that it covers the full notice" in request_body["messages"][0][
+        "content"
+    ]
 
 
 def test_language_validation_rejects_korean_dominant_english_output() -> None:

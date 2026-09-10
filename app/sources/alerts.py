@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -273,6 +274,9 @@ class OfficialNoticeAdapter(SourceAdapter):
         allowed_hosts: set[str],
         timeout_seconds: float,
         max_response_bytes: int,
+        max_requests: int = 20,
+        max_total_bytes: int = 8 * 1024 * 1024,
+        max_run_seconds: float = 120.0,
     ) -> None:
         self.source_id = source_id
         self.allowed_hosts = {host.lower().rstrip(".") for host in allowed_hosts if host}
@@ -280,6 +284,9 @@ class OfficialNoticeAdapter(SourceAdapter):
             self.allowed_hosts,
             timeout_seconds,
             max_response_bytes,
+            max_requests,
+            max_total_bytes,
+            max_run_seconds,
         )
 
     def fetch(self, scope: dict[str, Any]) -> FetchResult:
@@ -293,6 +300,16 @@ class OfficialNoticeAdapter(SourceAdapter):
         now = datetime.now(UTC)
         items: list[RawItem] = []
         errors: list[str] = []
+        rotation_notice: str | None = None
+        target_limit = max(1, self.client.max_requests // 6)
+        if len(targets) > target_limit:
+            batch_count = math.ceil(len(targets) / target_limit)
+            batch_index = int(now.timestamp()) // 3600 % batch_count
+            start = batch_index * target_limit
+            targets = targets[start : start + target_limit]
+            rotation_notice = (
+                f"source_run:rotating_target_batch={batch_index + 1}/{batch_count}"
+            )
         for index, target in enumerate(targets):
             if not isinstance(target, dict) or not target.get("url"):
                 errors.append(f"target[{index}]:invalid_config")
@@ -366,6 +383,8 @@ class OfficialNoticeAdapter(SourceAdapter):
                     errors.append(f"{target_key}:no_notice_details")
             except Exception as exc:
                 errors.append(f"{target_key}:index:{type(exc).__name__}")
+        if rotation_notice is not None and items:
+            errors.append(rotation_notice)
         if not items:
             return FetchResult(
                 status=SourceStatus.DEGRADED,

@@ -62,7 +62,7 @@ from app.sources.registry import build_adapter
 logger = logging.getLogger("eden.scheduler")
 SEMAS_CANDIDATE_LIMIT = 900
 RELATED_CANDIDATE_LIMIT = 900
-SEMAS_PLACES_PER_RUN = 50
+SEMAS_PLACES_PER_RUN = 10
 PLACE_PIPELINE_SOURCES = frozenset(
     {
         "SRC_KTO_PLACE_HUB",
@@ -157,7 +157,7 @@ def _is_due(
     pipeline_retry: bool = False,
     jitter_seconds: int = 0,
 ) -> bool:
-    effective_interval = min(interval_seconds, 60) if pipeline_retry else interval_seconds
+    effective_interval = 3600 if pipeline_retry else interval_seconds
     due_interval = effective_interval + max(0, jitter_seconds)
     return last_attempt_at is None or last_attempt_at < now - timedelta(seconds=due_interval)
 
@@ -172,7 +172,7 @@ def _source_due_lag_seconds(
 ) -> float:
     if last_attempt_at is None:
         return 0.0
-    effective_interval = min(interval_seconds, 60) if pipeline_retry else interval_seconds
+    effective_interval = 3600 if pipeline_retry else interval_seconds
     due_interval = effective_interval + max(0, jitter_seconds)
     return max(0.0, (now - last_attempt_at).total_seconds() - due_interval)
 
@@ -321,6 +321,7 @@ def run_source_if_due(
     if candidate is None:
         return
     registry, policy, state = candidate
+    interval_seconds = max(policy.interval_seconds, settings.SOURCE_MIN_INTERVAL_SECONDS)
     pipeline_retry = bool(state and state.reason and state.reason.startswith("pipeline:"))
     jitter_seconds = _source_jitter_seconds(registry.source_id, policy.jitter_seconds)
     record_source_state(
@@ -334,7 +335,7 @@ def run_source_if_due(
         _source_due_lag_seconds(
             state.last_attempt_at if state is not None else None,
             now,
-            policy.interval_seconds,
+            interval_seconds,
             pipeline_retry=pipeline_retry and state.consecutive_failures <= policy.retry_limit,
             jitter_seconds=jitter_seconds,
         ),
@@ -342,7 +343,7 @@ def run_source_if_due(
     if state is not None and not _is_due(
         state.last_attempt_at,
         now,
-        policy.interval_seconds,
+        interval_seconds,
         pipeline_retry=pipeline_retry and state.consecutive_failures <= policy.retry_limit,
         jitter_seconds=jitter_seconds,
     ):
@@ -372,7 +373,7 @@ def run_source_if_due(
         idempotency_key = _idempotency_key(
             registry.source_id,
             scope,
-            policy.interval_seconds,
+            interval_seconds,
         )
         existing, run_id = ingestion.schedule_run(
             registry.source_id,
@@ -846,14 +847,19 @@ def run_snapshot_retention(
 @observe_scheduler_job("alert")
 def run_alert_enrichment(
     settings: Settings, factory: sessionmaker[Session],
+    capacity_gate: SchedulerCapacityGate | None = None,
 ) -> AlertEnrichmentBatchResult | None:
+    if capacity_gate is not None and capacity_gate.source_pause_reason():
+        return None
     engine: Engine = factory.kw["bind"]
     connection = _open_job_lock_connection(engine)
     try:
         with MariaDBAdvisoryLock(connection, "eden:alert-enrichment") as enrichment_lock:
             if not enrichment_lock.acquired:
                 return None
-            result = enrich_pending_alert_revisions(settings, factory)
+            result = enrich_pending_alert_revisions(
+                settings, factory, limit=settings.ALERT_ENRICHMENT_BATCH_SIZE,
+            )
             record_alert_enrichment(
                 available=result.available,
                 pending_count=result.pending_count,
@@ -911,10 +917,10 @@ def start_scheduler(settings: Settings, factory: sessionmaker[Session]) -> Sched
         scheduler.add_job(
             run_source_if_due,
             "interval",
-            seconds=60,
+            seconds=300,
             args=[settings, factory, source_id, capacity_gate],
             id=f"eden:source:{source_id}",
-            next_run_time=now + timedelta(seconds=index % 60),
+            next_run_time=now + timedelta(seconds=30 + index * 10),
             replace_existing=True,
             executor="source",
         )
@@ -922,28 +928,28 @@ def start_scheduler(settings: Settings, factory: sessionmaker[Session]) -> Sched
         scheduler.add_job(
             run_product_refresh,
             "interval",
-            seconds=60,
+            seconds=900,
             args=[factory, family, capacity_gate],
             id=f"eden:product:{family.value}",
-            next_run_time=now + timedelta(seconds=10 + index * 5),
+            next_run_time=now + timedelta(seconds=60 + index * 120),
             replace_existing=True,
             executor="product",
         )
     scheduler.add_job(
         run_dead_letter_reprocessing,
         "interval",
-        seconds=300,
+        seconds=3600,
         args=[settings, factory, capacity_gate],
         id="eden:dead-letter:reprocess",
-        next_run_time=now + timedelta(seconds=45),
+        next_run_time=now + timedelta(seconds=600),
         replace_existing=True,
         executor="source",
     )
     scheduler.add_job(
         run_alert_enrichment,
         "interval",
-        seconds=300,
-        args=[settings, factory],
+        seconds=3600,
+        args=[settings, factory, capacity_gate],
         id="eden:enrich_pending_alerts",
         replace_existing=True,
         executor="source",

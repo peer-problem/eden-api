@@ -28,6 +28,8 @@ def _sample(
     disk_percent: float = 50,
     snapshot_bytes: int = 100,
     raw_bytes: int = 500,
+    other_bytes: int = 0,
+    memory_percent: float | None = None,
 ) -> CapacitySample:
     return CapacitySample(
         sampled_at=when,
@@ -35,7 +37,9 @@ def _sample(
         tables=(
             TableCapacity("read_model_snapshot", snapshot_bytes, 0, 1),
             TableCapacity("raw_record", raw_bytes, 0, 1),
+            TableCapacity("social_observation", other_bytes, 0, 1),
         ),
+        system_memory_used_percent=memory_percent,
     )
 
 
@@ -49,6 +53,14 @@ def test_projected_growth_counts_raw_and_derived_tables() -> None:
     )
 
     assert projected_daily_growth_bytes(previous, current) == 19_900
+
+
+def test_projected_growth_counts_every_application_table() -> None:
+    start = datetime(2026, 8, 29, tzinfo=UTC)
+    previous = _sample(start, other_bytes=100)
+    current = _sample(start + timedelta(days=1), other_bytes=301)
+
+    assert projected_daily_growth_bytes(previous, current) == 201
 
 
 def test_growth_budget_pauses_product_and_source_writes() -> None:
@@ -68,6 +80,40 @@ def test_growth_budget_pauses_product_and_source_writes() -> None:
     assert decision.product_writes_allowed is False
     assert decision.source_writes_allowed is False
     assert decision.reasons == ("daily_growth_budget_exceeded",)
+
+
+@pytest.mark.parametrize(
+    ("database_max_bytes", "memory_percent", "expected_reason"),
+    [
+        (599, None, "database_size_limit_exceeded"),
+        (10_000, 85.0, "memory_write_pause"),
+    ],
+)
+def test_database_and_memory_limits_pause_all_writes(
+    database_max_bytes: int,
+    memory_percent: float | None,
+    expected_reason: str,
+) -> None:
+    sample = _sample(
+        datetime(2026, 8, 29, tzinfo=UTC),
+        memory_percent=memory_percent,
+    )
+
+    decision = assess_capacity(
+        sample,
+        previous=None,
+        daily_growth_budget_bytes=100,
+        warning_percent=70,
+        product_pause_percent=80,
+        source_pause_percent=90,
+        database_max_bytes=database_max_bytes,
+        memory_write_pause_percent=85,
+    )
+
+    assert decision.total_database_bytes == 600
+    assert decision.product_writes_allowed is False
+    assert decision.source_writes_allowed is False
+    assert expected_reason in decision.reasons
 
 
 def test_production_capacity_gate_fails_closed_without_growth_reference() -> None:
@@ -176,4 +222,45 @@ def test_capacity_sample_retention_is_bounded() -> None:
         session.commit()
         count = session.scalar(select(func.count()).select_from(StorageCapacitySample))
 
-    assert count == 2
+    assert count == 3
+
+
+def test_capacity_samples_are_persisted_at_most_once_per_fifteen_minutes() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    StorageCapacitySample.__table__.create(engine)
+    now = datetime(2026, 8, 29, tzinfo=UTC)
+
+    with Session(engine) as session:
+        assert persist_capacity_sample(session, _sample(now)) is True
+        session.commit()
+        assert persist_capacity_sample(session, _sample(now + timedelta(minutes=5))) is False
+        session.commit()
+        assert persist_capacity_sample(session, _sample(now + timedelta(minutes=15))) is True
+        session.commit()
+        count = session.scalar(select(func.count()).select_from(StorageCapacitySample))
+
+    assert count == 6
+
+
+def test_capacity_sample_cleanup_deletes_at_most_requested_batch() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    StorageCapacitySample.__table__.create(engine)
+    now = datetime(2026, 8, 29, tzinfo=UTC)
+
+    with Session(engine) as session:
+        session.add_all(
+            StorageCapacitySample(
+                sampled_at=(now - timedelta(days=8)).replace(tzinfo=None),
+                table_name=f"old_{index}",
+                data_bytes=1,
+                index_bytes=0,
+                table_rows=1,
+            )
+            for index in range(12)
+        )
+        session.commit()
+        persist_capacity_sample(session, _sample(now), cleanup_batch_size=5)
+        session.commit()
+        count = session.scalar(select(func.count()).select_from(StorageCapacitySample))
+
+    assert count == 10

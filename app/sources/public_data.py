@@ -12,7 +12,11 @@ from pydantic import SecretStr
 
 from app.domain.enums import SourceStatus
 from app.sources.base import FetchReasonCode, FetchResult, RawItem, SourceAdapter
-from app.sources.http import SecureSourceClient, SourceCredentialHttpError
+from app.sources.http import (
+    SecureSourceClient,
+    SourceCredentialHttpError,
+    SourceRunBudgetExceeded,
+)
 
 SEOUL = ZoneInfo("Asia/Seoul")
 
@@ -232,6 +236,7 @@ def resolve_dynamic_parameter(value: Any, now: datetime) -> Any:
     tokens = {
         "$today": now.strftime("%Y%m%d"),
         "$yesterday": (now.date() - timedelta(days=1)).strftime("%Y%m%d"),
+        "$today_minus_7d": (now.date() - timedelta(days=7)).strftime("%Y%m%d"),
         "$today_minus_90d": (now.date() - timedelta(days=90)).strftime("%Y%m%d"),
         "$today_minus_455d": (now.date() - timedelta(days=455)).strftime("%Y%m%d"),
         "$current_year": now.strftime("%Y"),
@@ -256,6 +261,49 @@ def resolve_dynamic_parameter(value: Any, now: datetime) -> Any:
     raise ValueError(f"Unknown dynamic source parameter token: {value}")
 
 
+def _rotating_operation_batch(
+    configured: list[Any],
+    scope: dict[str, Any],
+    now: datetime,
+    max_requests: int,
+) -> tuple[list[Any], str | None, str | None]:
+    group_param = scope.get("rotation_group_param")
+    rotation_seconds = max(int(scope.get("rotation_seconds", 24 * 3600)), 3600)
+    if isinstance(group_param, str) and group_param:
+        groups: dict[str, list[Any]] = {}
+        for request in configured:
+            params = request.get("params") if isinstance(request, dict) else None
+            group_value = params.get(group_param) if isinstance(params, dict) else None
+            if group_value is None or not str(group_value):
+                return [], None, "source_run:rotation_group_param_missing"
+            groups.setdefault(str(group_value), []).append(request)
+        ordered_groups = sorted(groups.items())
+        batch_index = int(now.timestamp()) // rotation_seconds % len(ordered_groups)
+        _group_value, selected = ordered_groups[batch_index]
+        notice = (
+            f"source_run:rotating_operation_group={batch_index + 1}/{len(ordered_groups)}"
+            if len(ordered_groups) > 1
+            else None
+        )
+        if len(selected) > max_requests:
+            return [], notice, "source_run:rotation_group_request_limit_exceeded"
+        return selected, notice, None
+    if not bool(scope.get("rotate_operations")) or len(configured) <= 1:
+        return configured, None, None
+    operation_limit = min(
+        max(int(scope.get("max_operations_per_run", max_requests)), 1),
+        max_requests,
+    )
+    batch_count = math.ceil(len(configured) / operation_limit)
+    batch_index = int(now.timestamp()) // rotation_seconds % batch_count
+    start = batch_index * operation_limit
+    return (
+        configured[start : start + operation_limit],
+        f"source_run:rotating_operation_batch={batch_index + 1}/{batch_count}",
+        None,
+    )
+
+
 class PublicDataAdapter(SourceAdapter):
     def __init__(
         self,
@@ -264,12 +312,26 @@ class PublicDataAdapter(SourceAdapter):
         service_key: SecretStr | None,
         timeout_seconds: float,
         max_response_bytes: int,
+        max_requests: int = 20,
+        max_total_bytes: int = 8 * 1024 * 1024,
+        max_records: int = 10_000,
+        max_run_seconds: float = 120.0,
     ) -> None:
+        if max_records < 1:
+            raise ValueError("Public-data record budget must be positive")
         self.source_id = source_id
         self.base_url = base_url.rstrip("/")
         self.service_key = service_key
+        self.max_records = max_records
         host = urlparse(base_url).hostname or ""
-        self.client = SecureSourceClient({host}, timeout_seconds, max_response_bytes)
+        self.client = SecureSourceClient(
+            {host},
+            timeout_seconds,
+            max_response_bytes,
+            max_requests,
+            max_total_bytes,
+            max_run_seconds,
+        )
 
     def _request(self, url: str, params: dict[str, Any]) -> tuple[bytes, str, str]:
         return self.client.get(url, params=params)
@@ -291,12 +353,34 @@ class PublicDataAdapter(SourceAdapter):
                 reason_code=FetchReasonCode.SCOPE_MISSING,
             )
         now = datetime.now(UTC)
+        configured, rotation_notice, rotation_error = _rotating_operation_batch(
+            configured,
+            scope,
+            now,
+            self.client.max_requests,
+        )
+        if rotation_error is not None:
+            partial_errors = (
+                (rotation_notice, rotation_error)
+                if rotation_notice is not None
+                else (rotation_error,)
+            )
+            return FetchResult(
+                status=SourceStatus.DEGRADED,
+                reason="공공데이터 순환 수집 범위가 실행 상한을 초과했습니다.",
+                partial_errors=partial_errors,
+            )
         items: list[RawItem] = []
         errors: list[str] = []
         authentication_errors = 0
         authoritative_watermarks: list[datetime] = []
         missing_watermark_count = 0
+        record_count = 0
+        run_budget_exhausted = False
         for index, request in enumerate(configured):
+            if record_count >= self.max_records:
+                errors.append("source_run:record_limit_exceeded")
+                break
             if not isinstance(request, dict):
                 errors.append(f"operation[{index}]:invalid_config")
                 continue
@@ -311,7 +395,7 @@ class PublicDataAdapter(SourceAdapter):
             response_type_param = request.get("response_type_param", "_type")
             paginate = bool(request.get("paginate", True))
             pagination_params = bool(request.get("pagination_params", True))
-            max_pages = min(max(int(request.get("max_pages", 100)), 1), 1000)
+            max_pages = min(max(int(request.get("max_pages", 20)), 1), 20)
             params = {
                 str(key): resolve_dynamic_parameter(value, now)
                 for key, value in dict(request.get("params", {})).items()
@@ -322,9 +406,9 @@ class PublicDataAdapter(SourceAdapter):
             try:
                 if pagination_params:
                     params.setdefault(page_param, 1)
-                    params.setdefault(rows_param, 1000)
+                    params.setdefault(rows_param, 500)
                 page = int(params[page_param]) if pagination_params else 1
-                rows = int(params[rows_param]) if pagination_params else 1000
+                rows = int(params[rows_param]) if pagination_params else 500
                 if page < 1 or rows < 1 or rows > 1000:
                     raise ValueError("Invalid public-data pagination bounds")
             except (TypeError, ValueError) as exc:
@@ -332,6 +416,12 @@ class PublicDataAdapter(SourceAdapter):
                 continue
             url = self.base_url if use_base_url else f"{self.base_url}/{operation}"
             pages_fetched = 0
+            rotating_page_end: int | None = None
+            rotate_pages = bool(request.get("rotate_pages"))
+            rotation_seconds = max(
+                int(request.get("rotation_seconds", 24 * 3600)),
+                3600,
+            )
             while True:
                 if pagination_params:
                     params[page_param] = page
@@ -352,7 +442,33 @@ class PublicDataAdapter(SourceAdapter):
                         (PublicDataAuthenticationError, SourceCredentialHttpError),
                     ):
                         authentication_errors += 1
+                    if isinstance(exc, SourceRunBudgetExceeded):
+                        run_budget_exhausted = True
                     errors.append(f"{operation_key}:page={page}:{type(exc).__name__}")
+                    break
+                if rotate_pages and total is not None and rotating_page_end is None:
+                    required_pages = max(1, math.ceil(total / rows))
+                    if required_pages > max_pages:
+                        page_window_size = max(1, max_pages - 1)
+                        page_batch_count = math.ceil(required_pages / page_window_size)
+                        page_batch_index = (
+                            int(now.timestamp()) // rotation_seconds % page_batch_count
+                        )
+                        page_start = page_batch_index * page_window_size + 1
+                        rotating_page_end = min(
+                            required_pages,
+                            page_start + page_window_size - 1,
+                        )
+                        errors.append(
+                            f"{operation_key}:rotating_page_batch="
+                            f"{page_batch_index + 1}/{page_batch_count}"
+                        )
+                        if page_start > 1:
+                            page = page_start
+                            continue
+                if record_count + page_count > self.max_records:
+                    errors.append("source_run:record_limit_exceeded")
+                    run_budget_exhausted = True
                     break
                 if source_updated_at is None:
                     missing_watermark_count += 1
@@ -379,8 +495,11 @@ class PublicDataAdapter(SourceAdapter):
                         },
                     )
                 )
+                record_count += page_count
                 pages_fetched += 1
                 if not paginate:
+                    break
+                if rotating_page_end is not None and page >= rotating_page_end:
                     break
                 if total is not None:
                     required_pages = max(1, math.ceil(total / rows))
@@ -394,7 +513,15 @@ class PublicDataAdapter(SourceAdapter):
                 if pages_fetched >= max_pages:
                     errors.append(f"{operation_key}:pagination_limit_exceeded")
                     break
+                if record_count >= self.max_records:
+                    errors.append("source_run:record_limit_exceeded")
+                    run_budget_exhausted = True
+                    break
                 page += 1
+            if run_budget_exhausted:
+                break
+        if rotation_notice is not None and items:
+            errors.append(rotation_notice)
         if errors and not items:
             return FetchResult(
                 status=(

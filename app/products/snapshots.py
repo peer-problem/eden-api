@@ -25,16 +25,11 @@ from app.repositories.models import (
 )
 
 PAYLOAD_ENCODING = "json-zlib-v1"
-MAX_SNAPSHOT_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
-DEFAULT_SNAPSHOT_UNCOMPRESSED_BYTES = 16 * 1024 * 1024
-SNAPSHOT_UNCOMPRESSED_BYTES_BY_ENDPOINT = {
-    "social_signal": MAX_SNAPSHOT_UNCOMPRESSED_BYTES,
-    "recommendation_feature": MAX_SNAPSHOT_UNCOMPRESSED_BYTES,
-    "regional_product": 32 * 1024 * 1024,
-    "forecast_product": DEFAULT_SNAPSHOT_UNCOMPRESSED_BYTES,
-    "inbound_market_country": DEFAULT_SNAPSHOT_UNCOMPRESSED_BYTES,
-}
+MAX_SNAPSHOT_DECODE_BYTES = 64 * 1024 * 1024
+MAX_SNAPSHOT_UNCOMPRESSED_BYTES = MAX_SNAPSHOT_DECODE_BYTES
+MAX_NEW_SNAPSHOT_UNCOMPRESSED_BYTES = 8 * 1024 * 1024
 PROVENANCE_BATCH_SIZE = 500
+MAX_RETENTION_PROVENANCE_ROWS = 1000
 
 
 class SnapshotPublishBusy(RuntimeError):
@@ -156,7 +151,7 @@ def _canonical_json_bytes(value: Any) -> bytes:
 def encode_payload(
     data: dict[str, Any] | list[Any] | None,
     *,
-    max_uncompressed_bytes: int = MAX_SNAPSHOT_UNCOMPRESSED_BYTES,
+    max_uncompressed_bytes: int = MAX_NEW_SNAPSHOT_UNCOMPRESSED_BYTES,
 ) -> EncodedPayload:
     if max_uncompressed_bytes < 1:
         raise ValueError("max_uncompressed_bytes must be positive")
@@ -178,10 +173,15 @@ def encode_payload(
 
 
 def payload_size_limit(endpoint: str) -> int:
-    return SNAPSHOT_UNCOMPRESSED_BYTES_BY_ENDPOINT.get(
-        endpoint,
-        DEFAULT_SNAPSHOT_UNCOMPRESSED_BYTES,
-    )
+    """Return the absolute decode ceiling retained for existing snapshot payloads."""
+    del endpoint
+    return MAX_SNAPSHOT_DECODE_BYTES
+
+
+def publish_payload_size_limit(endpoint: str) -> int:
+    """Return the uniform ceiling for newly published snapshot payloads."""
+    del endpoint
+    return MAX_NEW_SNAPSHOT_UNCOMPRESSED_BYTES
 
 
 def decode_payload(
@@ -266,7 +266,7 @@ def prepare_snapshot(candidate: SnapshotCandidate) -> PreparedSnapshot:
     version = hashlib.sha256(_canonical_json_bytes(version_document)).hexdigest()
     payload = encode_payload(
         data,
-        max_uncompressed_bytes=payload_size_limit(candidate.endpoint),
+        max_uncompressed_bytes=publish_payload_size_limit(candidate.endpoint),
     )
     snapshot_id = f"snap_{version[:59]}"
     return PreparedSnapshot(
@@ -754,12 +754,21 @@ def retain_snapshots(
     dry_run: bool = True,
     snapshot_batch_size: int = 100,
     provenance_batch_size: int = PROVENANCE_BATCH_SIZE,
+    provenance_delete_limit: int = MAX_RETENTION_PROVENANCE_ROWS,
 ) -> RetentionResult:
-    """Deletes bounded retired or abandoned staging rows without touching safe points."""
+    """Deletes bounded retired or abandoned staging rows without touching safe points.
+
+    A snapshot with remaining provenance is kept for a later invocation.
+    """
     if not 1 <= snapshot_batch_size <= 500:
         raise ValueError("snapshot_batch_size must be between 1 and 500")
     if not 1 <= provenance_batch_size <= PROVENANCE_BATCH_SIZE:
         raise ValueError(f"provenance_batch_size must be between 1 and {PROVENANCE_BATCH_SIZE}")
+    if not 1 <= provenance_delete_limit <= MAX_RETENTION_PROVENANCE_ROWS:
+        raise ValueError(
+            "provenance_delete_limit must be between 1 and "
+            f"{MAX_RETENTION_PROVENANCE_ROWS}"
+        )
 
     with session_factory() as session:
         candidate_ids = _retention_candidate_ids(
@@ -790,7 +799,7 @@ def retain_snapshots(
     deleted_payloads = 0
     for snapshot_id in candidate_ids:
         with session_factory() as session:
-            while True:
+            while deleted_provenance_rows < provenance_delete_limit:
                 with session.begin():
                     still_deletable = session.scalar(
                         select(ReadModelSnapshot.snapshot_id).where(
@@ -813,7 +822,12 @@ def retain_snapshots(
                                 ProvenanceEdge.output_id == snapshot_id,
                             )
                             .order_by(ProvenanceEdge.provenance_id)
-                            .limit(provenance_batch_size)
+                            .limit(
+                                min(
+                                    provenance_batch_size,
+                                    provenance_delete_limit - deleted_provenance_rows,
+                                )
+                            )
                         ).all()
                     )
                     if not provenance_ids:
@@ -826,6 +840,18 @@ def retain_snapshots(
                     deleted_provenance_rows += result.rowcount or 0
 
             with session.begin():
+                provenance_remains = bool(
+                    session.scalar(
+                        select(
+                            exists().where(
+                                ProvenanceEdge.output_type == "read_model_snapshot",
+                                ProvenanceEdge.output_id == snapshot_id,
+                            )
+                        )
+                    )
+                )
+                if provenance_remains:
+                    continue
                 payload_id = session.scalar(
                     select(ReadModelSnapshot.payload_id).where(
                         ReadModelSnapshot.snapshot_id == snapshot_id,
@@ -859,6 +885,8 @@ def retain_snapshots(
                         )
                     )
                     deleted_payloads += payload_result.rowcount or 0
+        if deleted_provenance_rows >= provenance_delete_limit:
+            break
 
     return RetentionResult(
         dry_run=False,

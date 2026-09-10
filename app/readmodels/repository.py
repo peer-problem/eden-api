@@ -102,7 +102,7 @@ PLACE_LANGUAGE_SOURCES = {
     "ja": "SRC_TOUR_JA",
     "zh-CN": "SRC_TOUR_ZH_CN",
 }
-PAYLOAD_CACHE_MAX_BYTES = 64 * 1024 * 1024
+PAYLOAD_CACHE_MAX_BYTES = 16 * 1024 * 1024
 
 
 def _request_source_ids(endpoint: str, scope: dict[str, object]) -> tuple[str, ...]:

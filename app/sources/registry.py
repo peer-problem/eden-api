@@ -24,6 +24,11 @@ from app.sources.social import (
 PUBLIC_DATA_SOURCES = {
     item.source_id for item in SOURCES if item.auth_type == "public_data_service_key"
 }
+STATISTICAL_PUBLIC_DATA_SOURCES = {
+    "SRC_KTO_RESOURCE_DEMAND",
+    "SRC_KTO_DEMAND_INTENSITY",
+    "SRC_KTO_DIVERSITY",
+}
 
 
 def build_adapter(
@@ -43,16 +48,25 @@ def build_adapter(
         return MoisAreaAdapter(
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
+            settings.SOURCE_MAX_REQUESTS_PER_RUN,
+            settings.SOURCE_MAX_RUN_BYTES,
+            settings.SOURCE_MAX_RUN_SECONDS,
         )
     if source_id == "SRC_KTO_INBOUND_STATS":
         return KtoInboundAdapter(
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
+            settings.SOURCE_MAX_REQUESTS_PER_RUN,
+            settings.SOURCE_MAX_RUN_BYTES,
+            settings.SOURCE_MAX_RUN_SECONDS,
         )
     if source_id == "SRC_KETA":
         return KetaNoticeAdapter(
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
+            settings.SOURCE_MAX_REQUESTS_PER_RUN,
+            settings.SOURCE_MAX_RUN_BYTES,
+            settings.SOURCE_MAX_RUN_SECONDS,
         )
     if source_id == "SRC_KEXIM_FX":
         return KeximFxAdapter(
@@ -60,6 +74,9 @@ def build_adapter(
             settings.KEXIM_API_KEY,
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
+            settings.SOURCE_MAX_REQUESTS_PER_RUN,
+            settings.SOURCE_MAX_RUN_BYTES,
+            settings.SOURCE_MAX_RUN_SECONDS,
         )
     if source_id == "SRC_BOK_ECOS":
         return BokEcosAdapter(
@@ -67,6 +84,9 @@ def build_adapter(
             settings.BOK_ECOS_API_KEY,
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
+            settings.SOURCE_MAX_REQUESTS_PER_RUN,
+            settings.SOURCE_MAX_RUN_BYTES,
+            settings.SOURCE_MAX_RUN_SECONDS,
         )
     if source_id == "SRC_TOURISM_ADMISSION":
         return UnavailableAdapter(
@@ -93,6 +113,9 @@ def build_adapter(
             settings.NAVER_CLIENT_SECRET,
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
+            settings.SOURCE_MAX_REQUESTS_PER_RUN,
+            settings.SOURCE_MAX_RUN_BYTES,
+            settings.SOURCE_MAX_RUN_SECONDS,
         )
     if source_id == "SRC_YOUTUBE":
         return YouTubeAggregateAdapter(
@@ -100,6 +123,9 @@ def build_adapter(
             settings.YOUTUBE_API_KEY,
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
+            settings.SOURCE_MAX_REQUESTS_PER_RUN,
+            settings.SOURCE_MAX_RUN_BYTES,
+            settings.SOURCE_MAX_RUN_SECONDS,
         )
     if source_id == "SRC_X":
         return XCountAdapter(
@@ -107,6 +133,9 @@ def build_adapter(
             settings.X_BEARER_TOKEN,
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
+            settings.SOURCE_MAX_REQUESTS_PER_RUN,
+            settings.SOURCE_MAX_RUN_BYTES,
+            settings.SOURCE_MAX_RUN_SECONDS,
         )
     if source_id in PUBLIC_DATA_SOURCES:
         return PublicDataAdapter(
@@ -119,6 +148,14 @@ def build_adapter(
             ),
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
+            (
+                settings.SOURCE_STATISTICAL_MAX_REQUESTS_PER_RUN
+                if source_id in STATISTICAL_PUBLIC_DATA_SOURCES
+                else settings.SOURCE_MAX_REQUESTS_PER_RUN
+            ),
+            settings.SOURCE_MAX_RUN_BYTES,
+            settings.SOURCE_MAX_RECORDS_PER_RUN,
+            settings.SOURCE_MAX_RUN_SECONDS,
         )
     if source_id in SOCIAL_REASONS:
         return ApprovedAggregateAdapter(source_id, SOCIAL_REASONS[source_id])
@@ -139,6 +176,9 @@ def build_adapter(
             hosts,
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
+            settings.SOURCE_MAX_REQUESTS_PER_RUN,
+            settings.SOURCE_MAX_RUN_BYTES,
+            settings.SOURCE_MAX_RUN_SECONDS,
         )
     return UnavailableAdapter(
         source_id,

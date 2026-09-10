@@ -72,21 +72,32 @@ def parse_keta_notice_detail(payload: bytes, url: str) -> KetaNotice:
 class KetaNoticeAdapter(SourceAdapter):
     source_id = SOURCE_ID
 
-    def __init__(self, timeout_seconds: float, max_response_bytes: int) -> None:
+    def __init__(
+        self,
+        timeout_seconds: float,
+        max_response_bytes: int,
+        max_requests: int = 20,
+        max_total_bytes: int = 8 * 1024 * 1024,
+        max_run_seconds: float = 120.0,
+    ) -> None:
         self.client = SecureSourceClient(
             {"www.k-eta.go.kr", "k-eta.go.kr"},
             timeout_seconds,
             max_response_bytes,
+            max_requests,
+            max_total_bytes,
+            max_run_seconds,
         )
 
     def fetch(self, scope: dict[str, object]) -> FetchResult:
-        limit = int(scope.get("limit", 20))
-        if not 1 <= limit <= 100:
+        requested_limit = int(scope.get("limit", 20))
+        if not 1 <= requested_limit <= 100:
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
                 reason="K-ETA notice limit은 1-100 범위여야 합니다.",
                 reason_code=FetchReasonCode.INVALID_SCOPE,
             )
+        limit = min(requested_limit, max(1, self.client.max_requests - 1))
         now = datetime.now(UTC)
         try:
             list_payload, _content_type, _final_url = self.client.get(LIST_URL)

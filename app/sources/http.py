@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from random import SystemRandom
+from time import monotonic
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -38,6 +39,10 @@ class SourceCredentialHttpError(SourceHttpError):
     """The source rejected configured credentials or approval scope."""
 
 
+class SourceRunBudgetExceeded(SourceHttpError):
+    """The source run exhausted its shared request, byte, or time budget."""
+
+
 def _retry_after_seconds(value: str | None, *, now: datetime | None = None) -> float | None:
     if not value:
         return None
@@ -61,13 +66,28 @@ class SecureSourceClient:
         self,
         allowed_hosts: Iterable[str],
         timeout_seconds: float = 20,
-        max_response_bytes: int = 10 * 1024 * 1024,
+        max_response_bytes: int = 2 * 1024 * 1024,
+        max_requests: int = 20,
+        max_total_bytes: int = 8 * 1024 * 1024,
+        max_run_seconds: float = 120.0,
         *,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+        if max_requests < 1:
+            raise ValueError("Source request budget must be positive")
+        if max_total_bytes < 1:
+            raise ValueError("Source byte budget must be positive")
+        if max_run_seconds <= 0:
+            raise ValueError("Source time budget must be positive")
         self.allowed_hosts = {host.lower().rstrip(".") for host in allowed_hosts}
         self.max_response_bytes = max_response_bytes
+        self.max_requests = max_requests
+        self.max_total_bytes = max_total_bytes
+        self.max_run_seconds = max_run_seconds
         self.timeout_seconds = timeout_seconds
+        self.request_count = 0
+        self.response_bytes = 0
+        self.started_at = monotonic()
         self.client = httpx.Client(
             timeout=httpx.Timeout(timeout_seconds),
             follow_redirects=False,
@@ -77,6 +97,27 @@ class SecureSourceClient:
 
     def close(self) -> None:
         self.client.close()
+
+    def _remaining_seconds(self) -> float:
+        return self.max_run_seconds - (monotonic() - self.started_at)
+
+    def _reserve_request(self) -> float:
+        remaining = self._remaining_seconds()
+        if remaining <= 0:
+            raise SourceRunBudgetExceeded("Source run exceeded configured time limit")
+        if self.request_count >= self.max_requests:
+            raise SourceRunBudgetExceeded("Source run exceeded configured request limit")
+        self.request_count += 1
+        return remaining
+
+    def _record_response_chunk(self, length: int, response_length: int) -> None:
+        if self._remaining_seconds() <= 0:
+            raise SourceRunBudgetExceeded("Source run exceeded configured time limit")
+        if response_length > self.max_response_bytes:
+            raise SourceHttpError("Source response exceeded configured byte limit")
+        if self.response_bytes + length > self.max_total_bytes:
+            raise SourceRunBudgetExceeded("Source run exceeded configured byte limit")
+        self.response_bytes += length
 
     def _validate_url(self, url: str) -> None:
         parsed = urlparse(url)
@@ -114,6 +155,10 @@ class SecureSourceClient:
                     delay = exc.retry_after_seconds
                 else:
                     delay = _JITTER.uniform(0.5, min(8.0, 0.5 * (2 ** (attempt - 1))))
+                if delay >= self._remaining_seconds():
+                    raise SourceRunBudgetExceeded(
+                        "Source run exceeded configured time limit"
+                    ) from exc
                 time.sleep(delay)
 
     def _request_once(self, method: str, url: str, **kwargs: object) -> tuple[bytes, str, str]:
@@ -123,7 +168,14 @@ class SecureSourceClient:
         try:
             for _ in range(6):
                 self._validate_url(current_url)
-                with self.client.stream(current_method, current_url, **current_kwargs) as response:
+                remaining = self._reserve_request()
+                request_kwargs = dict(current_kwargs)
+                request_kwargs["timeout"] = min(self.timeout_seconds, remaining)
+                with self.client.stream(
+                    current_method,
+                    current_url,
+                    **request_kwargs,
+                ) as response:
                     if response.status_code in {301, 302, 303, 307, 308}:
                         location = response.headers.get("location")
                         if not location:
@@ -159,8 +211,7 @@ class SecureSourceClient:
                     length = 0
                     for chunk in response.iter_bytes():
                         length += len(chunk)
-                        if length > self.max_response_bytes:
-                            raise SourceHttpError("Source response exceeded configured byte limit")
+                        self._record_response_chunk(len(chunk), length)
                         chunks.append(chunk)
                     return (
                         b"".join(chunks),

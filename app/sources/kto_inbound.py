@@ -74,11 +74,21 @@ def aggregate_kto_inbound_rows(body: dict[str, Any]) -> dict[str, int]:
 class KtoInboundAdapter(SourceAdapter):
     source_id = SOURCE_ID
 
-    def __init__(self, timeout_seconds: float, max_response_bytes: int) -> None:
+    def __init__(
+        self,
+        timeout_seconds: float,
+        max_response_bytes: int,
+        max_requests: int = 20,
+        max_total_bytes: int = 8 * 1024 * 1024,
+        max_run_seconds: float = 120.0,
+    ) -> None:
         self.client = SecureSourceClient(
             {"datalab.visitkorea.or.kr"},
             timeout_seconds,
             max_response_bytes,
+            max_requests,
+            max_total_bytes,
+            max_run_seconds,
         )
 
     def fetch(self, scope: dict[str, Any]) -> FetchResult:

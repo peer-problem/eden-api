@@ -206,8 +206,12 @@ def test_scheduler_registers_single_source_and_product_workstreams(monkeypatch) 
     source_jobs = [job for job in jobs if str(job["id"]).startswith("eden:source:")]
     product_jobs = [job for job in jobs if str(job["id"]).startswith("eden:product:")]
     assert len(source_jobs) == 1
+    assert source_jobs[0]["seconds"] == 300
     assert source_jobs[0]["executor"] == "source"
     assert len(product_jobs) == len(PRODUCT_FAMILIES)
+    assert all(job["seconds"] == 900 for job in product_jobs)
+    hourly_ids = {"eden:dead-letter:reprocess", "eden:enrich_pending_alerts"}
+    assert all(job["seconds"] == 3600 for job in jobs if job["id"] in hourly_ids)
     assert {job["executor"] for job in product_jobs} == {"product"}
     assert scheduler_runtime.scheduler.kwargs["executors"]["source"]._pool._max_workers == 1
     assert scheduler_runtime.scheduler.kwargs["executors"]["product"]._pool._max_workers == 1
@@ -281,7 +285,10 @@ def test_inbound_result_object_marks_products_dirty_from_persisted_count(monkeyp
     monkeypatch.setattr(
         runtime, "mark_products_dirty", lambda source, *_args, **_kwargs: dirty.append(source)
     )
-    runtime.run_source_if_due(SimpleNamespace(RAW_PERSIST_BATCH_SIZE=100), Factory(), source_id)
+    runtime.run_source_if_due(
+        SimpleNamespace(RAW_PERSIST_BATCH_SIZE=100, SOURCE_MIN_INTERVAL_SECONDS=3600),
+        Factory(), source_id,
+    )
 
     assert completed == [run_id]
     assert dirty == [source_id]
@@ -328,3 +335,12 @@ def test_alert_enrichment_skips_paid_calls_when_another_worker_holds_lock(monkey
     )
     factory = SimpleNamespace(kw={"bind": FakeEngine()})
     assert runtime.run_alert_enrichment(SimpleNamespace(), factory) is None
+
+
+def test_pipeline_retry_waits_an_hour_instead_of_refetching_each_minute() -> None:
+    now = datetime(2026, 9, 10, 12, tzinfo=UTC)
+    assert not runtime._is_due(now - timedelta(minutes=59), now, 86400, pipeline_retry=True)
+    assert runtime._is_due(now - timedelta(seconds=3601), now, 86400, pipeline_retry=True)
+    assert runtime._source_due_lag_seconds(
+        now - timedelta(minutes=30), now, 86400, pipeline_retry=True,
+    ) == 0

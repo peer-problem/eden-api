@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import BigInteger, create_engine, select
+from sqlalchemy import BigInteger, create_engine, event, func, select
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
@@ -1140,3 +1140,303 @@ def test_forecast_snapshot_bounds_inputs_and_provenance_to_public_horizon(
     assert excluded_raw.isdisjoint(candidate.raw_record_ids)
     with pipeline.session_factory() as session:
         assert len(session.scalars(select(ForecastInput)).all()) == 5
+
+
+def test_inbound_snapshot_loads_only_supported_history_windows(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.products import inbound
+
+    with pipeline.session_factory() as session:
+        latest = session.scalar(
+            select(func.max(InboundVisitorObservation.period_start)).where(
+                InboundVisitorObservation.country_id == COUNTRY_ID,
+                InboundVisitorObservation.source_id == "SRC_KTO_INBOUND_STATS",
+            )
+        )
+        raw_id = session.scalar(select(RawRecord.raw_record_id).limit(1))
+    assert latest is not None
+    assert raw_id is not None
+
+    def month_at(offset: int) -> datetime:
+        ordinal = latest.year * 12 + latest.month - 1 + offset
+        return datetime(ordinal // 12, ordinal % 12 + 1, 1)
+
+    audit = datetime.now(UTC).replace(tzinfo=None)
+    with pipeline.session_factory.begin() as session:
+        boundary_visitor = InboundVisitorObservation(
+            country_id=COUNTRY_ID,
+            period_start=month_at(-47),
+            visitor_count=1,
+            **_fact_audit("SRC_KTO_INBOUND_STATS", audit),
+        )
+        ancient_visitor = InboundVisitorObservation(
+            country_id=COUNTRY_ID,
+            period_start=month_at(-48),
+            visitor_count=1,
+            **_fact_audit("SRC_KTO_INBOUND_STATS", audit),
+        )
+        boundary_flight = FlightObservation(
+            country_id=COUNTRY_ID,
+            period_start=month_at(-47),
+            grain="month",
+            arriving_flights=1,
+            passengers=None,
+            schedule=None,
+            **_fact_audit("SRC_AIRPORT_COUNTRY", audit),
+        )
+        ancient_flight = FlightObservation(
+            country_id=COUNTRY_ID,
+            period_start=month_at(-48),
+            grain="month",
+            arriving_flights=1,
+            passengers=None,
+            schedule=None,
+            **_fact_audit("SRC_AIRPORT_COUNTRY", audit),
+        )
+        boundary_social = SocialObservation(
+            raw_record_id=raw_id,
+            keyword="boundary-social",
+            country_id=COUNTRY_ID,
+            area_id=None,
+            bucket_start=month_at(-23),
+            bucket_grain="month",
+            post_count=1,
+            view_count=None,
+            reaction_count=None,
+            search_ratio=None,
+            source_score=None,
+            **_fact_audit("SRC_YOUTUBE", audit),
+        )
+        ancient_social = SocialObservation(
+            raw_record_id=raw_id,
+            keyword="ancient-social",
+            country_id=COUNTRY_ID,
+            area_id=None,
+            bucket_start=month_at(-24),
+            bucket_grain="month",
+            post_count=1,
+            view_count=None,
+            reaction_count=None,
+            search_ratio=None,
+            source_score=None,
+            **_fact_audit("SRC_YOUTUBE", audit),
+        )
+        ancient_fx = FxObservation(
+            currency="JPY",
+            rate_date=month_at(-48),
+            krw_rate=Decimal("8.00000000"),
+            **_fact_audit("SRC_KEXIM_FX", audit),
+        )
+        session.add_all(
+            [
+                boundary_visitor,
+                ancient_visitor,
+                boundary_flight,
+                ancient_flight,
+                boundary_social,
+                ancient_social,
+                ancient_fx,
+            ]
+        )
+        session.flush()
+        included = {
+            (InboundVisitorObservation, boundary_visitor.observation_id),
+            (FlightObservation, boundary_flight.observation_id),
+            (SocialObservation, boundary_social.observation_id),
+        }
+        excluded = {
+            (InboundVisitorObservation, ancient_visitor.observation_id),
+            (FlightObservation, ancient_flight.observation_id),
+            (SocialObservation, ancient_social.observation_id),
+            (FxObservation, ancient_fx.observation_id),
+        }
+
+    loaded: set[tuple[type[object], int]] = set()
+
+    def remember_loaded(_session: Session, instance: object) -> None:
+        observation_id = getattr(instance, "observation_id", None)
+        if observation_id is not None:
+            loaded.add((type(instance), observation_id))
+
+    candidates = []
+    monkeypatch.setattr(
+        inbound.SnapshotPublisher,
+        "publish",
+        lambda _self, candidate: candidates.append(candidate),
+    )
+    event.listen(Session, "loaded_as_persistent", remember_loaded)
+    try:
+        result = inbound.build_inbound_snapshots(pipeline.session_factory)
+    finally:
+        event.remove(Session, "loaded_as_persistent", remember_loaded)
+
+    assert result.published_count > 0
+    assert candidates
+    assert included.issubset(loaded)
+    assert excluded.isdisjoint(loaded)
+
+
+def test_regional_snapshot_keeps_comparison_history_and_excludes_ancient_rows(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.products import regional
+
+    with pipeline.session_factory() as session:
+        latest = session.scalar(
+            select(func.max(RegionalVisitObservation.period_start)).where(
+                RegionalVisitObservation.area_id == AREA_ID,
+                RegionalVisitObservation.subject_type == "area",
+            )
+        )
+    assert latest is not None
+    audit = datetime.now(UTC).replace(tzinfo=None)
+    with pipeline.session_factory.begin() as session:
+        comparison_boundary = RegionalVisitObservation(
+            area_id=AREA_ID,
+            subject_type="area",
+            subject_key="area",
+            visitor_type="all",
+            grain="day",
+            period_start=latest - timedelta(days=regional.REGIONAL_VISIT_HISTORY_DAYS - 1),
+            visitor_count=1,
+            concentration_rate=None,
+            completeness_ratio=Decimal("1.000000"),
+            **_fact_audit("SRC_KTO_REGIONAL_VISITORS", audit),
+        )
+        ancient_visit = RegionalVisitObservation(
+            area_id=AREA_ID,
+            subject_type="area",
+            subject_key="area",
+            visitor_type="all",
+            grain="day",
+            period_start=latest - timedelta(days=regional.REGIONAL_VISIT_HISTORY_DAYS),
+            visitor_count=1,
+            concentration_rate=None,
+            completeness_ratio=Decimal("1.000000"),
+            **_fact_audit("SRC_KTO_REGIONAL_VISITORS", audit),
+        )
+        ancient_demand = RegionalDemandObservation(
+            area_id=AREA_ID,
+            period_start=latest - timedelta(days=regional.REGIONAL_METRIC_HISTORY_DAYS),
+            stay_index=Decimal("1.0000"),
+            spend_index=Decimal("1.0000"),
+            lodging_index=Decimal("1.0000"),
+            avg_stay_nights=Decimal("1.000"),
+            **_fact_audit("SRC_KTO_DEMAND_INTENSITY", audit),
+        )
+        ancient_diversity = RegionalDiversityObservation(
+            area_id=AREA_ID,
+            period_start=latest - timedelta(days=regional.REGIONAL_METRIC_HISTORY_DAYS),
+            age_index=Decimal("1.0000"),
+            nationality_index=Decimal("1.0000"),
+            **_fact_audit("SRC_KTO_DIVERSITY", audit),
+        )
+        session.add_all(
+            [comparison_boundary, ancient_visit, ancient_demand, ancient_diversity]
+        )
+        session.flush()
+        boundary_id = comparison_boundary.observation_id
+        ancient_visit_id = ancient_visit.observation_id
+        ancient_demand_id = ancient_demand.observation_id
+        ancient_diversity_id = ancient_diversity.observation_id
+
+    candidates = []
+    monkeypatch.setattr(
+        regional.SnapshotPublisher,
+        "publish",
+        lambda _self, candidate: candidates.append(candidate),
+    )
+    result = regional.build_regional_snapshots(pipeline.session_factory)
+    candidate = next(item for item in candidates if item.data["area"]["eden_area_id"] == AREA_ID)
+    visit_ids = {row["observation_id"] for row in candidate.data["visits"]}
+    demand_ids = {row["observation_id"] for row in candidate.data["demand"]}
+    diversity_ids = {row["observation_id"] for row in candidate.data["diversity"]}
+
+    assert result.published_count > 0
+    assert boundary_id in visit_ids
+    assert ancient_visit_id not in visit_ids
+    assert ancient_demand_id not in demand_ids
+    assert ancient_diversity_id not in diversity_ids
+
+
+def test_recommendation_snapshot_loads_only_latest_relation_generation(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.products import recommendations
+
+    with pipeline.session_factory() as session:
+        latest = session.scalar(
+            select(func.max(PlaceRelation.observed_at)).where(
+                PlaceRelation.from_place_id == PLACE_ID,
+                PlaceRelation.relation_type == "related",
+            )
+        )
+        current_relation_id = session.scalar(
+            select(PlaceRelation.relation_id).where(
+                PlaceRelation.from_place_id == PLACE_ID,
+                PlaceRelation.relation_type == "related",
+                PlaceRelation.observed_at == latest,
+            )
+        )
+    assert latest is not None
+    assert current_relation_id is not None
+    with pipeline.session_factory.begin() as session:
+        ancient_relation = PlaceRelation(
+            from_place_id=PLACE_ID,
+            to_place_id=RELATED_PLACE_ID,
+            relation_type="related",
+            rank=99,
+            score=Decimal("1.0000"),
+            **_fact_audit("SRC_KTO_PLACE_RELATED", latest - timedelta(days=30)),
+        )
+        session.add(ancient_relation)
+        session.flush()
+        ancient_relation_id = ancient_relation.relation_id
+
+    loaded_relation_ids: set[int] = set()
+
+    def remember_loaded(_session: Session, instance: object) -> None:
+        if isinstance(instance, PlaceRelation):
+            loaded_relation_ids.add(instance.relation_id)
+
+    candidates = []
+    monkeypatch.setattr(
+        recommendations.SnapshotPublisher,
+        "publish",
+        lambda _self, candidate: candidates.append(candidate),
+    )
+    event.listen(Session, "loaded_as_persistent", remember_loaded)
+    try:
+        result = recommendations.build_recommendation_snapshot(
+            pipeline.session_factory
+        )
+    finally:
+        event.remove(Session, "loaded_as_persistent", remember_loaded)
+
+    assert result.published_count == 1
+    assert candidates
+    assert current_relation_id in loaded_relation_ids
+    assert ancient_relation_id not in loaded_relation_ids
+
+
+def test_ingestion_retains_partial_fetch_evidence_for_normalization(pipeline: Pipeline):
+    from dataclasses import replace
+
+    class PartialAdapter(FixtureForecastAdapter):
+        def fetch(self, scope):
+            return replace(
+                super().fetch(scope),
+                status=SourceStatus.DEGRADED,
+                partial_errors=("source_run:record_limit_exceeded",),
+                reason="bounded collection",
+            )
+
+    run_id = IngestionService(pipeline.session_factory).run(
+        PartialAdapter(), {}, "budget-evidence", defer_state=True,
+    )
+    with pipeline.session_factory() as session:
+        run = session.get(IngestionRun, run_id)
+        assert run.request_scope["_fetch_result"]["partial_errors"] == [
+            "source_run:record_limit_exceeded",
+        ]

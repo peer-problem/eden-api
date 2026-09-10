@@ -26,7 +26,6 @@ from app.api.v1.schemas import (
 )
 from app.config import get_settings
 from app.observability.capacity import (
-    DERIVED_TABLES,
     assess_capacity,
     collect_capacity_sample,
     load_growth_reference,
@@ -285,15 +284,17 @@ def database_capacity_evidence() -> dict[str, int | float | None]:
                 product_pause_percent=settings.DISK_PRODUCT_PAUSE_PERCENT,
                 source_pause_percent=settings.DISK_SOURCE_PAUSE_PERCENT,
                 require_growth_reference=settings.ENVIRONMENT == "production",
+                database_max_bytes=settings.DATABASE_MAX_BYTES,
+                memory_write_pause_percent=settings.MEMORY_WRITE_PAUSE_PERCENT,
             )
     finally:
         engine.dispose()
-    derived_bytes = sum(
-        row.total_bytes for row in current.tables if row.table_name in DERIVED_TABLES
-    )
+    derived_bytes = current.total_database_bytes
     return {
         "derived_daily_growth_bytes": growth,
         "derived_table_bytes": derived_bytes,
+        "total_database_bytes": current.total_database_bytes,
+        "system_memory_used_percent": current.system_memory_used_percent,
         "disk_used_percent": current.disk_used_percent,
         "capacity_reference_available": previous is not None,
         "product_writes_allowed": decision.product_writes_allowed,

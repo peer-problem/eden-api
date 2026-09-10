@@ -442,14 +442,9 @@ esac
 
 export DB_USER="$runtime_user"
 export DB_PASSWORD="$runtime_password"
+# Update registry policy only. Historical imports and product rebuilds must
+# not bypass the scheduler capacity gate on every deployment.
 uv run python scripts/seed_reference.py
-uv run python scripts/import_mois_areas.py
-uv run python scripts/seed_reference.py
-uv run python scripts/import_kto_inbound.py
-uv run python scripts/import_keta_notices.py
-# Replace any pre-Phase 1 unbounded recommendation head before measuring the
-# public route. The builder publishes at most 2,000 features and 50 per area.
-uv run python scripts/publish_bounded_recommendations.py
 
 ln -sfn "$release" /opt/eden/current
 cat >/etc/systemd/system/eden-api.service <<'UNIT'
@@ -468,9 +463,14 @@ Group=eden
 WorkingDirectory=/opt/eden/current
 EnvironmentFile=/opt/eden/shared/.env
 UnsetEnvironment=MIGRATION_DB_USER MIGRATION_DB_PASSWORD VPS_PASSWORD
-ExecStart=/opt/eden/current/.venv/bin/uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000 --workers 1
+ExecStart=/opt/eden/current/.venv/bin/uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000 --workers 1 --limit-concurrency 32 --backlog 64
 Restart=on-failure
 RestartSec=5
+CPUQuota=80%
+MemoryHigh=512M
+MemoryMax=768M
+MemorySwapMax=128M
+TasksMax=64
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
@@ -607,6 +607,8 @@ UNIT
 install -d -m 755 /var/www/eden-acme
 cat >/etc/nginx/conf.d/eden-limits.conf <<'NGINX'
 limit_conn_zone $binary_remote_addr zone=eden_per_ip:10m;
+limit_req_zone $binary_remote_addr zone=eden_api_per_ip:1m rate=5r/s;
+limit_req_zone $server_name zone=eden_api_total:1m rate=20r/s;
 NGINX
 write_nginx_fail_closed() {
   cat >/etc/nginx/sites-available/eden-api <<'NGINX'
@@ -684,6 +686,9 @@ server {
         try_files $uri $uri/ /dashboard/index.html;
     }
     location = /openapi.json {
+        limit_req zone=eden_api_per_ip burst=20 nodelay;
+        limit_req zone=eden_api_total burst=40 nodelay;
+        limit_req_status 429;
         access_log /var/log/nginx/eden-api-client.access.log combined;
         error_log /var/log/nginx/eden-api-client.error.log warn;
         proxy_connect_timeout 5s;
@@ -696,6 +701,9 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
     location ^~ /v1/ {
+        limit_req zone=eden_api_per_ip burst=20 nodelay;
+        limit_req zone=eden_api_total burst=40 nodelay;
+        limit_req_status 429;
         access_log /var/log/nginx/eden-api-client.access.log combined;
         error_log /var/log/nginx/eden-api-client.error.log warn;
         proxy_connect_timeout 5s;
@@ -729,6 +737,7 @@ UNIT
 systemctl daemon-reload
 systemctl reset-failed eden-api
 systemctl enable --now nginx eden-api
+systemctl reload nginx
 for _ in $(seq 1 30); do
   curl -fsS http://127.0.0.1:8000/internal/readiness >/dev/null && break
   sleep 1

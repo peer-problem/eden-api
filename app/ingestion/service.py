@@ -243,6 +243,9 @@ class IngestionService:
                             ),
                             "reason": effective_reason,
                             "reason_code": reason_code,
+                            "partial_errors": [
+                                str(error)[:300] for error in result.partial_errors[:64]
+                            ],
                         },
                     },
                 }

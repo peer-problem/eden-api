@@ -12,6 +12,7 @@ from app.domain.enums import SourceStatus
 from app.sources.base import FetchReasonCode, UnavailableAdapter
 from app.sources.catalog import EXPECTED_PUBLISH_LAG_SECONDS, SOURCES, source_definition
 from app.sources.http import SecureSourceClient
+from app.sources.public_data import PublicDataAdapter
 from app.sources.registry import build_adapter
 from app.sources.social import EXCLUDED_SOCIAL_SOURCE_IDS
 
@@ -149,3 +150,23 @@ def test_explicitly_excluded_social_sources_stay_disabled_with_credentials() -> 
         assert result.status is SourceStatus.UNAVAILABLE
         assert result.reason_code is FetchReasonCode.UNSUPPORTED_ACCESS
         assert result.reason and "제품 범위에서 제외" in result.reason
+
+
+def test_only_complete_cohort_statistics_receive_the_larger_request_budget() -> None:
+    settings = _settings(
+        SOURCE_MAX_REQUESTS_PER_RUN=20,
+        SOURCE_STATISTICAL_MAX_REQUESTS_PER_RUN=60,
+    )
+
+    for source_id in (
+        "SRC_KTO_RESOURCE_DEMAND",
+        "SRC_KTO_DEMAND_INTENSITY",
+        "SRC_KTO_DIVERSITY",
+    ):
+        adapter = build_adapter(source_id, settings, {})
+        assert isinstance(adapter, PublicDataAdapter)
+        assert adapter.client.max_requests == 60
+
+    ordinary = build_adapter("SRC_FESTIVAL", settings, {})
+    assert isinstance(ordinary, PublicDataAdapter)
+    assert ordinary.client.max_requests == 20

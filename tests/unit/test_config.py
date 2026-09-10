@@ -134,3 +134,17 @@ def test_development_ssh_forwarding_requires_loopback() -> None:
     assert _settings(**values, DB_SSH_TUNNEL=True).DB_SSH_TUNNEL
     with pytest.raises(ValidationError, match="requires a loopback DB host"):
         _settings(**{**values, "DB_HOST": "remote.example.test"}, DB_SSH_TUNNEL=True)
+
+
+@pytest.mark.parametrize("name", [
+    "SOURCE_MAX_REQUESTS_PER_RUN", "SOURCE_MAX_RUN_BYTES", "SOURCE_MAX_RECORDS_PER_RUN",
+    "SOURCE_MIN_INTERVAL_SECONDS", "DATABASE_MAX_BYTES", "DERIVED_DAILY_GROWTH_BUDGET_BYTES",
+])
+def test_resource_budgets_cannot_be_disabled_with_nonpositive_values(name: str) -> None:
+    with pytest.raises(ValidationError, match="must be positive"):
+        _settings(**{name: 0})
+
+
+def test_response_budget_cannot_exceed_whole_run_budget() -> None:
+    with pytest.raises(ValidationError, match="Per-response byte limit"):
+        _settings(SOURCE_MAX_RESPONSE_BYTES=10_000, SOURCE_MAX_RUN_BYTES=5_000)

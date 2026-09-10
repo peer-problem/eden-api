@@ -54,11 +54,19 @@ class BokEcosAdapter(SourceAdapter):
         api_key: SecretStr | None,
         timeout_seconds: float,
         max_response_bytes: int,
+        max_requests: int = 20,
+        max_total_bytes: int = 8 * 1024 * 1024,
+        max_run_seconds: float = 120.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.client = SecureSourceClient(
-            {urlparse(base_url).hostname or ""}, timeout_seconds, max_response_bytes
+            {urlparse(base_url).hostname or ""},
+            timeout_seconds,
+            max_response_bytes,
+            max_requests,
+            max_total_bytes,
+            max_run_seconds,
         )
 
     def fetch(self, scope: dict[str, object]) -> FetchResult:

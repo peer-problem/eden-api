@@ -8,6 +8,8 @@ from typing import Any
 DOCUMENTATION_VERIFIED_AT = datetime(2026, 9, 10, tzinfo=UTC)
 
 KTO_RELATED_PLACES_PER_RUN = 20
+PUBLIC_DATA_OPERATIONS_PER_RUN = 20
+SEMAS_PLACES_PER_RUN = 10
 
 KTO_ADMINISTRATIVE_AREA_CODES = (
     "11",
@@ -147,7 +149,7 @@ def _kto_monthly_area_operations(
                 metric_parameter: metric_code,
             },
             "watermark": {"param": "baseYm", "format": "%Y%m"},
-            "max_pages": 10,
+            "max_pages": 1,
         }
         for operation, (metric_parameter, metric_code) in operations.items()
         for months in range(2, 5)
@@ -165,7 +167,9 @@ _TOURAPI_CATALOG = {
                 "response_field": "modifiedtime",
                 "format": "%Y%m%d%H%M%S",
             },
-            "max_pages": 300,
+            "max_pages": 20,
+            "rotate_pages": True,
+            "rotation_seconds": 24 * 3600,
         }
     ]
 }
@@ -173,6 +177,8 @@ _TOURAPI_CATALOG = {
 
 PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
     "SRC_KTO_RESOURCE_DEMAND": {
+        "rotation_group_param": "baseYm",
+        "rotation_seconds": 24 * 3600,
         "operations": _kto_monthly_area_operations(
             {
                 "areaTarSvcDemList": ("tarSvcDemIxCd", "11"),
@@ -187,24 +193,21 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "params": {
                     "MobileOS": "ETC",
                     "MobileApp": "EDEN",
-                    # 12-month timeseries plus a previous-period comparison
-                    # buffer. The adapter still paginates within a hard bound.
-                    "startYmd": "$today_minus_455d",
+                    "startYmd": "$today_minus_7d",
                     "endYmd": "$yesterday",
                 },
                 "watermark": {
                     "response_field": "baseYmd",
                     "format": "%Y%m%d",
                 },
-                # The local-government operation currently declares about
-                # 340 pages for this window. Keep the collection bounded while
-                # allowing a complete published response.
-                "max_pages": 400,
+                "max_pages": 20,
             }
             for operation in ("metcoRegnVisitrDDList", "locgoRegnVisitrDDList")
         ]
     },
     "SRC_KTO_DEMAND_INTENSITY": {
+        "rotation_group_param": "baseYm",
+        "rotation_seconds": 24 * 3600,
         "operations": _kto_monthly_area_operations(
             {
                 "areaTarSjrnDsList": ("tarSjrnDsIxCd", "21"),
@@ -213,6 +216,8 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
         )
     },
     "SRC_KTO_DIVERSITY": {
+        "rotation_group_param": "baseYm",
+        "rotation_seconds": 24 * 3600,
         "operations": _kto_monthly_area_operations(
             {
                 "areaTouDivList": ("touDivIxCd", "31"),
@@ -230,10 +235,25 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
     # requires a real hub-place name and is populated at runtime. An empty
     # operation list is intentionally unavailable rather than issuing an
     # invalid broad request.
-    "SRC_KTO_PLACE_HUB": {"operations": []},
+    "SRC_KTO_PLACE_HUB": {
+        "rotate_operations": True,
+        "max_operations_per_run": PUBLIC_DATA_OPERATIONS_PER_RUN,
+        "rotation_seconds": 24 * 3600,
+        "operations": [],
+    },
     "SRC_KTO_PLACE_RELATED": {"operations": []},
-    "SRC_KTO_VISITOR_FORECAST": {"operations": []},
-    "SRC_KMA_FORECAST": {"operations": []},
+    "SRC_KTO_VISITOR_FORECAST": {
+        "rotate_operations": True,
+        "max_operations_per_run": PUBLIC_DATA_OPERATIONS_PER_RUN,
+        "rotation_seconds": 6 * 3600,
+        "operations": [],
+    },
+    "SRC_KMA_FORECAST": {
+        "rotate_operations": True,
+        "max_operations_per_run": PUBLIC_DATA_OPERATIONS_PER_RUN,
+        "rotation_seconds": 6 * 3600,
+        "operations": [],
+    },
     "SRC_SEMAS_SHOPS": {"operations": []},
     "SRC_FESTIVAL": {
         "operations": [
@@ -245,7 +265,7 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                     "response_field": "referenceDate",
                     "format": "%Y-%m-%d",
                 },
-                "max_pages": 100,
+                "max_pages": 20,
             }
         ]
     },
@@ -281,11 +301,14 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "params": {"YM": "$previous_month"},
                 "watermark": {"param": "YM", "format": "%Y%m"},
                 "response_type_param": None,
-                "max_pages": 100,
+                "max_pages": 20,
             }
         ]
     },
     "SRC_AIRPORT_COUNTRY": {
+        "rotate_operations": True,
+        "max_operations_per_run": PUBLIC_DATA_OPERATIONS_PER_RUN,
+        "rotation_seconds": 24 * 3600,
         "operations": [
             {
                 "operation": "getTotalNumberOfFlight",
@@ -310,7 +333,7 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "external_key": "airport-schedule:arrivals",
                 "params": {"lang": "K"},
                 "response_type_param": "type",
-                "max_pages": 100,
+                "max_pages": 20,
             }
         ]
     },
@@ -355,7 +378,7 @@ def kto_sigungu_operations(
                 + (":month=$month_minus_2" if "baseYm" in params else "")
             ),
             "params": params,
-            "max_pages": 10,
+            "max_pages": 1,
         }
         if "baseYm" in params:
             request["watermark"] = {"param": "baseYm", "format": "%Y%m"}
@@ -399,7 +422,7 @@ def kto_related_place_operations(
                     "keyword": keyword,
                 },
                 "watermark": {"param": "baseYm", "format": "%Y%m"},
-                "max_pages": 10,
+                "max_pages": 1,
             }
         )
         if len(rows) >= KTO_RELATED_PLACES_PER_RUN:
@@ -432,7 +455,7 @@ def public_data_refresh_scope(
                     "params": ["base_date", "base_time"],
                     "format": "%Y%m%d%H%M",
                 },
-                "max_pages": 10,
+                "max_pages": 1,
             }
             for code, area_id in sorted(area_id_by_code.items())
             if code.endswith("00000")
@@ -471,7 +494,7 @@ def semas_place_operations(
             "response_type_param": "type",
             "max_pages": 2,
         }
-        for place_id, lat, lng in places[:50]
+        for place_id, lat, lng in places[:SEMAS_PLACES_PER_RUN]
     ]
 
 

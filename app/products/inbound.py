@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from statistics import mean
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.domain.enums import Availability
@@ -24,6 +24,8 @@ from app.sources.kto_inbound import SOURCE_ID
 from app.sources.social import REQUESTABLE_SOCIAL_SOURCES
 
 PERIOD_MONTHS = {"3m": 3, "6m": 6, "12m": 12, "24m": 24}
+INBOUND_HISTORY_MONTHS = max(PERIOD_MONTHS.values()) * 2
+SOCIAL_HISTORY_MONTHS = max(PERIOD_MONTHS.values())
 MAX_AGE_SECONDS = 38 * 24 * 3600
 SOCIAL_SOURCE_NAMES = {
     source_id: source_name for source_name, source_id in REQUESTABLE_SOCIAL_SOURCES.items()
@@ -47,6 +49,22 @@ def _month_ordinal(value: datetime) -> int:
     return value.year * 12 + value.month - 1
 
 
+def _month_start(ordinal: int) -> datetime:
+    return datetime(ordinal // 12, ordinal % 12 + 1, 1)
+
+
+def _history_windows(column: object, end_ordinals: set[int], months: int) -> object:
+    return or_(
+        *(
+            and_(
+                column >= _month_start(end_ordinal - months + 1),
+                column < _month_start(end_ordinal + 1),
+            )
+            for end_ordinal in sorted(end_ordinals)
+        )
+    )
+
+
 def _window(
     rows: list[InboundVisitorObservation],
     end_ordinal: int,
@@ -67,46 +85,100 @@ def build_inbound_snapshots(
 ) -> InboundProductResult:
     with session_factory() as session:
         countries = session.execute(
-            select(Country.eden_country_id, Country.iso_alpha2)
+            select(
+                Country.eden_country_id,
+                Country.iso_alpha2,
+                func.max(InboundVisitorObservation.period_start),
+            )
             .join(
                 InboundVisitorObservation,
                 InboundVisitorObservation.country_id == Country.eden_country_id,
             )
             .where(InboundVisitorObservation.source_id == SOURCE_ID)
-            .distinct()
+            .group_by(Country.eden_country_id, Country.iso_alpha2)
             .order_by(Country.iso_alpha2)
         ).all()
 
+    if not countries:
+        return InboundProductResult(0, ())
+    end_ordinals = {_month_ordinal(latest_period) for _, _, latest_period in countries}
     with session_factory() as session:
         all_visitor_rows = list(
             session.scalars(
                 select(InboundVisitorObservation)
-                .where(InboundVisitorObservation.source_id == SOURCE_ID)
+                .where(
+                    InboundVisitorObservation.source_id == SOURCE_ID,
+                    _history_windows(
+                        InboundVisitorObservation.period_start,
+                        end_ordinals,
+                        INBOUND_HISTORY_MONTHS,
+                    ),
+                )
                 .order_by(InboundVisitorObservation.period_start)
             ).all()
         )
         all_flight_rows = list(
             session.scalars(
                 select(FlightObservation)
-                .where(FlightObservation.grain == "month")
+                .where(
+                    FlightObservation.grain == "month",
+                    _history_windows(
+                        FlightObservation.period_start,
+                        end_ordinals,
+                        INBOUND_HISTORY_MONTHS,
+                    ),
+                )
                 .order_by(FlightObservation.period_start)
             ).all()
         )
+        ranked_fx = (
+            select(
+                FxObservation.observation_id.label("observation_id"),
+                func.row_number()
+                .over(
+                    partition_by=FxObservation.currency,
+                    order_by=(
+                        FxObservation.rate_date.desc(),
+                        FxObservation.observation_id.desc(),
+                    ),
+                )
+                .label("currency_rank"),
+            )
+            .subquery()
+        )
         all_fx_rows = list(
             session.scalars(
-                select(FxObservation).order_by(
+                select(FxObservation)
+                .join(
+                    ranked_fx,
+                    ranked_fx.c.observation_id == FxObservation.observation_id,
+                )
+                .where(ranked_fx.c.currency_rank <= 2)
+                .order_by(
                     FxObservation.currency,
                     FxObservation.rate_date.desc(),
+                    FxObservation.observation_id.desc(),
                 )
             ).all()
         )
         all_social_rows = list(
             session.scalars(
                 select(SocialObservation)
-                .where(SocialObservation.source_id.in_(SOCIAL_SOURCE_NAMES))
+                .where(
+                    SocialObservation.source_id.in_(SOCIAL_SOURCE_NAMES),
+                    _history_windows(
+                        SocialObservation.bucket_start,
+                        end_ordinals,
+                        SOCIAL_HISTORY_MONTHS,
+                    ),
+                )
                 .order_by(SocialObservation.bucket_start)
             ).all()
         )
+
+    visitor_rows_by_country: dict[str, list[InboundVisitorObservation]] = {}
+    for row in all_visitor_rows:
+        visitor_rows_by_country.setdefault(row.country_id, []).append(row)
 
     fx_history: dict[str, list[FxObservation]] = {}
     for row in all_fx_rows:
@@ -129,31 +201,11 @@ def build_inbound_snapshots(
     publisher = SnapshotPublisher(session_factory)
     published_count = 0
     published_countries: list[str] = []
-    for country_id, country_iso in countries:
+    for country_id, country_iso, latest_period in countries:
         with session_factory() as session:
             country = session.get(Country, country_id)
             if country is None:
                 continue
-            rows = list(
-                session.scalars(
-                    select(InboundVisitorObservation)
-                    .where(
-                        InboundVisitorObservation.source_id == SOURCE_ID,
-                        InboundVisitorObservation.country_id == country_id,
-                    )
-                    .order_by(InboundVisitorObservation.period_start)
-                ).all()
-            )
-            flight_rows = list(
-                session.scalars(
-                    select(FlightObservation)
-                    .where(
-                        FlightObservation.country_id == country_id,
-                        FlightObservation.grain == "month",
-                    )
-                    .order_by(FlightObservation.period_start)
-                ).all()
-            )
             schedule = session.scalar(
                 select(FlightObservation)
                 .where(
@@ -169,10 +221,12 @@ def build_inbound_snapshots(
                 .order_by(TourismBalanceObservation.period_start.desc())
                 .limit(1)
             )
+        rows = visitor_rows_by_country.get(country_id, [])
+        flight_rows = [row for row in all_flight_rows if row.country_id == country_id]
         if not rows:
             continue
         published_countries.append(country_iso)
-        end_ordinal = max(_month_ordinal(row.period_start) for row in rows)
+        end_ordinal = _month_ordinal(latest_period)
         for period, month_count in PERIOD_MONTHS.items():
             current_rows = _window(rows, end_ordinal, month_count)
             previous_rows = _window(rows, end_ordinal - month_count, month_count)

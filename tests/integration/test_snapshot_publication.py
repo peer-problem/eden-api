@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -7,7 +8,9 @@ from sqlalchemy.pool import StaticPool
 
 from app.domain.enums import Availability
 from app.products.snapshots import (
+    MAX_NEW_SNAPSHOT_UNCOMPRESSED_BYTES,
     SnapshotCandidate,
+    SnapshotPayloadTooLarge,
     SnapshotPublisher,
     SnapshotRollbackUnavailable,
     restore_previous_snapshot,
@@ -126,6 +129,36 @@ def test_failed_staging_never_changes_current_head(
         )
         assert staged is not None
         assert staged.state == "staging"
+
+
+def test_oversized_snapshot_cannot_stage_or_replace_current_head(
+    session_factory: sessionmaker[Session],
+) -> None:
+    publisher = SnapshotPublisher(session_factory)
+    current = publisher.publish(_candidate(1, datetime(2026, 8, 29, 1, tzinfo=UTC)))
+    oversized = replace(
+        _candidate(2, datetime(2026, 8, 29, 2, tzinfo=UTC)),
+        data={"value": "x" * MAX_NEW_SNAPSHOT_UNCOMPRESSED_BYTES},
+    )
+
+    with pytest.raises(
+        SnapshotPayloadTooLarge,
+        match=f"limit is {MAX_NEW_SNAPSHOT_UNCOMPRESSED_BYTES}",
+    ):
+        publisher.publish(oversized)
+
+    with session_factory() as session:
+        head = session.get(
+            ReadModelHead,
+            {
+                "endpoint": current.endpoint,
+                "lookup_key_hash": current.lookup_key_hash,
+            },
+        )
+        assert head is not None
+        assert head.snapshot_id == current.snapshot_id
+        assert session.scalar(select(func.count()).select_from(ReadModelSnapshot)) == 1
+        assert session.scalar(select(func.count()).select_from(ReadModelPayload)) == 1
 
 
 def test_retention_dry_runs_then_cleans_abandoned_staging(
@@ -267,6 +300,60 @@ def test_retention_preserves_current_and_one_rollback_snapshot(
         )
         assert head is not None
         assert head.snapshot_id == current.snapshot_id
+
+
+def test_retention_bounds_total_provenance_deletes_per_invocation(
+    session_factory: sessionmaker[Session],
+) -> None:
+    publisher = SnapshotPublisher(session_factory)
+    retired = publisher.publish(_candidate(1, datetime(2026, 8, 29, 1, tzinfo=UTC)))
+    rollback = publisher.publish(_candidate(2, datetime(2026, 8, 29, 2, tzinfo=UTC)))
+    current = publisher.publish(_candidate(3, datetime(2026, 8, 29, 3, tzinfo=UTC)))
+    with session_factory.begin() as session:
+        session.add_all(
+            [
+                ProvenanceEdge(
+                    provenance_id=index,
+                    output_type="read_model_snapshot",
+                    output_id=retired.snapshot_id,
+                    raw_record_id=index,
+                    formula_version="value_v1",
+                    created_at=datetime(2026, 8, 29, 1),
+                )
+                for index in range(1, 4)
+            ]
+        )
+
+    cutoff = datetime(2026, 8, 30, tzinfo=UTC)
+    first = retain_snapshots(
+        session_factory,
+        older_than=cutoff,
+        dry_run=False,
+        provenance_batch_size=2,
+        provenance_delete_limit=2,
+    )
+
+    assert first.deleted_provenance_rows == 2
+    assert first.deleted_snapshots == 0
+    with session_factory() as session:
+        assert session.get(ReadModelSnapshot, retired.snapshot_id) is not None
+        assert session.scalar(select(func.count()).select_from(ProvenanceEdge)) == 1
+
+    second = retain_snapshots(
+        session_factory,
+        older_than=cutoff,
+        dry_run=False,
+        provenance_batch_size=2,
+        provenance_delete_limit=2,
+    )
+
+    assert second.deleted_provenance_rows == 1
+    assert second.deleted_snapshots == 1
+    with session_factory() as session:
+        assert session.get(ReadModelSnapshot, retired.snapshot_id) is None
+        assert session.get(ReadModelSnapshot, rollback.snapshot_id) is not None
+        assert session.get(ReadModelSnapshot, current.snapshot_id) is not None
+        assert session.scalar(select(func.count()).select_from(ProvenanceEdge)) == 0
 
 
 def test_corrupt_current_snapshot_can_atomically_restore_previous_head(

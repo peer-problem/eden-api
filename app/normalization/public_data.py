@@ -732,10 +732,38 @@ def _diversity_dimensions(
     return None, scores.get((area_id, period, "intlDivIxVal"))
 
 
+def _skip_incomplete_national_cohort(session: Session, run_id: str) -> bool:
+    """Never replace national relative scores with a truncated region population."""
+    run = session.get(IngestionRun, run_id)
+    if run is None:
+        raise ValueError(f"ingestion run does not exist: {run_id}")
+    scope = dict(run.request_scope or {})
+    metadata = dict(scope.get("_fetch_result", {}))
+    errors = metadata.get("partial_errors", [])
+    # A complete month may be selected from several months. Only that explicit
+    # whole-cohort rotation is safe; page cuts or missing operations are not.
+    complete_month_rotation = scope.get("rotation_group_param") == "baseYm"
+    incomplete = any(
+        not (complete_month_rotation and str(error).startswith("source_run:rotating_"))
+        for error in errors
+    )
+    if not incomplete:
+        return False
+    reason = "전국 비교 묶음 수집이 미완료되어 기존 지표를 유지했습니다."
+    run.status = RunStatus.PARTIAL
+    run.normalized_count = 0
+    run.error_summary = reason
+    metadata.update(status="degraded", reason=reason, data_as_of=None)
+    run.request_scope = {**scope, "_fetch_result": metadata}
+    return True
+
+
 def normalize_regional_demand_run(session_factory: sessionmaker[Session], run_id: str) -> int:
     calculated_at = datetime.now(UTC).replace(tzinfo=None)
     normalized = 0
     with session_factory.begin() as session:
+        if _skip_incomplete_national_cohort(session, run_id):
+            return 0
         groups = _aggregate_index_rows(
             session,
             _run_records(session, run_id, REGIONAL_DEMAND_SOURCE),
@@ -805,6 +833,8 @@ def normalize_regional_diversity_run(session_factory: sessionmaker[Session], run
     calculated_at = datetime.now(UTC).replace(tzinfo=None)
     normalized = 0
     with session_factory.begin() as session:
+        if _skip_incomplete_national_cohort(session, run_id):
+            return 0
         groups = _aggregate_index_rows(
             session,
             _run_records(session, run_id, REGIONAL_DIVERSITY_SOURCE),

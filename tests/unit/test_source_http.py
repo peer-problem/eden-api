@@ -10,6 +10,7 @@ from app.sources.http import (
     SecureSourceClient,
     SourceCredentialHttpError,
     SourceHttpError,
+    SourceRunBudgetExceeded,
     SourceTransientHttpError,
 )
 from app.sources.social import NaverTrendAdapter, YouTubeAggregateAdapter
@@ -137,6 +138,94 @@ def test_server_errors_use_bounded_three_attempt_retry(
     client.close()
 
     assert attempts == 3
+
+
+def test_request_budget_counts_retry_attempts() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(503, request=request)
+
+    client = SecureSourceClient(
+        {"source.example"},
+        timeout_seconds=2,
+        max_requests=2,
+        transport=httpx.MockTransport(handler),
+    )
+    client._validate_url = lambda _url: None  # type: ignore[method-assign]
+    with pytest.raises(SourceRunBudgetExceeded, match="request limit"):
+        client.get("https://source.example/data")
+    client.close()
+
+    assert attempts == 2
+    assert client.request_count == 2
+
+
+def test_request_budget_counts_redirects() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(302, headers={"Location": "/final"}, request=request)
+
+    client = SecureSourceClient(
+        {"source.example"},
+        timeout_seconds=2,
+        max_requests=1,
+        transport=httpx.MockTransport(handler),
+    )
+    client._validate_url = lambda _url: None  # type: ignore[method-assign]
+    with pytest.raises(SourceRunBudgetExceeded, match="request limit"):
+        client.get("https://source.example/data")
+    client.close()
+
+    assert attempts == 1
+
+
+def test_response_byte_budget_is_shared_across_requests() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"four", request=request)
+
+    client = SecureSourceClient(
+        {"source.example"},
+        timeout_seconds=2,
+        max_total_bytes=6,
+        transport=httpx.MockTransport(handler),
+    )
+    client._validate_url = lambda _url: None  # type: ignore[method-assign]
+    assert client.get("https://source.example/one")[0] == b"four"
+    with pytest.raises(SourceRunBudgetExceeded, match="byte limit"):
+        client.get("https://source.example/two")
+    client.close()
+
+    assert client.request_count == 2
+    assert client.response_bytes == 4
+
+
+def test_expired_run_budget_blocks_network_request() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(200, content=b"ok", request=request)
+
+    client = SecureSourceClient(
+        {"source.example"},
+        timeout_seconds=2,
+        max_run_seconds=1,
+        transport=httpx.MockTransport(handler),
+    )
+    client._validate_url = lambda _url: None  # type: ignore[method-assign]
+    client.started_at -= 2
+    with pytest.raises(SourceRunBudgetExceeded, match="time limit"):
+        client.get("https://source.example/data")
+    client.close()
+
+    assert attempts == 0
 
 
 def test_credential_backed_adapter_exposes_stable_rejection_reason(

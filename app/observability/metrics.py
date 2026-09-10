@@ -54,7 +54,7 @@ DB_TABLE_ROWS = Gauge(
 )
 DB_DERIVED_DAILY_GROWTH_BYTES = Gauge(
     "eden_db_derived_daily_growth_bytes",
-    "Projected daily growth of raw, snapshot, head, payload, and provenance tables.",
+    "Projected daily growth across all application database tables.",
 )
 DISK_USED_PERCENT = Gauge(
     "eden_disk_used_percent",
