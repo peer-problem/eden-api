@@ -43,6 +43,12 @@ def _upsert_forecast_input(
     holiday: dict[str, Any] | None = None,
     quality_flags: list[str] | None = None,
 ) -> int:
+    observed_at = _database_time(raw.observed_at)
+    source_updated_at = _database_time(raw.source_updated_at)
+    ingested_at = _database_time(raw.ingested_at)
+    calculated_at = datetime.now(UTC).replace(tzinfo=None)
+    if calculated_at < max(observed_at, source_updated_at, ingested_at):
+        raise ValueError("forecast input calculated_at cannot precede an audit timestamp")
     statement = select(ForecastInput).where(
         ForecastInput.source_id == source_id,
         ForecastInput.area_id == area_id,
@@ -62,12 +68,12 @@ def _upsert_forecast_input(
         "weather": weather,
         "festivals": festivals,
         "holiday": holiday,
-        "observed_at": _database_time(raw.observed_at),
+        "observed_at": observed_at,
         # forecast_date is the target date and can be in the future. Audit timestamps
         # must describe the source observation itself so snapshots remain causal.
-        "source_updated_at": _database_time(raw.source_updated_at),
-        "ingested_at": _database_time(raw.ingested_at),
-        "calculated_at": datetime.now(UTC).replace(tzinfo=None),
+        "source_updated_at": source_updated_at,
+        "ingested_at": ingested_at,
+        "calculated_at": calculated_at,
         "source_id": source_id,
         "availability": "available",
         "quality_flags": quality_flags or [],

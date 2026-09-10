@@ -16,6 +16,17 @@ from app.sources.http import SecureSourceClient, SourceCredentialHttpError
 
 SEOUL = ZoneInfo("Asia/Seoul")
 
+_SEOUL_LOCAL_WATERMARK_SOURCES = frozenset(
+    {
+        "SRC_FESTIVAL",
+        "SRC_KMA_FORECAST",
+        "SRC_TOUR_EN",
+        "SRC_TOUR_JA",
+        "SRC_TOUR_KO",
+        "SRC_TOUR_ZH_CN",
+    }
+)
+
 
 class PublicDataResponseError(ValueError):
     pass
@@ -86,10 +97,19 @@ def public_data_watermark(
     request: dict[str, Any],
     params: dict[str, Any],
     document: dict[str, Any] | list[Any],
+    *,
+    source_id: str | None = None,
 ) -> datetime | None:
     """Resolve an authoritative source period without using retrieval time."""
     descriptor = request.get("watermark")
     if not isinstance(descriptor, dict):
+        return None
+    # Holiday request months describe the requested forecast horizon. They are
+    # not publication timestamps, especially for the next-month request.
+    if source_id == "SRC_HOLIDAY" and descriptor.get("params") == [
+        "solYear",
+        "solMonth",
+    ]:
         return None
     date_format = descriptor.get("format")
     if not isinstance(date_format, str) or not date_format:
@@ -115,7 +135,13 @@ def public_data_watermark(
     parsed: list[datetime] = []
     for value in raw_values:
         try:
-            parsed.append(datetime.strptime(value.strip(), date_format).replace(tzinfo=UTC))
+            timestamp = datetime.strptime(value.strip(), date_format)
+            if timestamp.tzinfo is None:
+                source_timezone = (
+                    SEOUL if source_id in _SEOUL_LOCAL_WATERMARK_SOURCES else UTC
+                )
+                timestamp = timestamp.replace(tzinfo=source_timezone)
+            parsed.append(timestamp.astimezone(UTC))
         except ValueError:
             continue
     if not parsed:
@@ -314,7 +340,12 @@ class PublicDataAdapter(SourceAdapter):
                     parsed = parse_json_or_xml(payload, content_type)
                     validate_public_data_result(parsed)
                     total, page_count = public_data_page_info(parsed)
-                    source_updated_at = public_data_watermark(request, params, parsed)
+                    source_updated_at = public_data_watermark(
+                        request,
+                        params,
+                        parsed,
+                        source_id=self.source_id,
+                    )
                 except Exception as exc:
                     if isinstance(
                         exc,

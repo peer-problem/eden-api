@@ -187,6 +187,24 @@ def _claim_batch(
             row.reprocess_status = "pending"
             row.next_attempt_at = now
 
+        candidate = session.execute(
+            select(DeadLetter, RawRecord.source_id, RawRecord.run_id)
+            .join(RawRecord, RawRecord.raw_record_id == DeadLetter.raw_record_id)
+            .where(
+                DeadLetter.reprocess_status == "pending",
+                or_(
+                    DeadLetter.next_attempt_at.is_(None),
+                    DeadLetter.next_attempt_at <= now,
+                ),
+            )
+            .order_by(DeadLetter.created_at, DeadLetter.dead_letter_id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        ).first()
+        if candidate is None:
+            return ()
+
+        _, claimed_source_id, claimed_run_id = candidate
         rows = session.execute(
             select(DeadLetter, RawRecord.source_id, RawRecord.run_id)
             .join(RawRecord, RawRecord.raw_record_id == DeadLetter.raw_record_id)
@@ -196,6 +214,8 @@ def _claim_batch(
                     DeadLetter.next_attempt_at.is_(None),
                     DeadLetter.next_attempt_at <= now,
                 ),
+                RawRecord.source_id == claimed_source_id,
+                RawRecord.run_id == claimed_run_id,
             )
             .order_by(DeadLetter.created_at, DeadLetter.dead_letter_id)
             .limit(batch_size)

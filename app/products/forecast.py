@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -14,6 +15,8 @@ from app.repositories.models import Area, ForecastInput, ProvenanceEdge
 
 FORECAST_PRODUCT_VERSION = "forecast_input_product_v1"
 FORECAST_MAX_AGE_SECONDS = 18 * 3600
+FORECAST_HORIZON_DAYS = 30
+SEOUL = ZoneInfo("Asia/Seoul")
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +34,11 @@ def _aware(value: datetime) -> datetime:
 def build_forecast_snapshots(
     session_factory: sessionmaker[Session],
 ) -> ForecastProductResult:
+    # forecast_date stores a calendar label, not a publication timestamp. Match
+    # the reader's Seoul calendar and its maximum supported request horizon.
+    today = datetime.now(SEOUL).date()
+    start = datetime.combine(today, datetime.min.time())
+    end = start + timedelta(days=FORECAST_HORIZON_DAYS)
     with session_factory() as session:
         area_ids = list(
             session.scalars(
@@ -57,7 +65,9 @@ def build_forecast_snapshots(
                         or_(
                             ForecastInput.area_id == area_id,
                             inherited_weather,
-                        )
+                        ),
+                        ForecastInput.forecast_date >= start,
+                        ForecastInput.forecast_date < end,
                     )
                     .order_by(ForecastInput.forecast_date, ForecastInput.source_id)
                 ).all()

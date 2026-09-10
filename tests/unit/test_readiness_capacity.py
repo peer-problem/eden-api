@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -30,7 +29,6 @@ def _production_settings() -> Settings:
         DB_PASSWORD="read-secret",  # noqa: S106 - isolated test settings
         INGESTION_DB_USER="ingestion",
         INGESTION_DB_PASSWORD="write-secret",  # noqa: S106 - isolated test settings
-        DB_SSL_CA=Path("/etc/eden/mariadb-ca.pem"),
         SCHEDULER_ENABLED=True,
         SNAPSHOT_RETENTION_ENABLED=True,
     )

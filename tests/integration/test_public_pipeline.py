@@ -37,6 +37,7 @@ from app.repositories.models import (
     Base,
     Country,
     FlightObservation,
+    ForecastInput,
     FxObservation,
     InboundVisitorObservation,
     IngestionRun,
@@ -1078,3 +1079,64 @@ def test_all_public_routes_return_explicit_unavailable_without_products() -> Non
         payload = recommendation.json()
         assert payload["data"] is None
         assert payload["meta"]["availability"] == "unavailable"
+
+
+@pytest.mark.parametrize("inherited", [False, True])
+def test_forecast_snapshot_bounds_inputs_and_provenance_to_public_horizon(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch, inherited: bool,
+) -> None:
+    from app.products import forecast
+
+    today = datetime.now(SEOUL).date()
+    start = datetime.combine(today, datetime.min.time())
+    audit = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=1)
+    included_raw: set[int] = set()
+    excluded_raw: set[int] = set()
+    with pipeline.session_factory.begin() as session:
+        source_id = "SRC_KMA_FORECAST" if inherited else FORECAST_SOURCE
+        area_id = AREA_ID
+        if inherited:
+            area_id = "eden_area_forecast_parent"
+            session.add(Area(
+                eden_area_id=area_id, name_ko="부모 지역", level="sido", active=True,
+                created_at=audit, updated_at=audit,
+            ))
+            session.get(Area, AREA_ID).parent_area_id = area_id
+        for offset in (-1, 29, 30):
+            raw = RawRecord(
+                source_id=source_id, external_key=f"horizon-{offset}",
+                observed_at=audit, source_updated_at=audit, ingested_at=audit,
+                content_type="application/json", body_json={"offset": offset},
+                content_hash=hashlib.sha256(str(offset).encode()).hexdigest(),
+                run_id=pipeline.forecast_run_id, tombstone=False,
+            )
+            session.add(raw)
+            session.flush()
+            row = ForecastInput(
+                area_id=area_id, forecast_date=start + timedelta(days=offset),
+                source_forecast=None if inherited else {"concentration_rate": 45},
+                weather={"condition": "clear"} if inherited else None,
+                **_fact_audit(source_id, audit),
+            )
+            session.add(row)
+            session.flush()
+            _portable_provenance(session, "forecast_input", row.input_id, [raw.raw_record_id])
+            (included_raw if offset == 29 else excluded_raw).add(raw.raw_record_id)
+
+    candidates = []
+    monkeypatch.setattr(
+        forecast.SnapshotPublisher,
+        "publish",
+        lambda _self, candidate: candidates.append(candidate),
+    )
+    build_forecast_snapshots(pipeline.session_factory)
+    candidate = next(item for item in candidates if item.data["eden_area_id"] == AREA_ID)
+    dates = {
+        datetime.fromisoformat(row["forecast_date"]).date()
+        for row in candidate.data["inputs"]
+    }
+    assert dates == {today, today + timedelta(days=1), today + timedelta(days=29)}
+    assert included_raw.issubset(candidate.raw_record_ids)
+    assert excluded_raw.isdisjoint(candidate.raw_record_ids)
+    with pipeline.session_factory() as session:
+        assert len(session.scalars(select(ForecastInput)).all()) == 5

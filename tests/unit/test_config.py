@@ -1,8 +1,8 @@
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.engine import make_url
 
 from app.config import Settings
 from app.repositories.database import create_database_engine, create_scheduler_database_engine
@@ -32,11 +32,8 @@ def test_phase_one_bounds_dead_letter_and_provenance_batches() -> None:
         _settings(SNAPSHOT_PROVENANCE_BATCH_SIZE=501)
 
 
-def test_database_engine_uses_verified_tls_when_ca_is_configured() -> None:
-    settings = _settings(
-        DB_SSL_CA=Path("/etc/eden/mariadb-ca.pem"),
-        DB_POOL_RECYCLE_SECONDS=600,
-    )
+def test_database_engine_always_uses_zero_configuration_tls() -> None:
+    settings = _settings(DB_POOL_RECYCLE_SECONDS=600)
     engine = Mock()
 
     with patch("app.repositories.database.create_engine", return_value=engine) as create:
@@ -45,19 +42,35 @@ def test_database_engine_uses_verified_tls_when_ca_is_configured() -> None:
     _, kwargs = create.call_args
     assert kwargs["pool_pre_ping"] is True
     assert kwargs["pool_recycle"] == 600
-    assert kwargs["connect_args"]["ssl"] == {
-        "ca": "/etc/eden/mariadb-ca.pem",
-        "check_hostname": True,
+    assert kwargs["connect_args"] == {
+        "connect_timeout": 5,
+        "ssl": True,
+        "ssl_verify_cert": True,
     }
+    assert settings.database_url.startswith("mariadb+mariadbconnector://")
 
 
-def test_database_engine_does_not_claim_tls_without_a_ca() -> None:
-    settings = _settings()
+def test_mariadb_url_preserves_credentials_without_unsupported_options() -> None:
+    settings = _settings(
+        DB_USER="reader account",
+        DB_PASSWORD="p@ss/word",  # noqa: S106 - isolated unit settings
+        DB_NAME="eden_data",
+    )
 
-    with patch("app.repositories.database.create_engine", return_value=Mock()) as create:
-        create_database_engine(settings)
+    parsed = make_url(settings.database_url)
 
-    assert "ssl" not in create.call_args.kwargs["connect_args"]
+    assert parsed.username == "reader account"
+    assert parsed.password == "p@ss/word"  # noqa: S105 - isolated unit settings
+    assert parsed.database == "eden_data"
+    assert parsed.query == {}
+
+
+def test_database_engine_rejects_old_connector_c() -> None:
+    with (
+        patch("app.repositories.database.mariadb.client_version_info", (3, 3, 99)),
+        pytest.raises(RuntimeError, match="Connector/C 3.4"),
+    ):
+        create_database_engine(_settings())
 
 
 def test_scheduler_uses_a_separate_bounded_database_pool() -> None:
@@ -80,27 +93,19 @@ def test_scheduler_uses_a_separate_bounded_database_pool() -> None:
     assert "eden:secret" not in create.call_args.args[0]
 
 
-def test_production_requires_verified_tls_and_distinct_ingestion_role() -> None:
-    with pytest.raises(ValidationError, match="verified TLS"):
-        _settings(ENVIRONMENT="production")
-
+def test_production_requires_distinct_ingestion_role() -> None:
     with pytest.raises(ValidationError, match="separate ingestion"):
-        _settings(
-            ENVIRONMENT="production",
-            DB_SSL_CA=Path("/etc/eden/mariadb-ca.pem"),
-        )
+        _settings(ENVIRONMENT="production")
 
     with pytest.raises(ValidationError, match="must be different"):
         _settings(
             ENVIRONMENT="production",
-            DB_SSL_CA=Path("/etc/eden/mariadb-ca.pem"),
             INGESTION_DB_USER="eden",
             INGESTION_DB_PASSWORD="writer-secret",  # noqa: S106 - isolated unit settings
         )
 
     settings = _settings(
         ENVIRONMENT="production",
-        DB_SSL_CA=Path("/etc/eden/mariadb-ca.pem"),
         INGESTION_DB_USER="eden_ingestion",
         INGESTION_DB_PASSWORD="writer-secret",  # noqa: S106 - isolated unit settings
     )
@@ -111,7 +116,6 @@ def test_production_scheduler_requires_explicit_snapshot_retention_enablement() 
     production = {
         "ENVIRONMENT": "production",
         "SCHEDULER_ENABLED": True,
-        "DB_SSL_CA": Path("/etc/eden/mariadb-ca.pem"),
         "INGESTION_DB_USER": "eden_ingestion",
         "INGESTION_DB_PASSWORD": "writer-secret",  # noqa: S106 - isolated unit settings
     }
@@ -123,15 +127,10 @@ def test_production_scheduler_requires_explicit_snapshot_retention_enablement() 
     assert settings.SNAPSHOT_RETENTION_ENABLED is True
 
 
-def test_development_ssh_forwarding_requires_loopback_and_verified_tls() -> None:
-    values = {"DB_HOST": "127.0.0.1", "DB_PORT": 13306, "DB_SSL_CA": Path("ca.pem")}
+def test_development_ssh_forwarding_requires_loopback() -> None:
+    values = {"DB_HOST": "127.0.0.1", "DB_PORT": 13306}
     with pytest.raises(ValidationError, match="Local databases are forbidden"):
         _settings(**values)
     assert _settings(**values, DB_SSH_TUNNEL=True).DB_SSH_TUNNEL
-    for override in (
-        {"DB_HOST": "remote.example.test"},
-        {"DB_SSL_CA": None},
-        {"DB_SSL_VERIFY_CERT": False},
-    ):
-        with pytest.raises(ValidationError, match="requires loopback and verified TLS"):
-            _settings(**{**values, **override}, DB_SSH_TUNNEL=True)
+    with pytest.raises(ValidationError, match="requires a loopback DB host"):
+        _settings(**{**values, "DB_HOST": "remote.example.test"}, DB_SSH_TUNNEL=True)

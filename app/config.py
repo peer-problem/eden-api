@@ -40,8 +40,6 @@ class Settings(BaseSettings):
     DB_MAX_OVERFLOW: int = 2
     SCHEDULER_DB_POOL_SIZE: int = 2
     DB_POOL_RECYCLE_SECONDS: int = 900
-    DB_SSL_CA: Path | None = None
-    DB_SSL_VERIFY_CERT: bool = True
     DB_SSH_TUNNEL: bool = False
 
     SOURCE_HTTP_TIMEOUT_SECONDS: float = 20.0
@@ -111,8 +109,8 @@ class Settings(BaseSettings):
         with suppress(ValueError):
             is_local = is_local or ipaddress.ip_address(host).is_loopback
         if self.DB_SSH_TUNNEL:
-            if not is_local or self.DB_SSL_CA is None or not self.DB_SSL_VERIFY_CERT:
-                raise ValueError("Development SSH forwarding requires loopback and verified TLS")
+            if not is_local:
+                raise ValueError("Development SSH forwarding requires a loopback DB host")
             return self
         if is_local:
             raise ValueError(
@@ -153,8 +151,6 @@ class Settings(BaseSettings):
             <= 100
         ):
             raise ValueError("Disk thresholds must be ordered warning < product < source")
-        if self.DB_SSL_CA is not None and not self.DB_SSL_VERIFY_CERT:
-            raise ValueError("DB_SSL_CA requires certificate verification")
         if self.DB_POOL_SIZE < 2:
             raise ValueError("DB_POOL_SIZE must reserve at least two API connections")
         if not 1 <= self.SCHEDULER_DB_POOL_SIZE <= 4:
@@ -167,8 +163,6 @@ class Settings(BaseSettings):
     def validate_production_database_security(self) -> Settings:
         if self.ENVIRONMENT != "production":
             return self
-        if self.DB_SSL_CA is None or not self.DB_SSL_VERIFY_CERT:
-            raise ValueError("Production database connections require verified TLS")
         if self.INGESTION_DB_USER is None or self.INGESTION_DB_PASSWORD is None:
             raise ValueError("Production requires separate ingestion database credentials")
         if self.INGESTION_DB_USER == self.DB_USER:
@@ -188,11 +182,12 @@ class Settings(BaseSettings):
         return self
 
     def database_url_for(self, user: str, password: SecretStr) -> str:
-        from urllib.parse import quote_plus
+        from urllib.parse import quote
 
         return (
-            f"mysql+pymysql://{quote_plus(user)}:{quote_plus(password.get_secret_value())}"
-            f"@{self.DB_HOST}:{self.DB_PORT}/{quote_plus(self.DB_NAME)}?charset=utf8mb4"
+            f"mariadb+mariadbconnector://{quote(user, safe='')}:"
+            f"{quote(password.get_secret_value(), safe='')}"
+            f"@{self.DB_HOST}:{self.DB_PORT}/{quote(self.DB_NAME, safe='')}"
         )
 
     @property

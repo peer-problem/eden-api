@@ -171,3 +171,26 @@ def test_forecast_fact_retains_raw_audit_timestamps(
     assert existing.source_updated_at == datetime(2026, 8, 29, 2)
     assert existing.ingested_at == datetime(2026, 8, 29, 3)
     assert existing.source_forecast["concentration_rate"] == 0.0
+
+
+def test_forecast_fact_rejects_future_audit_timestamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = SimpleNamespace(
+        raw_record_id=53,
+        observed_at=datetime(2126, 8, 29, 1, tzinfo=UTC),
+        source_updated_at=datetime(2126, 8, 29, 2, tzinfo=UTC),
+        ingested_at=datetime(2126, 8, 29, 3, tzinfo=UTC),
+    )
+    monkeypatch.setattr(forecast, "_provenance", lambda *_args: None)
+
+    with pytest.raises(ValueError, match="cannot precede"):
+        forecast._upsert_forecast_input(
+            SimpleNamespace(),  # type: ignore[arg-type]
+            raw,
+            source_id=forecast.WEATHER_SOURCE,
+            area_id="area-11",
+            place_id=None,
+            forecast_date=datetime(2126, 9, 5),
+            weather={"temperature_c": 20.0},
+        )

@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -162,11 +162,21 @@ def _add_dead_letter(
     detail: str,
 ) -> None:
     existing = session.scalar(
-        select(DeadLetter).where(
+        select(DeadLetter)
+        .where(
             DeadLetter.raw_record_id == raw.raw_record_id,
             DeadLetter.error_code == error_code,
-            DeadLetter.reprocess_status.in_(("pending", "retrying")),
         )
+        .order_by(
+            case(
+                (DeadLetter.reprocess_status == "retrying", 0),
+                (DeadLetter.reprocess_status == "pending", 1),
+                else_=2,
+            ),
+            DeadLetter.dead_letter_id.desc(),
+        )
+        .limit(1)
+        .with_for_update()
     )
     error_detail = f"ValueError: {detail[:1900]}"
     if existing is None:
@@ -181,9 +191,10 @@ def _add_dead_letter(
             )
         )
         return
-    existing.error_detail = error_detail
-    existing.reprocess_status = "pending"
-    existing.reprocessed_at = None
+    if existing.reprocess_status in {"pending", "retrying"}:
+        existing.error_detail = error_detail
+        existing.reprocess_status = "pending"
+        existing.reprocessed_at = None
 
 
 def _normalize_alert_run(

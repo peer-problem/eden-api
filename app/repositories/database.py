@@ -3,11 +3,24 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+import mariadb
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 from app.observability.metrics import instrument_database_engine
+
+MINIMUM_CONNECTOR_C_VERSION = (3, 4, 0)
+
+
+def verified_mariadb_connect_args(settings: Settings) -> dict[str, object]:
+    if mariadb.client_version_info < MINIMUM_CONNECTOR_C_VERSION:
+        raise RuntimeError("MariaDB Connector/C 3.4 or newer is required")
+    return {
+        "connect_timeout": settings.DB_CONNECT_TIMEOUT_SECONDS,
+        "ssl": True,
+        "ssl_verify_cert": True,
+    }
 
 
 def create_database_engine(settings: Settings) -> Engine:
@@ -36,19 +49,13 @@ def _create_database_engine(
     pool_size: int,
     max_overflow: int,
 ) -> Engine:
-    connect_args: dict[str, object] = {"connect_timeout": settings.DB_CONNECT_TIMEOUT_SECONDS}
-    if settings.DB_SSL_CA is not None:
-        connect_args["ssl"] = {
-            "ca": str(settings.DB_SSL_CA),
-            "check_hostname": settings.DB_SSL_VERIFY_CERT,
-        }
     engine = create_engine(
         database_url,
         pool_pre_ping=True,
         pool_recycle=settings.DB_POOL_RECYCLE_SECONDS,
         pool_size=pool_size,
         max_overflow=max_overflow,
-        connect_args=connect_args,
+        connect_args=verified_mariadb_connect_args(settings),
     )
     instrument_database_engine(engine)
     return engine

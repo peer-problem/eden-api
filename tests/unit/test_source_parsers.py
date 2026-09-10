@@ -333,6 +333,51 @@ def test_public_data_watermark_uses_latest_response_period() -> None:
     ) == datetime(2026, 8, 27, tzinfo=UTC)
 
 
+def test_kma_watermark_converts_naive_seoul_cycle_to_utc() -> None:
+    assert public_data_watermark(
+        {
+            "watermark": {
+                "params": ["base_date", "base_time"],
+                "format": "%Y%m%d%H%M",
+            }
+        },
+        {"base_date": "20260910", "base_time": "1100"},
+        {},
+        source_id="SRC_KMA_FORECAST",
+    ) == datetime(2026, 9, 10, 2, tzinfo=UTC)
+
+
+def test_local_watermark_preserves_an_explicit_utc_offset() -> None:
+    assert public_data_watermark(
+        {
+            "watermark": {
+                "response_field": "modifiedtime",
+                "format": "%Y%m%d%H%M%S%z",
+            }
+        },
+        {},
+        {"item": {"modifiedtime": "20260910110000+0000"}},
+        source_id="SRC_TOUR_KO",
+    ) == datetime(2026, 9, 10, 11, tzinfo=UTC)
+
+
+def test_holiday_request_month_is_not_a_publication_watermark() -> None:
+    assert (
+        public_data_watermark(
+            {
+                "watermark": {
+                    "params": ["solYear", "solMonth"],
+                    "format": "%Y%m",
+                }
+            },
+            {"solYear": "2026", "solMonth": "10"},
+            {},
+            source_id="SRC_HOLIDAY",
+        )
+        is None
+    )
+
+
 def test_bok_ecos_parser_accepts_normal_and_empty_rows() -> None:
     normal = _fixture_json("bok_ecos_normal.json")
     empty = _fixture_json("bok_ecos_empty.json")

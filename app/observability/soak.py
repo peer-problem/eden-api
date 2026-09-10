@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.request import urlopen
@@ -549,8 +549,19 @@ def evaluate_phase2_samples(
             result["reason"] = "Waiting for the first usable capacity reference."
         return result
 
+    capacity_tail = tail[capacity_start:]
+    latest_timestamp = datetime.fromisoformat(capacity_tail[-1]["sampled_at"])
+    window_boundary = latest_timestamp - timedelta(
+        seconds=PHASE2_SOAK_REQUIRED_SECONDS
+    )
+    window_start = 0
+    for index, sample in enumerate(capacity_tail):
+        if datetime.fromisoformat(sample["sampled_at"]) > window_boundary:
+            break
+        window_start = index
+
     return evaluate_samples(
-        tail[capacity_start:],
+        capacity_tail[window_start:],
         now=now,
         required_seconds=PHASE2_SOAK_REQUIRED_SECONDS,
         max_gap_seconds=max_gap_seconds,
