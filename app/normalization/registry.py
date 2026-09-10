@@ -30,6 +30,7 @@ from app.normalization.places import (
 )
 from app.normalization.public_data import (
     _raw_record_replay_scope,
+    _regional_visit_replay_write_scope,
     normalize_regional_demand_run,
     normalize_regional_diversity_run,
     normalize_regional_visitors_run,
@@ -182,4 +183,18 @@ def reprocess_normalization_run(
     if source_id in ROW_IDENTITY_REPLAY_SOURCES:
         with _raw_record_replay_scope(raw_record_ids):
             return _normalize_run(source_id, session_factory, run_id)
+    if (
+        source_id == "SRC_KTO_REGIONAL_VISITORS"
+        and raw_record_ids
+    ):
+        with session_factory() as session:
+            run = session.get(IngestionRun, run_id)
+            targeted_write_is_safe = (
+                run is not None
+                and run.status in {RunStatus.PARTIAL, RunStatus.SUCCEEDED}
+                and run.normalized_count > 0
+            )
+        if targeted_write_is_safe:
+            with _regional_visit_replay_write_scope(raw_record_ids):
+                return _normalize_run(source_id, session_factory, run_id)
     return _normalize_run(source_id, session_factory, run_id)

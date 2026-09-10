@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, func, select, tuple_
+from sqlalchemy import String, and_, cast, func, select, tuple_
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -43,6 +43,8 @@ HUB_SOURCE = "SRC_KTO_PLACE_HUB"
 RELATED_SOURCE = "SRC_KTO_PLACE_RELATED"
 SHOP_SOURCE = "SRC_SEMAS_SHOPS"
 SHOP_WRITE_BATCH_SIZE = 100
+TOUR_REPLAY_LOOKUP_BATCH_SIZE = 1000
+TOUR_REPLAY_PROVENANCE_BATCH_SIZE = 100
 
 
 def _coordinates(row: dict[str, Any], x: str, y: str) -> tuple[Decimal | None, Decimal | None]:
@@ -324,6 +326,98 @@ def _successfully_provenanced_tour_content_ids(
     }
 
 
+def _stale_tour_replay_outputs(
+    session: Session,
+    source_id: str,
+    language: str,
+    content_ids: set[str],
+    source_updated_at: datetime | None,
+) -> dict[str, tuple[str, str]]:
+    if not content_ids or source_updated_at is None:
+        return {}
+    incoming_timestamp = _database_time(source_updated_at)
+    canonical_latest = (
+        select(func.max(RawRecord.source_updated_at))
+        .select_from(ProvenanceEdge)
+        .join(RawRecord, RawRecord.raw_record_id == ProvenanceEdge.raw_record_id)
+        .where(
+            ProvenanceEdge.output_type == "place",
+            ProvenanceEdge.output_id == PlaceSourceMap.eden_place_id,
+            ProvenanceEdge.formula_version == "place_identity_v1",
+        )
+        .correlate(PlaceSourceMap)
+        .scalar_subquery()
+    )
+    localization_latest = (
+        select(func.max(RawRecord.source_updated_at))
+        .select_from(ProvenanceEdge)
+        .join(RawRecord, RawRecord.raw_record_id == ProvenanceEdge.raw_record_id)
+        .where(
+            ProvenanceEdge.output_type == "place_localization",
+            ProvenanceEdge.output_id == cast(PlaceLocalization.id, String(128)),
+            ProvenanceEdge.formula_version == "place_identity_v1",
+        )
+        .correlate(PlaceLocalization)
+        .scalar_subquery()
+    )
+    resolved: dict[str, tuple[str, str]] = {}
+    ordered_ids = sorted(content_ids)
+    for offset in range(0, len(ordered_ids), TOUR_REPLAY_LOOKUP_BATCH_SIZE):
+        batch = ordered_ids[offset : offset + TOUR_REPLAY_LOOKUP_BATCH_SIZE]
+        rows = session.execute(
+            select(
+                PlaceSourceMap.external_content_id,
+                PlaceSourceMap.eden_place_id,
+                PlaceLocalization.id,
+                canonical_latest.label("canonical_latest"),
+                localization_latest.label("localization_latest"),
+            )
+            .join(Place, Place.eden_place_id == PlaceSourceMap.eden_place_id)
+            .join(
+                PlaceLocalization,
+                and_(
+                    PlaceLocalization.eden_place_id == PlaceSourceMap.eden_place_id,
+                    PlaceLocalization.language == language,
+                ),
+            )
+            .where(
+                PlaceSourceMap.source_id == source_id,
+                PlaceSourceMap.external_content_id.in_(batch),
+            )
+        ).all()
+        for content_id, place_id, localization_id, place_latest, locale_latest in rows:
+            if (
+                place_latest is not None
+                and locale_latest is not None
+                and place_latest > incoming_timestamp
+                and locale_latest > incoming_timestamp
+            ):
+                resolved[content_id] = (place_id, str(localization_id))
+    return resolved
+
+
+def _write_tour_replay_provenance(
+    session: Session,
+    raw_record_id: int,
+    outputs: set[tuple[str, str]],
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    rows = [
+        {
+            "output_type": output_type,
+            "output_id": output_id,
+            "raw_record_id": raw_record_id,
+            "formula_version": "place_identity_v1",
+            "created_at": now,
+        }
+        for output_type, output_id in sorted(outputs)
+    ]
+    for offset in range(0, len(rows), TOUR_REPLAY_PROVENANCE_BATCH_SIZE):
+        batch = rows[offset : offset + TOUR_REPLAY_PROVENANCE_BATCH_SIZE]
+        upsert = insert(ProvenanceEdge).values(batch)
+        session.execute(upsert.on_duplicate_key_update(provenance_id=ProvenanceEdge.provenance_id))
+
+
 def normalize_tour_catalog_run(
     source_id: str,
     session_factory: sessionmaker[Session],
@@ -348,6 +442,23 @@ def normalize_tour_catalog_run(
                 if _is_raw_record_replay()
                 else set()
             )
+            stale_replay_outputs = (
+                _stale_tour_replay_outputs(
+                    session,
+                    source_id,
+                    language,
+                    {
+                        content_id
+                        for row in rows
+                        if (content_id := _text(row, "contentid")) is not None
+                    }
+                    - successfully_provenanced_ids,
+                    getattr(raw, "source_updated_at", None),
+                )
+                if _is_raw_record_replay()
+                else {}
+            )
+            replay_provenance: set[tuple[str, str]] = set()
             for row in rows:
                 try:
                     with session.begin_nested():
@@ -368,6 +479,16 @@ def normalize_tour_catalog_run(
                         if external_id in successfully_provenanced_ids:
                             normalized += 1
                             continue
+                        if stale_outputs := stale_replay_outputs.get(external_id):
+                            place_id, localization_id = stale_outputs
+                            replay_provenance.update(
+                                {
+                                    ("place", place_id),
+                                    ("place_localization", localization_id),
+                                }
+                            )
+                            normalized += 1
+                            continue
                         _upsert_place(
                             session,
                             raw,
@@ -386,6 +507,11 @@ def normalize_tour_catalog_run(
                     normalized += 1
                 except Exception as exc:
                     _add_dead_letter(session, raw, "tour_catalog_row_schema", exc)
+            _write_tour_replay_provenance(
+                session,
+                raw.raw_record_id,
+                replay_provenance,
+            )
             session.commit()
         _finish_run(session, run_id, normalized)
         session.commit()

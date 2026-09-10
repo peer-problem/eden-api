@@ -44,6 +44,12 @@ _REPLAY_RAW_RECORD_IDS: ContextVar[frozenset[int] | None] = ContextVar(
     "eden_replay_raw_record_ids",
     default=None,
 )
+_REGIONAL_VISIT_REPLAY_WRITE_RAW_RECORD_IDS: ContextVar[frozenset[int] | None] = (
+    ContextVar(
+        "eden_regional_visit_replay_write_raw_record_ids",
+        default=None,
+    )
+)
 
 
 @dataclass(slots=True)
@@ -374,6 +380,17 @@ def _raw_record_replay_scope(raw_record_ids: Iterable[int]):
         _REPLAY_RAW_RECORD_IDS.reset(token)
 
 
+@contextmanager
+def _regional_visit_replay_write_scope(raw_record_ids: Iterable[int]):
+    token = _REGIONAL_VISIT_REPLAY_WRITE_RAW_RECORD_IDS.set(
+        frozenset(raw_record_ids)
+    )
+    try:
+        yield
+    finally:
+        _REGIONAL_VISIT_REPLAY_WRITE_RAW_RECORD_IDS.reset(token)
+
+
 def _is_raw_record_replay() -> bool:
     return _REPLAY_RAW_RECORD_IDS.get() is not None
 
@@ -394,6 +411,8 @@ def _run_records(session: Session, run_id: str, source_id: str) -> list[RawRecor
 
 
 def _finish_run(session: Session, run_id: str, count: int) -> None:
+    if _REGIONAL_VISIT_REPLAY_WRITE_RAW_RECORD_IDS.get() is not None:
+        return
     run = session.get(IngestionRun, run_id)
     if run is None:
         raise ValueError(f"ingestion run does not exist: {run_id}")
@@ -497,12 +516,23 @@ def _write_regional_visit_groups(
     session: Session,
     groups: list[_VisitorAggregate],
 ) -> int:
-    normalized = 0
-    for offset in range(0, len(groups), REGIONAL_VISIT_WRITE_BATCH_SIZE):
-        batch = groups[offset : offset + REGIONAL_VISIT_WRITE_BATCH_SIZE]
+    normalized = len(groups)
+    replay_raw_ids = _REGIONAL_VISIT_REPLAY_WRITE_RAW_RECORD_IDS.get()
+    write_groups = (
+        groups
+        if replay_raw_ids is None
+        else [
+            group
+            for group in groups
+            if not group.raw_record_ids.isdisjoint(replay_raw_ids)
+        ]
+    )
+    written = 0
+    for offset in range(0, len(write_groups), REGIONAL_VISIT_WRITE_BATCH_SIZE):
+        batch = write_groups[offset : offset + REGIONAL_VISIT_WRITE_BATCH_SIZE]
         _write_regional_visit_batch(session, batch)
-        normalized += len(batch)
-        if normalized % 500 == 0:
+        written += len(batch)
+        if written % 500 == 0:
             session.commit()
     return normalized
 

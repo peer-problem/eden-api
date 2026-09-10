@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import BigInteger, create_engine, func, select
@@ -445,7 +447,7 @@ def test_registry_targets_only_row_identity_normalizers(
     )
     registry.reprocess_normalization_run(
         "SRC_KTO_REGIONAL_VISITORS",
-        object(),
+        lambda: nullcontext(SimpleNamespace(get=lambda *_args: None)),
         "run-aggregate",
         (9,),
     )
