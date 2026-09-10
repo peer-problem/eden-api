@@ -369,7 +369,7 @@ SOURCES: tuple[SourceDefinition, ...] = (
         "SRC_KTO_MARKET_TREND",
         "한국관광공사",
         "https://datalab.visitkorea.or.kr",
-        "https://datalab.visitkorea.or.kr/site/portal/ex/bbs/List.do?cbIdx=1132",
+        "https://datalab.visitkorea.or.kr/site/portal/ex/bbs/List.do?cbIdx=1602",
         "html_allowlist",
         "public",
         "A",

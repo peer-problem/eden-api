@@ -342,6 +342,21 @@ class RecommendationConstraints(ApiModel):
 
 
 class RecommendationRequest(ApiModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "target_country": "JP",
+                    "travel_window": {"season": "autumn", "days": 3},
+                    "themes": ["culture", "nature"],
+                    "party_size": 2,
+                    "limit": 5,
+                }
+            ]
+        },
+    )
+
     target_country: CountryCode
     travel_window: TravelWindow
     budget_krw: int | None = Field(default=None, ge=0)

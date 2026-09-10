@@ -74,6 +74,207 @@ def test_address_mapping_uses_parent_area_to_disambiguate_same_name() -> None:
     assert forecast._match_area(session, "Seoul Jung") == "seoul-jung"
 
 
+def test_address_mapping_prefers_nested_district_administrative_code() -> None:
+    rows = [
+        SimpleNamespace(
+            eden_area_id="gyeonggi",
+            name_ko="경기도",
+            level="sido",
+            parent_area_id=None,
+            administrative_code="4100000000",
+        ),
+        SimpleNamespace(
+            eden_area_id="seongnam",
+            name_ko="성남시",
+            level="sigungu",
+            parent_area_id="gyeonggi",
+            administrative_code="4113000000",
+        ),
+        SimpleNamespace(
+            eden_area_id="sujeong",
+            name_ko="수정구",
+            level="sigungu",
+            parent_area_id="gyeonggi",
+            administrative_code="4113100000",
+        ),
+    ]
+    result = SimpleNamespace(all=lambda: rows)
+    session = SimpleNamespace(execute=lambda _statement: result)
+
+    assert forecast._match_area(session, "경기도 성남시 수정구") == "sujeong"
+
+
+def test_address_mapping_keeps_true_sibling_districts_ambiguous() -> None:
+    rows = [
+        SimpleNamespace(
+            eden_area_id="seoul",
+            name_ko="서울특별시",
+            level="sido",
+            parent_area_id=None,
+            administrative_code="1100000000",
+        ),
+        SimpleNamespace(
+            eden_area_id="gangnam",
+            name_ko="강남구",
+            level="sigungu",
+            parent_area_id="seoul",
+            administrative_code="1168000000",
+        ),
+        SimpleNamespace(
+            eden_area_id="songpa",
+            name_ko="송파구",
+            level="sigungu",
+            parent_area_id="seoul",
+            administrative_code="1171000000",
+        ),
+    ]
+    result = SimpleNamespace(all=lambda: rows)
+    session = SimpleNamespace(execute=lambda _statement: result)
+
+    with pytest.raises(ValueError, match="multiple EDEN areas"):
+        forecast._match_area(session, "서울특별시 강남구 송파구")
+
+
+def test_address_mapping_does_not_match_area_name_inside_another_name() -> None:
+    rows = [
+        SimpleNamespace(
+            eden_area_id="daegu",
+            name_ko="대구광역시",
+            level="sido",
+            parent_area_id=None,
+            administrative_code="2700000000",
+        ),
+        SimpleNamespace(
+            eden_area_id="dalseo",
+            name_ko="달서구",
+            level="sigungu",
+            parent_area_id="daegu",
+            administrative_code="2729000000",
+        ),
+        SimpleNamespace(
+            eden_area_id="seo",
+            name_ko="서구",
+            level="sigungu",
+            parent_area_id="daegu",
+            administrative_code="2717000000",
+        ),
+    ]
+    result = SimpleNamespace(all=lambda: rows)
+    session = SimpleNamespace(execute=lambda _statement: result)
+
+    assert forecast._match_area(session, "대구광역시 달서구") == "dalseo"
+
+
+def test_festival_mapping_prefers_agreeing_addresses_over_multi_area_venue() -> None:
+    rows = [
+        SimpleNamespace(
+            eden_area_id="province",
+            name_ko="전남광주통합특별시",
+            level="sido",
+            parent_area_id=None,
+            administrative_code="1200000000",
+        ),
+        SimpleNamespace(
+            eden_area_id="haenam",
+            name_ko="해남군",
+            level="sigungu",
+            parent_area_id="province",
+            administrative_code="1279000000",
+        ),
+        SimpleNamespace(
+            eden_area_id="jindo",
+            name_ko="진도군",
+            level="sigungu",
+            parent_area_id="province",
+            administrative_code="1286000000",
+        ),
+    ]
+    result = SimpleNamespace(all=lambda: rows)
+    session = SimpleNamespace(execute=lambda _statement: result)
+
+    assert (
+        forecast._match_festival_area(
+            session,
+            "전남광주통합특별시 해남군 관광레저로 12",
+            "전남광주통합특별시 해남군 학동리 1021-3",
+            "해남군 관광지와 진도군 관광지 일원",
+        )
+        == "haenam"
+    )
+
+
+def test_festival_mapping_rejects_disagreeing_road_and_lot_addresses() -> None:
+    rows = [
+        SimpleNamespace(
+            eden_area_id="gyeonggi",
+            name_ko="경기도",
+            level="sido",
+            parent_area_id=None,
+            administrative_code="4100000000",
+        ),
+        SimpleNamespace(
+            eden_area_id="jungwon",
+            name_ko="중원구",
+            level="sigungu",
+            parent_area_id="gyeonggi",
+            administrative_code="4113300000",
+        ),
+        SimpleNamespace(
+            eden_area_id="sujeong",
+            name_ko="수정구",
+            level="sigungu",
+            parent_area_id="gyeonggi",
+            administrative_code="4113100000",
+        ),
+    ]
+    result = SimpleNamespace(all=lambda: rows)
+    session = SimpleNamespace(execute=lambda _statement: result)
+
+    with pytest.raises(ValueError, match="multiple EDEN areas"):
+        forecast._match_festival_area(
+            session,
+            "경기도 중원구 여수대로 197",
+            "경기도 수정구 성남동 1949-8",
+            "성남시민농원",
+        )
+
+
+def test_festival_mapping_does_not_override_ambiguous_address_with_venue() -> None:
+    rows = [
+        SimpleNamespace(
+            eden_area_id="seoul",
+            name_ko="서울특별시",
+            level="sido",
+            parent_area_id=None,
+            administrative_code="1100000000",
+        ),
+        SimpleNamespace(
+            eden_area_id="gangnam",
+            name_ko="강남구",
+            level="sigungu",
+            parent_area_id="seoul",
+            administrative_code="1168000000",
+        ),
+        SimpleNamespace(
+            eden_area_id="songpa",
+            name_ko="송파구",
+            level="sigungu",
+            parent_area_id="seoul",
+            administrative_code="1171000000",
+        ),
+    ]
+    result = SimpleNamespace(all=lambda: rows)
+    session = SimpleNamespace(execute=lambda _statement: result)
+
+    with pytest.raises(ValueError, match="multiple EDEN areas"):
+        forecast._match_festival_area(
+            session,
+            "서울특별시 강남구 송파구",
+            None,
+            "강남구 행사장",
+        )
+
+
 class _Nested:
     def __enter__(self) -> None:
         return None

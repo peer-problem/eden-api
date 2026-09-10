@@ -224,7 +224,9 @@ def _month_shift(value: datetime, months: int) -> datetime:
 def resolve_dynamic_parameter(value: Any, now: datetime) -> Any:
     if not isinstance(value, str) or not value.startswith("$"):
         return value
-    kma_reference = now.astimezone(SEOUL) - timedelta(minutes=15)
+    seoul_now = now.astimezone(SEOUL)
+    seoul_date = seoul_now.date()
+    kma_reference = seoul_now - timedelta(minutes=15)
     kma_cycles = (2, 5, 8, 11, 14, 17, 20, 23)
     eligible_cycles = [hour for hour in kma_cycles if hour <= kma_reference.hour]
     if eligible_cycles:
@@ -234,11 +236,8 @@ def resolve_dynamic_parameter(value: Any, now: datetime) -> Any:
         kma_hour = 23
         kma_date = kma_reference.date() - timedelta(days=1)
     tokens = {
-        "$today": now.strftime("%Y%m%d"),
-        "$yesterday": (now.date() - timedelta(days=1)).strftime("%Y%m%d"),
-        "$today_minus_7d": (now.date() - timedelta(days=7)).strftime("%Y%m%d"),
-        "$today_minus_90d": (now.date() - timedelta(days=90)).strftime("%Y%m%d"),
-        "$today_minus_455d": (now.date() - timedelta(days=455)).strftime("%Y%m%d"),
+        "$today": seoul_date.strftime("%Y%m%d"),
+        "$yesterday": (seoul_date - timedelta(days=1)).strftime("%Y%m%d"),
         "$current_year": now.strftime("%Y"),
         "$current_month": now.strftime("%m"),
         "$next_month": _month_shift(now, 1).strftime("%m"),
@@ -250,6 +249,14 @@ def resolve_dynamic_parameter(value: Any, now: datetime) -> Any:
     }
     if value in tokens:
         return tokens[value]
+    if value.startswith("$today_minus_") and value.endswith("d"):
+        try:
+            days = int(value.removeprefix("$today_minus_").removesuffix("d"))
+        except ValueError as exc:
+            raise ValueError(f"Unknown dynamic source parameter token: {value}") from exc
+        if not 0 <= days <= 730:
+            raise ValueError(f"Dynamic day offset is outside bounds: {days}")
+        return (seoul_date - timedelta(days=days)).strftime("%Y%m%d")
     if value.startswith("$month_minus_"):
         try:
             months = int(value.removeprefix("$month_minus_"))
@@ -372,6 +379,7 @@ class PublicDataAdapter(SourceAdapter):
             )
         items: list[RawItem] = []
         errors: list[str] = []
+        rotation_notices: list[str] = []
         authentication_errors = 0
         authoritative_watermarks: list[datetime] = []
         missing_watermark_count = 0
@@ -459,7 +467,7 @@ class PublicDataAdapter(SourceAdapter):
                             required_pages,
                             page_start + page_window_size - 1,
                         )
-                        errors.append(
+                        rotation_notices.append(
                             f"{operation_key}:rotating_page_batch="
                             f"{page_batch_index + 1}/{page_batch_count}"
                         )
@@ -521,7 +529,7 @@ class PublicDataAdapter(SourceAdapter):
             if run_budget_exhausted:
                 break
         if rotation_notice is not None and items:
-            errors.append(rotation_notice)
+            rotation_notices.append(rotation_notice)
         if errors and not items:
             return FetchResult(
                 status=(
@@ -555,5 +563,8 @@ class PublicDataAdapter(SourceAdapter):
             ),
             items=tuple(items),
             reason=reason,
-            partial_errors=tuple(errors),
+            # Rotation markers remain in run metadata so normalizers can tell
+            # a complete planned cohort from an accidental truncated fetch.
+            # They do not make an otherwise successful source run degraded.
+            partial_errors=tuple((*rotation_notices, *errors)),
         )

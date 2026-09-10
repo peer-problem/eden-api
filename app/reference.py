@@ -8,7 +8,11 @@ from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session
 
 from app.domain.ids import stable_eden_id
-from app.inventory import official_notice_targets, seed_source_inventories
+from app.inventory import (
+    kto_market_trend_target,
+    official_notice_targets,
+    seed_source_inventories,
+)
 from app.products.formulas import (
     CROWD_FORMULA_VERSION,
     INBOUND_FORMULA_VERSION,
@@ -130,6 +134,11 @@ def seed_reference_data(session: Session) -> None:
     for source in SOURCES:
         interval, max_age = CADENCE_SECONDS[source.cadence_tier]
         expected_publish_lag = EXPECTED_PUBLISH_LAG_SECONDS[source.cadence_tier]
+        if source.source_id == "SRC_KTO_REGIONAL_VISITORS":
+            # The official daily series is published about one month later.
+            # Keep daily polling, but evaluate freshness against that release lag.
+            expected_publish_lag = 31 * 24 * 3600
+            max_age = 34 * 24 * 3600
         refresh_scope: dict[str, Any] = public_data_refresh_scope(
             source.source_id,
             [code for code in active_area_codes if code is not None],
@@ -147,20 +156,7 @@ def seed_reference_data(session: Session) -> None:
         elif source.source_id == "SRC_KETA":
             refresh_scope = {"limit": 20}
         elif source.source_id == "SRC_KTO_MARKET_TREND":
-            refresh_scope = {
-                "targets": [
-                    {
-                        "countries": list(DEFAULT_COUNTRIES),
-                        "source_type": "tourism_board",
-                        "source_scope": "korean",
-                        "source_name": "한국관광공사 관광데이터랩",
-                        "url": "https://datalab.visitkorea.or.kr/site/portal/ex/bbs/List.do?cbIdx=1132",
-                        "languages": ["ko"],
-                        "max_items": 10,
-                        "alert_type": "market_trend",
-                    }
-                ]
-            }
+            refresh_scope = {"targets": [kto_market_trend_target()]}
         values = {
             "source_id": source.source_id,
             "owner_name": source.owner_name,

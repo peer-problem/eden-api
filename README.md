@@ -1,18 +1,24 @@
 # EDEN API
 
-EDEN은 한국 관광과 방한시장 데이터를 수집하고 정규화한 뒤 FastAPI와 읽기 전용 웹
-대시보드로 제공하는 서비스입니다. 공개 API 기본 경로는 `/v1`이며 대시보드는 같은
-origin의 `/dashboard/`에서 동작합니다.
+EDEN은 한국 관광과 방한시장 데이터를 수집하고 정규화해 제공하는 API 전용 서비스입니다.
+
+- [공식 API 문서](https://api.edenapi.org/docs): 요청 파라미터와 응답 스키마 및 실제 호출
+- [OpenAPI JSON](https://api.edenapi.org/openapi.json): 클라이언트 타입 생성에 사용할 명세
+- 공개 API 기본 경로: `https://api.edenapi.org/v1`
+
+대시보드 소스와 정적 호스팅은 제거했습니다. 별도 프론트는 Vercel 등에서 독립적으로
+개발하고 배포할 수 있습니다. 현재 API는 인증 없이 공개하며 쿠키를 사용하지 않는
+cross-origin GET과 POST를 허용합니다. `fetch`에 `credentials: 'include'`를 설정하지 마세요.
 
 ## 구성
 
 - FastAPI는 MariaDB에 게시된 현재 snapshot만 조회합니다. 공개 요청 중 외부 원천이나
   LLM을 호출하지 않습니다.
 - scheduler는 원천 수집과 정규화 및 snapshot 게시를 담당합니다.
-- React와 TypeScript 기반 대시보드는 EDEN의 `/v1/*`만 호출합니다. 값과 순위 및
-  freshness를 브라우저에서 다시 계산하지 않습니다.
-- Nginx는 `/dashboard/`, `/v1/*`, `/openapi.json`만 공개합니다. `/internal/*`는
-  loopback 요청만 허용합니다.
+- Nginx는 `/`, `/docs`, `/v1/*`, `/openapi.json`을 공개합니다. `/`는 문서로 이동합니다.
+  `/internal/*`는 loopback 요청만 허용합니다. 기존 `/dashboard/`와 `/assets/`는 410입니다.
+- 문서는 FastAPI의 Swagger UI를 사용합니다. 별도 Node 서버나 프론트 빌드가 없으며
+  문서용 Swagger UI 자산만 브라우저가 CDN에서 로드합니다.
 - API 읽기와 ingestion 쓰기 및 migration은 서로 다른 MariaDB 계정을 사용합니다.
 
 ## 공개 API
@@ -35,7 +41,9 @@ origin의 `/dashboard/`에서 동작합니다.
 ```bash
 curl -fsS https://api.edenapi.org/openapi.json
 curl -fsS --get https://api.edenapi.org/v1/trends \
-  --data-urlencode 'keyword=제주' \
+  --data-urlencode 'keyword=Korea travel' \
+  --data 'country=US' \
+  --data 'social_sources=youtube' \
   --data 'period=7d' \
   --data 'time_unit=day' \
   --data 'limit=10'
@@ -48,6 +56,7 @@ curl -fsS --get https://api.edenapi.org/v1/trends \
 
 API endpoint 구현 여부와 실제 데이터 가용성은 서로 다릅니다.
 
+- 트렌드는 미리 수집한 키워드만 조회합니다. 지원 키워드와 국가 조합은 공식 문서를 따릅니다.
 - YouTube는 검색 결과 영상의 공개 지표를 집계합니다. 검색 국가 조건은 시청자 국적을
   나타내지 않으므로 국가별 실제 관심도로 사용하지 않습니다.
 - NAVER 검색 추세 adapter가 구현되어 있습니다. 저장 및 재게시 권리가 확인되기 전에는
@@ -63,7 +72,7 @@ API endpoint 구현 여부와 실제 데이터 가용성은 서로 다릅니다.
   `unavailable`로 표시합니다.
   원문 공지의 가용성과는 별도로 처리합니다.
 - 한국은행 ECOS의 일반여행 수지는 한국 전체의 월간 수입에서 지출을 뺀 값입니다.
-  국가별 양자 수지가 아니며 방한시장 화면에서 발표월과 함께 별도로 표시합니다.
+  국가별 양자 수지가 아니며 방한시장 응답에서 발표월과 함께 제공합니다.
 
 따라서 HTTP 200이나 endpoint 목록만으로 모든 원천 연동이 끝났다고 판단하지 않습니다.
 응답의 `meta.availability`, `meta.reason`, `meta.sources`를 함께 확인해야 합니다.
@@ -88,15 +97,7 @@ uv sync --frozen
 개발 연결도 MariaDB의 서버 인증서와 비밀번호를 검증합니다. CA 파일이나 TLS 검증 해제
 설정은 사용하지 않습니다. Mac에는 MariaDB Connector/C 3.4 이상이 필요합니다.
 
-대시보드 개발 서버는 별도 terminal에서 실행합니다.
-
-```bash
-npm ci --prefix dashboard
-npm run dev --prefix dashboard
-```
-
-브라우저 주소는 `http://127.0.0.1:4173/dashboard/`입니다. 개발 서버는 `/v1` 요청을
-loopback의 API 8000 포트로 전달합니다.
+로컬 문서는 `http://127.0.0.1:8000/docs`에서 확인합니다. Node와 npm은 필요하지 않습니다.
 
 같은 개발 DB 연결이 필요한 도구는 launcher를 통해 실행합니다.
 
@@ -131,18 +132,6 @@ uv lock --check
 uv run ruff check app scripts migrations tests
 uv run pytest -q
 ```
-
-대시보드는 현재 API에서 타입을 생성하고 상태 렌더링 및 브라우저 동작을 검사합니다.
-
-```bash
-npm run check:types --prefix dashboard
-npm test --prefix dashboard
-npm run build --prefix dashboard
-npm run test:browser --prefix dashboard
-```
-
-4173 포트를 다른 작업이 사용 중이면 `EDEN_BROWSER_TEST_PORT=4183 npm run test:browser
---prefix dashboard`로 검사 전용 포트를 선택할 수 있습니다.
 
 ## DB migration
 
@@ -193,13 +182,15 @@ npm run test:browser --prefix dashboard
 ./.ops/deploy.sh soak-7d
 ```
 
-`env-check`는 환경값 생성만 검사합니다. `preflight`는 설정 생성과 build 및 개발 DB 연결을
+`env-check`는 환경값 생성만 검사합니다. `preflight`는 설정 생성과 백엔드 검증 및 개발 DB 연결을
 검사하며 운영 배포를 수행하지 않습니다. `deploy`가 운영 설정과 release를 함께 반영합니다.
 VPS host fingerprint와 DB TLS 및 계정 분리도 배포 gate에 포함됩니다.
 
 release에는 `.agents/`, `.env`, cache와 로컬 테스트 산출물을 포함하지 않습니다. TLS
 인증서가 없으면 Nginx는 공개 API를 fail-closed 상태로 유지합니다. readiness나 smoke
-test가 실패하면 이전 API release와 대시보드 symlink 및 운영 설정을 복구합니다.
+test가 실패하면 이전 API release와 운영 설정을 복구합니다. 성공한 배포는 기존 대시보드 정적
+파일과 과거 release의 dashboard 디렉터리 및 전용 Nginx 로그를 제거합니다.
+삭제된 구형 스크립트를 호출하던 중복 soak timer와 maintenance timer도 제거합니다.
 
 이 프로젝트는 DB backup 파일을 생성하거나 보관하지 않습니다. `backup`과 `restore`
 하위 명령은 정책상 비활성화되어 있습니다. Phase 2 soak는 24시간 Phase 1 증거와 분리된
@@ -239,7 +230,8 @@ test가 실패하면 이전 API release와 대시보드 symlink 및 운영 설�
 원천 출처도 임의 삭제하지 않는다. 오래된 정리 대상이 많이 쌓여 있으면 여러 실행에 걸쳐
 처리한다. 배포는 과거 데이터 전체 적재나 강제 집계 재생성을 자동 실행하지 않는다.
 
-지역 방문 데이터는 최근 7일을 갱신한다. 월간 전국 비교 통계는 한 달의 모든 지역과 지표를
+지역 방문 데이터는 약 30일의 발표 지연을 반영해 30~39일 전의 10일 구간을 갱신한다.
+신선도 기준은 예상 발표 지연 31일에 3일의 여유를 더한 34일이다. 월간 전국 비교 통계는 한 달의 모든 지역과 지표를
 묶어 순환 수집한다. 중간에 제한에 걸리면 일부 지역으로 전국 지수를 다시 계산하지 않고
 기존 값을 유지한다. 집계 조회 범위는 방한 비교 48개월, 지역 방문 731일로 제한하며 기존
 역사 데이터 자체를 삭제하지는 않는다.

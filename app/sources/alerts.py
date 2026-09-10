@@ -13,7 +13,7 @@ from dateutil.parser import isoparse
 
 from app.domain.enums import SourceStatus
 from app.sources.base import FetchReasonCode, FetchResult, RawItem, SourceAdapter
-from app.sources.http import SecureSourceClient
+from app.sources.http import SecureSourceClient, SourceRunBudgetExceeded
 
 NOTICE_TERMS = (
     "공지",
@@ -63,9 +63,18 @@ SKIP_EXTENSIONS = (
     ".pdf",
 )
 DATE_PATTERN = re.compile(r"(?<!\d)(20\d{2})[./-](0?[1-9]|1[0-2])[./-](0?[1-9]|[12]\d|3[01])(?!\d)")
-MOFA_VIEW_PATTERN = re.compile(
-    r'''^\s*(?:return\s+)?f_view\(\s*['"](\d{1,20})['"]\s*\)\s*;'''
+PUBLISHED_LABEL_PATTERN = re.compile(
+    r"^(?:작성일|등록일|등록일자|게시일|published(?:\s+at)?|publication\s+date|date)$",
+    re.IGNORECASE,
 )
+MOFA_VIEW_PATTERN = re.compile(r"""^\s*(?:return\s+)?f_view\(\s*['"](\d{1,20})['"]\s*\)\s*;""")
+LEGACY_KTO_MARKET_URL = "https://datalab.visitkorea.or.kr/site/portal/ex/bbs/List.do?cbIdx=1132"
+KTO_MARKET_URL = "https://datalab.visitkorea.or.kr/site/portal/ex/bbs/List.do?cbIdx=1602"
+KTO_BOOTSTRAP_URL = "https://datalab.visitkorea.or.kr/datalab/portal/main/getMainForm.do"
+
+
+class NoticePublicationDateMissing(ValueError):
+    pass
 
 
 def sanitize_html(payload: bytes) -> str:
@@ -98,9 +107,7 @@ def extract_notice_links(
     anchors = soup.find_all("a", href=True)
     if urlparse(base_url).path.endswith("/list.do"):
         anchors.sort(
-            key=lambda anchor: (
-                MOFA_VIEW_PATTERN.match(str(anchor.get("onclick", ""))) is None
-            )
+            key=lambda anchor: MOFA_VIEW_PATTERN.match(str(anchor.get("onclick", ""))) is None
         )
     for anchor in anchors:
         title = " ".join(anchor.get_text(" ", strip=True).split())
@@ -140,7 +147,62 @@ def _looks_like_listing(url: str) -> bool:
     )
 
 
-def _published_at(soup: BeautifulSoup, text: str, fallback: datetime) -> datetime:
+def _countries_from_title(title: str, target: dict[str, Any]) -> list[str] | None:
+    configured = target.get("country_title_terms")
+    if not isinstance(configured, dict):
+        return None
+    searchable = title.casefold()
+    return [
+        str(country).upper()
+        for country, raw_terms in configured.items()
+        if isinstance(raw_terms, list)
+        and any(
+            isinstance(term, str)
+            and (
+                re.search(rf"(?<![a-z]){re.escape(term.casefold())}(?![a-z])", searchable)
+                if term.isascii()
+                else term.casefold() in searchable
+            )
+            for term in raw_terms
+        )
+    ]
+
+
+def _target_urls(source_id: str, target: dict[str, Any]) -> tuple[str | None, str]:
+    url = str(target["url"])
+    bootstrap_url = target.get("bootstrap_url")
+    bootstrap = bootstrap_url if isinstance(bootstrap_url, str) and bootstrap_url else None
+    if source_id == "SRC_KTO_MARKET_TREND" and url == LEGACY_KTO_MARKET_URL:
+        return KTO_BOOTSTRAP_URL, KTO_MARKET_URL
+    return bootstrap, url
+
+
+def _target_item_limit(target: dict[str, Any]) -> int:
+    try:
+        return min(max(int(target.get("max_items", 5)), 1), 20)
+    except (TypeError, ValueError):
+        return 5
+
+
+def _parse_published_datetime(candidate: str) -> datetime | None:
+    normalized = " ".join(candidate.split())
+    try:
+        parsed = isoparse(normalized)
+    except (TypeError, ValueError, OverflowError):
+        match = DATE_PATTERN.search(normalized)
+        if match is None:
+            return None
+        normalized = (
+            f"{normalized[: match.start()]}{'-'.join(match.groups())}{normalized[match.end() :]}"
+        )
+        try:
+            parsed = isoparse(normalized)
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+def _published_at(soup: BeautifulSoup) -> datetime | None:
     candidates: list[str] = []
     for selector, attribute in (
         ('meta[property="article:published_time"]', "content"),
@@ -151,16 +213,23 @@ def _published_at(soup: BeautifulSoup, text: str, fallback: datetime) -> datetim
         node = soup.select_one(selector)
         if node and node.get(attribute):
             candidates.append(str(node.get(attribute)))
-    for candidate in candidates:
-        try:
-            parsed = isoparse(candidate)
-        except (TypeError, ValueError, OverflowError):
+    for label in soup.find_all(["dt", "th"]):
+        if not PUBLISHED_LABEL_PATTERN.match(label.get_text(" ", strip=True)):
             continue
-        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
-    match = DATE_PATTERN.search(text)
-    if match:
-        return datetime(*(int(part) for part in match.groups()), tzinfo=UTC)
-    return fallback
+        value = label.find_next_sibling("dd" if label.name == "dt" else "td")
+        if value is not None:
+            candidates.append(value.get_text(" ", strip=True))
+    candidates.extend(
+        node.get_text(" ", strip=True)
+        for node in soup.select(
+            ".board-view table.table-type2 th span.ml10, .board_view table.table-type2 th span.ml10"
+        )
+        if DATE_PATTERN.search(node.get_text(" ", strip=True))
+    )
+    for candidate in candidates:
+        if parsed := _parse_published_datetime(candidate):
+            return parsed
+    return None
 
 
 def parse_notice_detail(
@@ -194,7 +263,9 @@ def parse_notice_detail(
     title = " ".join(title.split())[:1000]
     if not title:
         raise ValueError("Notice detail title was empty")
-    published_at = _published_at(soup, body, observed_at)
+    published_at = _published_at(soup)
+    if published_at is None:
+        raise NoticePublicationDateMissing("Official notice publication date was missing")
     body = body[:500_000]
     return RawItem(
         external_key=hashlib.sha256(canonical_url.encode()).hexdigest(),
@@ -217,11 +288,11 @@ def parse_notice_detail(
     )
 
 
-def _feed_datetime(entry: Any, observed_at: datetime) -> datetime:
+def _feed_datetime(entry: Any) -> datetime | None:
     value = entry.get("published_parsed") or entry.get("updated_parsed")
     if value:
         return datetime(*value[:6], tzinfo=UTC)
-    return observed_at
+    return None
 
 
 def parse_notice_feed(
@@ -231,6 +302,7 @@ def parse_notice_feed(
     allowed_hosts: set[str],
     observed_at: datetime,
     limit: int,
+    error_sink: list[str] | None = None,
 ) -> list[RawItem]:
     parsed = feedparser.parse(payload)
     items: list[RawItem] = []
@@ -242,7 +314,11 @@ def parse_notice_feed(
         summary = sanitize_html(str(entry.get("summary", "")).encode())[:500_000]
         if not summary:
             summary = title
-        published_at = _feed_datetime(entry, observed_at)
+        published_at = _feed_datetime(entry)
+        if published_at is None:
+            if error_sink is not None:
+                error_sink.append("publication_date_missing")
+            continue
         items.append(
             RawItem(
                 external_key=hashlib.sha256(canonical_url.encode()).hexdigest(),
@@ -300,26 +376,34 @@ class OfficialNoticeAdapter(SourceAdapter):
         now = datetime.now(UTC)
         items: list[RawItem] = []
         errors: list[str] = []
-        rotation_notice: str | None = None
-        target_limit = max(1, self.client.max_requests // 6)
+        max_target_cost = max(
+            (
+                _target_item_limit(target) + 2 + int(bool(target.get("bootstrap_url")))
+                for target in targets
+                if isinstance(target, dict)
+            ),
+            default=7,
+        )
+        target_limit = max(1, self.client.max_requests // max_target_cost)
         if len(targets) > target_limit:
             batch_count = math.ceil(len(targets) / target_limit)
             batch_index = int(now.timestamp()) // 3600 % batch_count
             start = batch_index * target_limit
             targets = targets[start : start + target_limit]
-            rotation_notice = (
-                f"source_run:rotating_target_batch={batch_index + 1}/{batch_count}"
-            )
+        budget_exhausted = False
         for index, target in enumerate(targets):
             if not isinstance(target, dict) or not target.get("url"):
                 errors.append(f"target[{index}]:invalid_config")
                 continue
-            url = str(target["url"])
+            bootstrap_url, url = _target_urls(self.source_id, target)
             target_key = str(target.get("source_name") or urlparse(url).hostname or index)
-            limit = min(max(int(target.get("max_items", 5)), 1), 20)
+            limit = _target_item_limit(target)
             try:
+                if bootstrap_url is not None:
+                    self.client.get(bootstrap_url)
                 payload, content_type, final_url = self.client.get(url)
                 if "rss" in content_type.lower() or "xml" in content_type.lower():
+                    feed_errors: list[str] = []
                     feed_items = parse_notice_feed(
                         payload,
                         final_url,
@@ -327,8 +411,14 @@ class OfficialNoticeAdapter(SourceAdapter):
                         self.allowed_hosts,
                         now,
                         limit,
+                        feed_errors,
                     )
+                    errors.extend(f"{target_key}:feed:{error}" for error in feed_errors)
                     if not feed_items:
+                        if feed_errors:
+                            raise NoticePublicationDateMissing(
+                                "Official notice feed publication date was missing"
+                            )
                         raise ValueError("Feed did not contain allowlisted notice entries")
                     items.extend(feed_items)
                     continue
@@ -347,6 +437,12 @@ class OfficialNoticeAdapter(SourceAdapter):
                 while queue and target_items < limit and request_count < limit * 4:
                     detail_url, title_hint, depth = queue.pop(0)
                     try:
+                        detail_target = target
+                        countries = _countries_from_title(title_hint, target)
+                        if countries is not None:
+                            if not countries:
+                                continue
+                            detail_target = {**target, "countries": countries}
                         detail, _detail_type, detail_final_url = self.client.get(detail_url)
                         request_count += 1
                         canonical = _canonical_url(
@@ -374,17 +470,34 @@ class OfficialNoticeAdapter(SourceAdapter):
                             queue[0:0] = next_links
                             continue
                         items.append(
-                            parse_notice_detail(detail, canonical, title_hint, target, now)
+                            parse_notice_detail(
+                                detail,
+                                canonical,
+                                title_hint,
+                                detail_target,
+                                now,
+                            )
                         )
                         target_items += 1
+                    except NoticePublicationDateMissing:
+                        errors.append(f"{target_key}:detail:publication_date_missing")
+                    except SourceRunBudgetExceeded:
+                        errors.append(f"{target_key}:detail:SourceRunBudgetExceeded")
+                        budget_exhausted = True
+                        break
                     except Exception as exc:
                         errors.append(f"{target_key}:detail:{type(exc).__name__}")
                 if target_items == 0:
                     errors.append(f"{target_key}:no_notice_details")
+                if budget_exhausted:
+                    break
+            except NoticePublicationDateMissing:
+                errors.append(f"{target_key}:index:publication_date_missing")
+            except SourceRunBudgetExceeded:
+                errors.append(f"{target_key}:index:SourceRunBudgetExceeded")
+                break
             except Exception as exc:
                 errors.append(f"{target_key}:index:{type(exc).__name__}")
-        if rotation_notice is not None and items:
-            errors.append(rotation_notice)
         if not items:
             return FetchResult(
                 status=SourceStatus.DEGRADED,

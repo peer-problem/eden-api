@@ -7,12 +7,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import Engine
 from starlette.responses import Response
 
 from app import __version__
+from app.api.documentation import DESCRIPTION, TAGS
 from app.api.v1.common import ErrorDetail, ErrorResponse
 from app.api.v1.routes import router as v1_router
 from app.config import Settings, get_settings
@@ -73,14 +75,19 @@ def create_app(
     app = FastAPI(
         title="EDEN API",
         summary="한국 관광 트렌드와 방한시장 데이터 API",
-        description=(
-            "EDEN DB에 주기적으로 수집하고 계산한 현재 상태만 반환합니다. API 요청은 외부 "
-            "데이터 수집을 유발하지 않습니다. 관광지 content_id는 EDEN ID가 기준이며 "
-            "기존 TourAPI content ID도 별칭으로 조회할 수 있습니다."
-        ),
+        description=DESCRIPTION,
         version=__version__,
-        docs_url=None,
+        docs_url="/docs",
         redoc_url=None,
+        swagger_ui_oauth2_redirect_url=None,
+        swagger_ui_parameters={
+            "docExpansion": "list",
+            "defaultModelsExpandDepth": -1,
+            "displayRequestDuration": True,
+            "filter": True,
+            "validatorUrl": None,
+        },
+        openapi_tags=TAGS,
         openapi_url="/openapi.json",
         lifespan=lifespan,
     )
@@ -91,7 +98,19 @@ def create_app(
         max_body_bytes=resolved_settings.MAX_RESPONSE_BODY_BYTES,
     )
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type", "X-Request-ID", "X-EDEN-Pilot"],
+        expose_headers=["X-Request-ID"],
+    )
     app.include_router(v1_router)
+
+    @app.get("/", include_in_schema=False)
+    def documentation_home() -> RedirectResponse:
+        return RedirectResponse("/docs", status_code=307)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:

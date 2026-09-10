@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -27,6 +28,7 @@ VISITOR_FORECAST_SOURCE = "SRC_KTO_VISITOR_FORECAST"
 WEATHER_SOURCE = "SRC_KMA_FORECAST"
 FESTIVAL_SOURCE = "SRC_FESTIVAL"
 HOLIDAY_SOURCE = "SRC_HOLIDAY"
+_AREA_NAME_BOUNDARY = r"0-9A-Za-z가-힣"
 
 
 def _upsert_forecast_input(
@@ -159,6 +161,16 @@ def normalize_visitor_forecast_run(session_factory: sessionmaker[Session], run_i
     return normalized
 
 
+def _contains_area_name(text: str, name: str) -> bool:
+    return (
+        re.search(
+            rf"(?<![{_AREA_NAME_BOUNDARY}]){re.escape(name)}(?![{_AREA_NAME_BOUNDARY}])",
+            text,
+        )
+        is not None
+    )
+
+
 def _match_area(session: Session, *text_values: str | None) -> str:
     haystack = " ".join(value for value in text_values if value)
     areas = session.execute(
@@ -166,7 +178,11 @@ def _match_area(session: Session, *text_values: str | None) -> str:
         .where(Area.active.is_(True))
         .order_by((Area.level == "sigungu").desc(), Area.name_ko)
     ).all()
-    matches = [row for row in areas if row.name_ko and row.name_ko in haystack]
+    matches = [
+        row
+        for row in areas
+        if row.name_ko and _contains_area_name(haystack, row.name_ko)
+    ]
     if not matches:
         raise ValueError("festival area could not be mapped from its official address")
     child_matches = [row for row in matches if row.parent_area_id is not None]
@@ -174,13 +190,87 @@ def _match_area(session: Session, *text_values: str | None) -> str:
         return child_matches[0].eden_area_id
     parent_names = {row.eden_area_id: row.name_ko for row in areas}
     parent_matches = [
-        row for row in child_matches if parent_names.get(row.parent_area_id, "") in haystack
+        row
+        for row in child_matches
+        if (parent_name := parent_names.get(row.parent_area_id, ""))
+        and _contains_area_name(haystack, parent_name)
     ]
     if len(parent_matches) == 1:
         return parent_matches[0].eden_area_id
+    if len(parent_matches) > 1:
+        # MOIS represents some city and district names at the same stored level.
+        # Their administrative codes still retain the hierarchy, for example
+        # Seongnam 4113 and Sujeong-gu 41131. Prefer the one code that extends
+        # every other matched code while leaving true siblings ambiguous.
+        code_prefixes = {
+            row.eden_area_id: str(getattr(row, "administrative_code", "") or "").rstrip(
+                "0"
+            )
+            for row in parent_matches
+        }
+        nested_matches = [
+            row
+            for row in parent_matches
+            if code_prefixes[row.eden_area_id]
+            and all(
+                row.eden_area_id == other.eden_area_id
+                or (
+                    code_prefixes[other.eden_area_id]
+                    and code_prefixes[row.eden_area_id].startswith(
+                        code_prefixes[other.eden_area_id]
+                    )
+                    and len(code_prefixes[row.eden_area_id])
+                    > len(code_prefixes[other.eden_area_id])
+                )
+                for other in parent_matches
+            )
+        ]
+        if len(nested_matches) == 1:
+            return nested_matches[0].eden_area_id
     if not child_matches and len(matches) == 1:
         return matches[0].eden_area_id
     raise ValueError("official address maps to multiple EDEN areas")
+
+
+def _match_festival_area(
+    session: Session,
+    road_address: str | None,
+    lot_address: str | None,
+    venue: str | None,
+) -> str:
+    address_values = [value for value in (road_address, lot_address) if value]
+    resolved_addresses: list[str] = []
+    address_errors: list[ValueError] = []
+    for value in address_values:
+        try:
+            resolved_addresses.append(_match_area(session, value))
+        except ValueError as exc:
+            address_errors.append(exc)
+
+    unique_addresses = set(resolved_addresses)
+    if len(unique_addresses) > 1:
+        raise ValueError("official address maps to multiple EDEN areas")
+    if len(unique_addresses) == 1:
+        resolved = next(iter(unique_addresses))
+        if any("multiple EDEN areas" in str(exc) for exc in address_errors):
+            combined = _match_area(session, *address_values)
+            if combined != resolved:
+                raise ValueError("official address maps to multiple EDEN areas")
+        return resolved
+
+    if len(address_values) > 1:
+        try:
+            return _match_area(session, *address_values)
+        except ValueError as exc:
+            if "multiple EDEN areas" in str(exc):
+                raise
+    if any("multiple EDEN areas" in str(exc) for exc in address_errors):
+        raise ValueError("official address maps to multiple EDEN areas")
+    if venue:
+        return _match_area(session, venue)
+    if address_errors:
+        raise address_errors[0]
+    raise ValueError("festival area could not be mapped from its official address")
 
 
 def normalize_festival_run(session_factory: sessionmaker[Session], run_id: str) -> int:
@@ -210,7 +300,7 @@ def normalize_festival_run(session_factory: sessionmaker[Session], run_id: str) 
                             raise ValueError("festival end date precedes its start date")
                         original_days = (end - start).days + 1
                         bounded_days = min(original_days, 60)
-                        area_id = _match_area(
+                        area_id = _match_festival_area(
                             session,
                             _text(row, "rdnmadr", "도로명주소"),
                             _text(row, "lnmadr", "지번주소"),

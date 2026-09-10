@@ -5,14 +5,16 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.sources.plans import (
+    KMA_OPERATIONS_PER_RUN,
     KTO_ADMINISTRATIVE_AREA_CODES,
     KTO_RELATED_PLACES_PER_RUN,
     PUBLIC_DATA_REFRESH_SCOPES,
     kto_related_place_operations,
     kto_sigungu_operations,
+    public_data_refresh_scope,
     social_refresh_scope,
 )
-from app.sources.public_data import _rotating_operation_batch
+from app.sources.public_data import _rotating_operation_batch, resolve_dynamic_parameter
 
 
 def test_regional_visitor_scope_stays_within_recent_bounded_window() -> None:
@@ -22,8 +24,32 @@ def test_regional_visitor_scope_stays_within_recent_bounded_window() -> None:
         "metcoRegnVisitrDDList",
         "locgoRegnVisitrDDList",
     }
-    assert all(operation["params"]["startYmd"] == "$today_minus_7d" for operation in operations)
+    assert all(operation["params"]["startYmd"] == "$today_minus_39d" for operation in operations)
+    assert all(operation["params"]["endYmd"] == "$today_minus_30d" for operation in operations)
     assert all(operation["max_pages"] == 20 for operation in operations)
+
+
+def test_dynamic_day_offsets_support_lag_aware_windows() -> None:
+    now = datetime(2026, 9, 10, 16, 0, tzinfo=UTC)
+
+    assert resolve_dynamic_parameter("$today_minus_39d", now) == "20260803"
+    assert resolve_dynamic_parameter("$today_minus_30d", now) == "20260812"
+    assert resolve_dynamic_parameter("$today", now) == "20260911"
+
+
+def test_kma_scope_rotates_complete_province_forecasts_within_record_budget() -> None:
+    codes = [f"{prefix}00000000" for prefix in KTO_ADMINISTRATIVE_AREA_CODES]
+    area_ids = {code: f"area-{code[:2]}" for code in codes}
+
+    scope = public_data_refresh_scope("SRC_KMA_FORECAST", codes, area_ids)
+
+    assert len(scope["operations"]) == len(KTO_ADMINISTRATIVE_AREA_CODES)
+    assert scope["max_operations_per_run"] == KMA_OPERATIONS_PER_RUN == 10
+    assert all(
+        operation["params"]["numOfRows"] == 1000
+        and operation["max_pages"] == 1
+        for operation in scope["operations"]
+    )
 
 
 def test_source_watermarks_use_published_response_fields() -> None:

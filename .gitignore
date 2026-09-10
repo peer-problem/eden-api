@@ -7,7 +7,6 @@ AGENTS.md
 node_modules/
 playwright-report/
 test-results/
-dashboard/src/api/schema.ts
 __pycache__/
 *.py[cod]
 .ruff_cache/

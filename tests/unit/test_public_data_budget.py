@@ -98,7 +98,7 @@ def test_record_cap_stops_before_requesting_an_incomplete_next_page() -> None:
     assert "source_run:record_limit_exceeded" in result.partial_errors
 
 
-def test_rotating_operation_batch_is_never_reported_as_complete() -> None:
+def test_planned_operation_rotation_is_available_without_failure_reason() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=_response(1), request=request)
 
@@ -109,20 +109,28 @@ def test_rotating_operation_batch_is_never_reported_as_complete() -> None:
             "max_operations_per_run": 20,
             "rotation_seconds": 3600,
             "operations": [
-                {"operation": f"operation-{index}", "max_pages": 1}
+                {
+                    "operation": f"operation-{index}",
+                    "max_pages": 1,
+                    "watermark": {
+                        "response_field": "baseYmd",
+                        "format": "%Y%m%d",
+                    },
+                }
                 for index in range(45)
             ],
         }
     )
     adapter.client.close()
 
-    assert result.status is SourceStatus.DEGRADED
+    assert result.status is SourceStatus.AVAILABLE
+    assert result.reason is None
     assert len(result.items) <= 20
     assert adapter.client.request_count <= 20
     assert any("rotating_operation_batch" in error for error in result.partial_errors)
 
 
-def test_rotating_page_window_is_partial_and_does_not_repeat_only_page_one() -> None:
+def test_planned_page_rotation_is_available_and_does_not_repeat_only_page_one() -> None:
     requested_pages: list[int] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -144,13 +152,18 @@ def test_rotating_page_window_is_partial_and_does_not_repeat_only_page_one() -> 
                     "max_pages": 3,
                     "rotate_pages": True,
                     "rotation_seconds": 10**12,
+                    "watermark": {
+                        "response_field": "baseYmd",
+                        "format": "%Y%m%d",
+                    },
                 }
             ]
         }
     )
     adapter.client.close()
 
-    assert result.status is SourceStatus.DEGRADED
+    assert result.status is SourceStatus.AVAILABLE
+    assert result.reason is None
     assert len(result.items) == 2
     assert len(requested_pages) <= 3
     assert len({item.external_key for item in result.items}) == 2

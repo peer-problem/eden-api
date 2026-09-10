@@ -1185,6 +1185,18 @@ class MariaDBReadRepository:
             session,
             _request_source_ids("market_alerts", scope),
         )
+        if source_scope == "local":
+            # The current collector covers Korean embassy bulletin boards.
+            # Their global success must not imply local agencies are refreshed.
+            source_rows = [
+                {
+                    **row,
+                    "status": SourceStatus.UNAVAILABLE,
+                    "reason": "현지 기관 공지의 자동 갱신은 지원하지 않습니다. "
+                    "현재 한국 공관의 공식 게시판만 수집합니다.",
+                }
+                for row in source_rows
+            ]
         country_id = session.scalar(
             select(Country.eden_country_id).where(Country.iso_alpha2 == country)
         )

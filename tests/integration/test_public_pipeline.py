@@ -1009,6 +1009,26 @@ def test_degraded_source_can_also_expose_stale_serving_data(
     assert payload["meta"]["stale"] is True
 
 
+def test_embassy_success_does_not_claim_local_agency_coverage(pipeline: Pipeline) -> None:
+    with pipeline.session_factory.begin() as session:
+        state = session.scalar(
+            select(SourceState).where(
+                SourceState.source_id == "SRC_EMBASSY_NOTICE",
+                SourceState.scope_key == "global",
+            )
+        )
+        assert state is not None
+        state.status = SourceStatus.AVAILABLE
+        state.data_as_of = datetime.now(UTC).replace(tzinfo=None)
+        state.reason = None
+    response = pipeline.client.get("/v1/markets/JP/alerts?source_scope=local")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["availability"] == "unavailable"
+    assert payload["meta"]["sources"][0]["status"] == "unavailable"
+    assert "현지 기관" in payload["meta"]["sources"][0]["reason"]
+
+
 def test_alert_without_requested_translation_preserves_original_text(
     pipeline: Pipeline,
 ) -> None:

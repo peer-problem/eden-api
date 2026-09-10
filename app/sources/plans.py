@@ -8,6 +8,7 @@ from typing import Any
 DOCUMENTATION_VERIFIED_AT = datetime(2026, 9, 10, tzinfo=UTC)
 
 KTO_RELATED_PLACES_PER_RUN = 20
+KMA_OPERATIONS_PER_RUN = 10
 PUBLIC_DATA_OPERATIONS_PER_RUN = 20
 SEMAS_PLACES_PER_RUN = 10
 
@@ -193,8 +194,12 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "params": {
                     "MobileOS": "ETC",
                     "MobileApp": "EDEN",
-                    "startYmd": "$today_minus_7d",
-                    "endYmd": "$yesterday",
+                    # The source publishes daily observations about one month
+                    # after the observed date. A short lag-aware window keeps
+                    # both national and local operations complete under the
+                    # shared request, byte and record budgets.
+                    "startYmd": "$today_minus_39d",
+                    "endYmd": "$today_minus_30d",
                 },
                 "watermark": {
                     "response_field": "baseYmd",
@@ -250,7 +255,7 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
     },
     "SRC_KMA_FORECAST": {
         "rotate_operations": True,
-        "max_operations_per_run": PUBLIC_DATA_OPERATIONS_PER_RUN,
+        "max_operations_per_run": KMA_OPERATIONS_PER_RUN,
         "rotation_seconds": 6 * 3600,
         "operations": [],
     },
@@ -450,6 +455,10 @@ def public_data_refresh_scope(
                     "base_time": "$kma_base_time",
                     "nx": grid[0],
                     "ny": grid[1],
+                    # A current village forecast contains about 980 rows.
+                    # Fetch it in one complete response so every selected
+                    # province has the full published forecast horizon.
+                    "numOfRows": 1000,
                 },
                 "watermark": {
                     "params": ["base_date", "base_time"],
@@ -458,7 +467,10 @@ def public_data_refresh_scope(
                 "max_pages": 1,
             }
             for code, area_id in sorted(area_id_by_code.items())
-            if code.endswith("00000")
+            # Forecast products already inherit weather from the parent sido.
+            # Collecting one grid per province avoids hundreds of duplicate
+            # sigungu requests while preserving weather for every child area.
+            if code.endswith("00000000")
             for grid in (
                 (
                     wgs84_to_kma_grid(

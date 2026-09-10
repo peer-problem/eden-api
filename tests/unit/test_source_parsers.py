@@ -9,7 +9,11 @@ from xml.etree.ElementTree import ParseError
 import pytest
 
 from app.sources.alerts import (
+    KTO_BOOTSTRAP_URL,
+    KTO_MARKET_URL,
+    NoticePublicationDateMissing,
     OfficialNoticeAdapter,
+    _countries_from_title,
     extract_notice_links,
     parse_notice_detail,
     parse_notice_feed,
@@ -104,6 +108,26 @@ def test_notice_rss_empty_and_malformed_are_bounded(
     assert len(items) == expected_count
 
 
+def test_notice_feed_skips_entry_without_publication_date() -> None:
+    errors: list[str] = []
+    items = parse_notice_feed(
+        b"""<?xml version="1.0"?><rss version="2.0"><channel><item>
+        <title>Travel safety notice</title>
+        <link>https://embassy.example/notices/travel-safety</link>
+        <description>Official travel safety guidance for visitors.</description>
+        </item></channel></rss>""",
+        "https://embassy.example/rss.xml",
+        NOTICE_TARGET,
+        {"embassy.example"},
+        OBSERVED_AT,
+        10,
+        errors,
+    )
+
+    assert items == []
+    assert errors == ["publication_date_missing"]
+
+
 @pytest.mark.parametrize(
     ("fixture_name", "expected_paths"),
     [
@@ -128,9 +152,9 @@ def test_notice_html_link_parser_recovers_only_allowlisted_entries(
 
 def test_notice_link_parser_recovers_mofa_board_javascript_detail() -> None:
     links = extract_notice_links(
-        b'''<a href="/jp-ko/brd/m_1083/list.do">Notice navigation</a>
+        b"""<a href="/jp-ko/brd/m_1083/list.do">Notice navigation</a>
         <a href="#" onclick="f_view('1945804'); return false;">
-        Travel safety notice</a>''',
+        Travel safety notice</a>""",
         "https://overseas.mofa.go.kr/jp-ko/brd/m_26893/list.do",
         {"overseas.mofa.go.kr"},
         1,
@@ -199,6 +223,116 @@ def test_notice_fetch_descends_into_first_listing_before_sibling_navigation() ->
     ]
 
 
+def test_notice_fetch_bootstraps_legacy_kto_listing_and_scopes_country() -> None:
+    listing = """
+        <html><body>
+          <a href="/site/portal/ex/bbs/View.do?cbIdx=1602&amp;bcIdx=2">
+            26년 8월 러시아 시장동향
+          </a>
+          <a href="/site/portal/ex/bbs/View.do?cbIdx=1602&amp;bcIdx=1">
+            [대만] 해외시장동향 8월
+          </a>
+        </body></html>
+    """.encode()
+    detail = """
+        <html><body><div class="board-view"><table class="table-type2"><tr><th>
+        <h1>[대만] 해외시장동향 8월</h1><span class="ml10">2026.08.31 19:17</span>
+        </th></tr></table></div>
+        <p>대만 관광시장과 방한 수요에 관한 공식 월간 동향입니다.</p></body></html>
+    """.encode()
+    calls: list[str] = []
+
+    def get(url: str) -> tuple[bytes, str, str]:
+        calls.append(url)
+        if url == KTO_BOOTSTRAP_URL:
+            return b"bootstrap", "text/html", url
+        if url == KTO_MARKET_URL:
+            return listing, "text/html", url
+        if "bcIdx=1" in url:
+            return detail, "text/html", url
+        raise AssertionError(f"unexpected KTO request: {url}")
+
+    adapter = OfficialNoticeAdapter(
+        "SRC_KTO_MARKET_TREND",
+        {"datalab.visitkorea.or.kr"},
+        5,
+        1024 * 1024,
+    )
+    adapter.client.get = get  # type: ignore[method-assign]
+    result = adapter.fetch(
+        {
+            "targets": [
+                {
+                    "countries": ["CN", "JP", "TW", "US", "PH"],
+                    "source_name": "KTO",
+                    "source_type": "tourism_board",
+                    "source_scope": "korean",
+                    "url": (
+                        "https://datalab.visitkorea.or.kr/site/portal/ex/bbs/List.do?cbIdx=1132"
+                    ),
+                    "languages": ["ko"],
+                    "alert_type": "market_trend",
+                    "max_items": 10,
+                    "country_title_terms": {
+                        "CN": ["중국"],
+                        "JP": ["일본"],
+                        "TW": ["대만"],
+                        "US": ["미국"],
+                        "PH": ["필리핀"],
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result.status.value == "available"
+    assert len(result.items) == 1
+    assert result.items[0].body["countries"] == ["TW"]
+    detail_url = f"{KTO_MARKET_URL.split('List.do')[0]}View.do?cbIdx=1602&bcIdx=1"
+    assert calls == [KTO_BOOTSTRAP_URL, KTO_MARKET_URL, detail_url]
+
+
+def test_country_title_matching_does_not_treat_busan_as_usa() -> None:
+    target = {"country_title_terms": {"US": ["미국", "usa", "united states"]}}
+    assert _countries_from_title("Busan tourism report", target) == []
+    assert _countries_from_title("미주 관광시장", target) == []
+    assert _countries_from_title("[USA] tourism report", target) == ["US"]
+
+
+def test_notice_rotation_is_not_reported_as_collection_failure() -> None:
+    listing = b'<a href="/notice/travel.html">Travel safety notice</a>'
+    detail = b"""
+        <html><head><meta name="date" content="2026-09-10"></head>
+        <body><h1>Travel safety notice</h1>
+        <p>Visitors should review the official travel safety guidance.</p></body></html>
+    """
+
+    def get(url: str) -> tuple[bytes, str, str]:
+        if url.endswith("/travel.html"):
+            return detail, "text/html", url
+        return listing, "text/html", url
+
+    adapter = OfficialNoticeAdapter(
+        "SRC_TEST",
+        {"embassy.example"},
+        5,
+        1024 * 1024,
+        max_requests=6,
+    )
+    adapter.client.get = get  # type: ignore[method-assign]
+    result = adapter.fetch(
+        {
+            "targets": [
+                {**NOTICE_TARGET, "url": f"https://embassy.example/{index}/"} for index in range(2)
+            ]
+        }
+    )
+
+    assert result.status.value == "available"
+    assert len(result.items) == 1
+    assert result.partial_errors == ()
+
+
 def test_notice_html_detail_removes_active_content_and_forms() -> None:
     item = parse_notice_detail(
         _fixture_bytes("official_notice_detail.html"),
@@ -222,6 +356,40 @@ def test_notice_html_detail_removes_active_content_and_forms() -> None:
     ):
         assert removed not in body
     assert "<" not in body
+
+
+def test_notice_detail_requires_labeled_or_structured_publication_date() -> None:
+    payload = b"""
+        <html><body><h1>Travel safety notice</h1>
+        <p>The event is scheduled for 2026-09-30. Review the official guidance.</p>
+        </body></html>
+    """
+
+    with pytest.raises(NoticePublicationDateMissing):
+        parse_notice_detail(
+            payload,
+            "https://embassy.example/notices/travel-safety",
+            "Travel safety notice",
+            NOTICE_TARGET,
+            OBSERVED_AT,
+        )
+
+
+def test_notice_detail_prefers_bulletin_published_label() -> None:
+    item = parse_notice_detail(
+        """
+        <html><body><h1>Travel safety notice</h1><dl>
+        <dt>작성일</dt><dd>2026-09-09</dd>
+        <dt>수정일</dt><dd>2026-09-10</dd>
+        </dl><p>Travel is scheduled for 2026-09-30.</p></body></html>
+        """.encode(),
+        "https://embassy.example/notices/travel-safety",
+        "Travel safety notice",
+        NOTICE_TARGET,
+        OBSERVED_AT,
+    )
+
+    assert item.source_updated_at == datetime(2026, 9, 9, tzinfo=UTC)
 
 
 def test_notice_html_malformed_detail_is_rejected_after_sanitization() -> None:

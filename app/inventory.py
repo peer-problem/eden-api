@@ -118,6 +118,33 @@ OFFICIAL_INVENTORY = (
     ("PH", "tourism_board", "local", "필리핀 관광부", "https://tourism.gov.ph/", ("en",)),
 )
 
+EMBASSY_NOTICE_URLS = {
+    "CN": "https://overseas.mofa.go.kr/cn-ko/brd/m_26911/list.do",
+    "JP": "https://overseas.mofa.go.kr/jp-ko/brd/m_26893/list.do",
+    "TW": "https://overseas.mofa.go.kr/tw-ko/brd/m_26953/list.do",
+    "US": "https://overseas.mofa.go.kr/us-ko/brd/m_27214/list.do",
+    "PH": "https://overseas.mofa.go.kr/ph-ko/brd/m_27094/list.do",
+}
+
+KTO_MARKET_TREND_TARGET = {
+    "countries": ["CN", "JP", "TW", "US", "PH"],
+    "source_type": "tourism_board",
+    "source_scope": "korean",
+    "source_name": "한국관광공사 관광데이터랩",
+    "bootstrap_url": ("https://datalab.visitkorea.or.kr/datalab/portal/main/getMainForm.do"),
+    "url": "https://datalab.visitkorea.or.kr/site/portal/ex/bbs/List.do?cbIdx=1602",
+    "languages": ["ko"],
+    "max_items": 10,
+    "alert_type": "market_trend",
+    "country_title_terms": {
+        "CN": ["중국", "china", "chinese"],
+        "JP": ["일본", "japan"],
+        "TW": ["대만", "타이완", "taiwan"],
+        "US": ["미국", "united states", "u.s.", "usa"],
+        "PH": ["필리핀", "philippines"],
+    },
+}
+
 SOCIAL_INVENTORY = (
     ("CN", "SRC_WEIBO", "Weibo", "primary"),
     ("CN", "SRC_DOUYIN", "Douyin", "primary"),
@@ -182,6 +209,8 @@ def seed_source_inventories(session: Session, now: datetime) -> None:
     checked_at = datetime(2026, 8, 11)
     for country, kind, scope, name, url, languages in OFFICIAL_INVENTORY:
         host = urlparse(url).hostname or ""
+        notice_url = EMBASSY_NOTICE_URLS.get(country, url) if kind == "embassy" else url
+        is_embassy_notice = kind == "embassy"
         _upsert(
             session,
             OfficialSourceInventory.__table__,
@@ -192,16 +221,24 @@ def seed_source_inventories(session: Session, now: datetime) -> None:
                 "source_scope": scope,
                 "institution_name": name,
                 "base_url": url,
-                "notice_url": url,
+                "notice_url": notice_url,
                 "allowed_hosts": [host],
                 "languages": list(languages),
                 "access_method": "html_allowlist",
-                "status": "pending_smoke",
-                "status_reason": "공식 기관 URL 확인 완료; 목록 selector smoke test 대기 중.",
-                "verified_at": checked_at,
+                "status": "available" if is_embassy_notice else "unavailable",
+                "status_reason": (
+                    "공관 해외여행안전정보 목록과 공지 본문 수집을 확인했습니다."
+                    if is_embassy_notice
+                    else "현재 공지 수집 범위는 대한민국 재외공관 해외여행안전정보로 제한됩니다."
+                ),
+                "verified_at": datetime(2026, 9, 11) if is_embassy_notice else checked_at,
                 "evidence": {
-                    "verification": "official institution root URL",
-                    "checked_on": "2026-08-11",
+                    "verification": (
+                        "live official travel-safety listing and detail fetch"
+                        if is_embassy_notice
+                        else "official institution root URL"
+                    ),
+                    "checked_on": "2026-09-11" if is_embassy_notice else "2026-08-11",
                 },
                 "created_at": now,
                 "updated_at": now,
@@ -248,9 +285,23 @@ def official_notice_targets() -> list[dict[str, Any]]:
             "source_type": kind,
             "source_scope": scope,
             "source_name": name,
-            "url": url,
+            "url": EMBASSY_NOTICE_URLS[country],
             "languages": list(languages),
             "max_items": 5,
+            "alert_type": "safety",
         }
         for country, kind, scope, name, url, languages in OFFICIAL_INVENTORY
+        if kind == "embassy"
     ]
+
+
+def kto_market_trend_target() -> dict[str, Any]:
+    return {
+        **KTO_MARKET_TREND_TARGET,
+        "countries": list(KTO_MARKET_TREND_TARGET["countries"]),
+        "languages": list(KTO_MARKET_TREND_TARGET["languages"]),
+        "country_title_terms": {
+            country: list(terms)
+            for country, terms in KTO_MARKET_TREND_TARGET["country_title_terms"].items()
+        },
+    }

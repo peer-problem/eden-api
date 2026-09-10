@@ -7,8 +7,6 @@ source "$release/scripts/deploy_support.sh"
 previous_release="$(readlink -f /opt/eden/current 2>/dev/null || true)"
 previous_nginx="/etc/nginx/sites-available/eden-api"
 previous_unit="/etc/systemd/system/eden-api.service"
-dashboard_root="/var/www/eden-dashboard"
-dashboard_release="$dashboard_root/releases/${release##*/}"
 rollback_dir="$(mktemp -d)"
 snapshot_path() {
   local path="$1"
@@ -51,7 +49,6 @@ snapshot_path "$pilot_report_timer" pilot_report_timer
 snapshot_path /etc/systemd/journald.conf.d/eden.conf journald_config
 snapshot_path /etc/systemd/system/eden-api.service.d/20-phase1-baseline.conf baseline_dropin
 snapshot_path /opt/eden/phase1-evidence/baseline.env baseline_env
-snapshot_path "$dashboard_root/current" dashboard_current
 snapshot_path /opt/eden/shared/.env runtime_env
 snapshot_path /opt/eden/shared/migration.env migration_env
 unit_state_dir="$(mktemp -d)"
@@ -152,11 +149,9 @@ recover_previous_release() {
   restore_snapshot /etc/systemd/journald.conf.d/eden.conf journald_config || rollback_failed=1
   restore_snapshot /etc/systemd/system/eden-api.service.d/20-phase1-baseline.conf baseline_dropin || rollback_failed=1
   restore_snapshot /opt/eden/phase1-evidence/baseline.env baseline_env || rollback_failed=1
-  restore_snapshot "$dashboard_root/current" dashboard_current || rollback_failed=1
   restore_snapshot /opt/eden/shared/.env runtime_env || rollback_failed=1
   restore_snapshot /opt/eden/shared/migration.env migration_env || rollback_failed=1
   rm -f -- "$release/runtime.env" "$release/migration.env" || rollback_failed=1
-  rm -rf -- "$dashboard_release" || rollback_failed=1
   nginx -t 2>/dev/null || rollback_failed=1
   systemctl daemon-reload 2>/dev/null || rollback_failed=1
   systemctl reset-failed eden-api 2>/dev/null || true
@@ -182,7 +177,7 @@ recover_previous_release() {
   if (( rollback_failed != 0 )); then
     echo "Rollback completed with verification failures; inspect systemd and Nginx state." >&2
   else
-    echo "Rollback restored release, dashboard, Nginx, units, timers, and config; readiness passed." >&2
+    echo "Rollback restored release, Nginx, units, timers, and config; readiness passed." >&2
   fi
   rm -rf -- "$rollback_dir" "$unit_state_dir"
   set -e
@@ -398,15 +393,6 @@ if sys.version_info[:2] != (3, 12):
     raise SystemExit("Production deployment requires Python 3.12.")
 importlib.import_module(sysconfig._get_sysconfigdata_name())
 PY
-[[ -f "$release/dashboard/dist/index.html" ]] || {
-  echo "Dashboard build artifact is missing from the release." >&2
-  exit 1
-}
-install -d -m 755 "$dashboard_root/releases" "$dashboard_release"
-cp -a "$release/dashboard/dist/." "$dashboard_release/"
-find "$dashboard_release" -type d -exec chmod 755 {} +
-find "$dashboard_release" -type f -exec chmod 644 {} +
-ln -sfn "$dashboard_release" "$dashboard_root/current"
 
 systemctl stop eden-phase1-soak.timer 2>/dev/null || true
 systemctl stop eden-phase2-soak.timer 2>/dev/null || true
@@ -678,14 +664,11 @@ server {
         deny all;
         proxy_pass http://127.0.0.1:8000;
     }
-    location ^~ /dashboard/ {
-        alias /var/www/eden-dashboard/current/;
-        access_log /var/log/nginx/eden-dashboard.access.log combined;
-        error_log /var/log/nginx/eden-dashboard.error.log warn;
-        log_not_found on;
-        try_files $uri $uri/ /dashboard/index.html;
-    }
-    location = /openapi.json {
+    location = /dashboard { return 410; }
+    location ^~ /dashboard/ { return 410; }
+    location = /assets { return 410; }
+    location ^~ /assets/ { return 410; }
+    location ~ ^/(?:docs|openapi[.]json)?$ {
         limit_req zone=eden_api_per_ip burst=20 nodelay;
         limit_req zone=eden_api_total burst=40 nodelay;
         limit_req_status 429;
@@ -761,6 +744,8 @@ curl -fsS http://127.0.0.1:8000/internal/readiness >/dev/null
 uv run python scripts/phase1_soak.py warmup >/dev/null
 systemctl start eden-phase2-pilot-report.service
 curl -fsS --max-time 10 https://api.edenapi.org/openapi.json >/dev/null
+curl -fsS --max-time 10 https://api.edenapi.org/docs >/dev/null
+[[ "$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' https://api.edenapi.org/dashboard/)" == "410" ]]
 curl -fsS --max-time 10 'https://api.edenapi.org/v1/trends?keyword=%EC%A0%9C%EC%A3%BC&period=7d&time_unit=day&limit=1' >/dev/null
 systemctl enable --now eden-phase1-soak.timer \
   eden-phase2-soak.timer \
@@ -775,3 +760,32 @@ for unit in eden-phase1-query-plans eden-db-maintenance-report; do
 done
 systemctl daemon-reload
 deployment_complete=1
+
+cleanup_legacy_dashboard_artifacts() {
+  local deployed_release legacy_dashboard cleanup_failed=0
+  rm -rf -- /var/www/eden-dashboard || cleanup_failed=1
+  for deployed_release in /opt/eden/releases/*; do
+    [[ -d "$deployed_release" && ! -L "$deployed_release" ]] || continue
+    legacy_dashboard="$deployed_release/dashboard"
+    if [[ -e "$legacy_dashboard" || -L "$legacy_dashboard" ]]; then
+      rm -rf -- "$legacy_dashboard" || cleanup_failed=1
+    fi
+  done
+  rm -f -- \
+    /var/log/nginx/eden-dashboard.access.log \
+    /var/log/nginx/eden-dashboard.error.log || cleanup_failed=1
+  return "$cleanup_failed"
+}
+if ! cleanup_legacy_dashboard_artifacts; then
+  echo "API deployment succeeded, but some legacy dashboard artifacts could not be removed." >&2
+fi
+
+# These legacy timers call scripts that no longer ship. The current phase1 and
+# phase2 timers above own soak evidence; do not leave failed duplicate jobs alive.
+for unit in eden-maintenance eden-soak-sample; do
+  systemctl disable --now "$unit.timer" 2>/dev/null || true
+  systemctl stop "$unit.service" 2>/dev/null || true
+  systemctl reset-failed "$unit.service" 2>/dev/null || true
+  rm -f "/etc/systemd/system/$unit.timer" "/etc/systemd/system/$unit.service"
+done
+systemctl daemon-reload

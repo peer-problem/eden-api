@@ -337,11 +337,38 @@ def test_openapi_exposes_exactly_the_eight_phase_one_operations(
         assert response_schema["$ref"].startswith("#/components/schemas/Envelope_")
 
 
-def test_only_openapi_json_is_public_documentation(contract_client: TestClient) -> None:
+def test_official_documentation_replaces_dashboard(contract_client: TestClient) -> None:
     assert contract_client.get("/openapi.json").status_code == 200
-    assert contract_client.get("/docs").status_code == 404
+    home = contract_client.get("/", follow_redirects=False)
+    assert home.status_code == 307
+    assert home.headers["location"] == "/docs"
+    docs = contract_client.get("/docs")
+    assert docs.status_code == 200
+    assert "SwaggerUIBundle" in docs.text
+    assert "/openapi.json" in docs.text
+    assert contract_client.get("/dashboard/").status_code == 404
     assert contract_client.get("/redoc").status_code == 404
     assert contract_client.get("/docs/oauth2-redirect").status_code == 404
+
+
+def test_separate_frontend_can_read_api_without_credentials(contract_client: TestClient) -> None:
+    headers = {"Origin": "https://team-frontend.vercel.app"}
+    preflight = contract_client.options(
+        "/v1/recommendations/destinations",
+        headers={
+            **headers,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == "*"
+    assert "access-control-allow-credentials" not in preflight.headers
+    for url in ("/v1/trends?keyword=제주", "/v1/trends"):
+        response = contract_client.get(url, headers=headers)
+        assert response.status_code in (200, 422)
+        assert response.headers["access-control-allow-origin"] == "*"
+        assert "X-Request-ID" in response.headers["access-control-expose-headers"]
 
 
 def test_openapi_declares_validation_patterns_and_error_envelopes(

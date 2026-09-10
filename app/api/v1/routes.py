@@ -103,11 +103,20 @@ def _envelope[ModelT: BaseModel](
     )
 
 
-@router.get("/trends", response_model=Envelope[TrendData], tags=["trends"])
+@router.get(
+    "/trends",
+    response_model=Envelope[TrendData],
+    tags=["trends"],
+    summary="키워드 관광 관심도 조회",
+    description=(
+        "기간별 관심도와 원천별 지표를 조회합니다. YouTube 검색 표본은 실제 시청자 "
+        "국적 통계가 아닙니다."
+    ),
+)
 def get_trends(
     request: Request,
     repository: RepositoryDep,
-    keyword: Annotated[str, Query(min_length=1, max_length=200)],
+    keyword: Annotated[str, Query(min_length=1, max_length=200, examples=["Korea travel"])],
     area_code: Annotated[str | None, Query(max_length=64)] = None,
     country: Annotated[CountryCode | Literal["all"], Query()] = "all",
     social_sources: Annotated[list[TrendSocialSource] | None, Query()] = None,
@@ -132,11 +141,17 @@ def get_trends(
     "/regions/{area_code}/insights",
     response_model=Envelope[RegionInsightData],
     tags=["regions"],
+    summary="지역 관광 인사이트 조회",
+    description=(
+        "지역의 방문 지표와 관광 수요 및 다양성을 조회합니다. include를 생략하면 "
+        "세 블록을 모두 반환합니다. 비교 기간의 자료가 없으면 해당 비교는 제공되지 "
+        "않습니다."
+    ),
 )
 def get_region_insights(
     request: Request,
     repository: RepositoryDep,
-    area_code: Annotated[str, Path(min_length=1, max_length=64)],
+    area_code: Annotated[str, Path(min_length=1, max_length=64, examples=["1100000000"])],
     period: Annotated[PeriodShort, Query()] = "30d",
     visitor_type: Annotated[VisitorType, Query()] = "all",
     compare: Annotated[Literal["previous_period", "previous_year"] | None, Query()] = None,
@@ -154,11 +169,23 @@ def get_region_insights(
     return _envelope(request, repository.fetch("region_insights", key), RegionInsightData)
 
 
-@router.get("/places/{content_id}", response_model=Envelope[PlaceData], tags=["places"])
+@router.get(
+    "/places/{content_id}",
+    response_model=Envelope[PlaceData],
+    tags=["places"],
+    summary="관광지 상세 조회",
+    description=(
+        "추천 결과의 content_id 또는 기존 TourAPI ID로 조회합니다. 요청 "
+        "언어가 없으면 fallback과 실제 language를 확인하세요. 주변 상점의 "
+        "반경은 미터 단위입니다."
+    ),
+)
 def get_place(
     request: Request,
     repository: RepositoryDep,
-    content_id: Annotated[str, Path(min_length=1, max_length=128)],
+    content_id: Annotated[
+        str, Path(min_length=1, max_length=128, examples=["eden_place_20bff2c378635516aca3"])
+    ],
     lang: Annotated[Language, Query()] = "ko",
     radius_m: Annotated[int, Query(ge=100, le=5000)] = 1000,
     related_limit: Annotated[int, Query(ge=1, le=50)] = 5,
@@ -184,11 +211,17 @@ def get_place(
     "/forecasts/visitors",
     response_model=Envelope[VisitorForecastData],
     tags=["forecasts"],
+    summary="지역 방문 전망 조회",
+    description=(
+        "최대 30일의 게시된 방문 전망과 선택한 보조 정보를 조회합니다. nx와 ny는 "
+        "함께 입력해야 합니다. 전망 점수와 실제 예상 방문자 수는 다른 값이며 근거가 "
+        "없는 값은 null입니다."
+    ),
 )
 def get_visitor_forecast(
     request: Request,
     repository: RepositoryDep,
-    area_code: Annotated[str, Query(min_length=1, max_length=64)],
+    area_code: Annotated[str, Query(min_length=1, max_length=64, examples=["1100000000"])],
     place_name: Annotated[str | None, Query(max_length=300)] = None,
     days: Annotated[int, Query(ge=1, le=30)] = 14,
     nx: Annotated[int | None, Query()] = None,
@@ -215,11 +248,17 @@ def get_visitor_forecast(
     "/visitors/timeseries",
     response_model=Envelope[VisitorTimeseriesData],
     tags=["visitors"],
+    summary="지역 방문 시계열 조회",
+    description=(
+        "일별 또는 주별이나 월별 방문 지표를 조회합니다. 실제 방문자 수와 원천 혼잡도 "
+        "지표를 구분해서 사용하세요. 원천 발표 지연은 meta와 sources에 "
+        "표시됩니다."
+    ),
 )
 def get_visitor_timeseries(
     request: Request,
     repository: RepositoryDep,
-    area_code: Annotated[str, Query(min_length=1, max_length=64)],
+    area_code: Annotated[str, Query(min_length=1, max_length=64, examples=["1100000000"])],
     period: Annotated[Literal["7d", "30d", "90d", "12m"], Query()] = "30d",
     granularity: Annotated[Literal["day", "week", "month"], Query()] = "day",
     visitor_type: Annotated[VisitorType, Query()] = "all",
@@ -236,11 +275,22 @@ def get_visitor_timeseries(
     return _envelope(request, repository.fetch("visitor_timeseries", key), VisitorTimeseriesData)
 
 
-@router.get("/markets/inbound", response_model=Envelope[InboundData], tags=["markets"])
+@router.get(
+    "/markets/inbound",
+    response_model=Envelope[InboundData],
+    tags=["markets"],
+    summary="국가별 방한시장 비교",
+    description=(
+        "countries=JP&countries=CN처럼 국가 코드를 반복해 전달합니다. "
+        "환율과 항공 및 방문 지표의 기준 시점은 서로 다를 수 있습니다. "
+        "tourism_balance는 한국 전체 일반여행 수지이며 국가별 양자 수지가 "
+        "아닙니다."
+    ),
+)
 def get_inbound_markets(
     request: Request,
     repository: RepositoryDep,
-    countries: Annotated[list[CountryCode], Query(min_length=1)],
+    countries: Annotated[list[CountryCode], Query(min_length=1, examples=[["JP", "CN"]])],
     social_sources: Annotated[list[InboundSocialSource] | None, Query()] = None,
     period: Annotated[Literal["3m", "6m", "12m", "24m"], Query()] = "12m",
     currency: Annotated[CurrencyCode | None, Query()] = None,
@@ -281,11 +331,21 @@ def get_inbound_markets(
     return _envelope(request, repository.fetch("inbound_markets", key), InboundData)
 
 
-@router.get("/markets/{country}/alerts", response_model=Envelope[AlertsData], tags=["markets"])
+@router.get(
+    "/markets/{country}/alerts",
+    response_model=Envelope[AlertsData],
+    tags=["markets"],
+    summary="국가별 공식 공지 조회",
+    description=(
+        "비자와 입국 및 안전 공지와 시장 동향을 조회합니다. source_url에서 "
+        "원문을 확인할 수 있습니다. 번역이 준비되지 않았으면 원문으로 fallback되며 "
+        "번역과 요약의 가용성은 별도 필드에 표시됩니다."
+    ),
+)
 def get_market_alerts(
     request: Request,
     repository: RepositoryDep,
-    country: Annotated[CountryCode, Path()],
+    country: Annotated[CountryCode, Path(examples=["JP"])],
     types: Annotated[
         list[Literal["visa", "entry", "safety", "travel", "market_trend"]] | None,
         Query(),
@@ -310,6 +370,12 @@ def get_market_alerts(
     "/recommendations/destinations",
     response_model=Envelope[RecommendationsData],
     tags=["recommendations"],
+    summary="여행 조건별 목적지 추천",
+    description=(
+        "게시된 데이터에서 목적지를 추천하는 읽기 전용 POST입니다. 데이터 수집이나 "
+        "LLM 호출을 유발하지 않습니다. 예산과 접근성 등 근거가 부족한 조건은 충족된 "
+        "것으로 추정하지 않으며 응답의 가용성과 사유를 확인해야 합니다."
+    ),
 )
 def recommend_destinations(
     request: Request,
