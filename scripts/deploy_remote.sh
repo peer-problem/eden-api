@@ -52,6 +52,8 @@ snapshot_path /etc/systemd/journald.conf.d/eden.conf journald_config
 snapshot_path /etc/systemd/system/eden-api.service.d/20-phase1-baseline.conf baseline_dropin
 snapshot_path /opt/eden/phase1-evidence/baseline.env baseline_env
 snapshot_path "$dashboard_root/current" dashboard_current
+snapshot_path /opt/eden/shared/.env runtime_env
+snapshot_path /opt/eden/shared/migration.env migration_env
 unit_state_dir="$(mktemp -d)"
 capture_unit_state() {
   local unit="$1"
@@ -111,6 +113,7 @@ for unit in "${tracked_units[@]}"; do
 done
 recover_previous_release() {
   if (( deployment_complete == 1 )); then
+    rm -f -- "$release/runtime.env" "$release/migration.env"
     rm -rf -- "$rollback_dir" "$unit_state_dir"
     return
   fi
@@ -150,9 +153,13 @@ recover_previous_release() {
   restore_snapshot /etc/systemd/system/eden-api.service.d/20-phase1-baseline.conf baseline_dropin || rollback_failed=1
   restore_snapshot /opt/eden/phase1-evidence/baseline.env baseline_env || rollback_failed=1
   restore_snapshot "$dashboard_root/current" dashboard_current || rollback_failed=1
+  restore_snapshot /opt/eden/shared/.env runtime_env || rollback_failed=1
+  restore_snapshot /opt/eden/shared/migration.env migration_env || rollback_failed=1
+  rm -f -- "$release/runtime.env" "$release/migration.env" || rollback_failed=1
   rm -rf -- "$dashboard_release" || rollback_failed=1
   nginx -t 2>/dev/null || rollback_failed=1
   systemctl daemon-reload 2>/dev/null || rollback_failed=1
+  systemctl reset-failed eden-api 2>/dev/null || true
   for unit in "${tracked_units[@]}"; do
     restore_unit_state "$unit"
     verify_unit_state "$unit" || rollback_failed=1
@@ -183,17 +190,35 @@ recover_previous_release() {
 trap recover_previous_release EXIT
 
 cd "$release"
+# The native Python connector links against Connector/C. Ubuntu 26.04 provides 3.4+.
+require_commands mariadb_config runuser
+getent group eden >/dev/null 2>&1 || groupadd --system eden
+install -d -o root -g eden -m 755 /opt/eden/python
+export UV_PYTHON_INSTALL_DIR=/opt/eden/python
+export UV_MANAGED_PYTHON=1
+export UV_PYTHON=3.12
 uv sync --frozen --no-dev
+chmod -R a+rX /opt/eden/python
+install -d -o root -g eden -m 750 /opt/eden/shared
+for incoming in "$release/runtime.env" "$release/migration.env"; do
+  [[ -f "$incoming" && ! -L "$incoming" ]] || {
+    echo "Missing generated deployment environment." >&2
+    exit 1
+  }
+done
+install -o root -g eden -m 640 "$release/runtime.env" /opt/eden/shared/.env
+install -o root -g root -m 600 "$release/migration.env" /opt/eden/shared/migration.env
+rm -f -- "$release/runtime.env" "$release/migration.env"
 [[ -f /opt/eden/shared/.env ]] || {
   echo "Missing /opt/eden/shared/.env." >&2
   exit 1
 }
 set -a
-load_dotenv_file /opt/eden/shared/.env
+load_dotenv_file /opt/eden/shared/.env false
 set +a
 validate_migration_environment /opt/eden/shared/migration.env
 set -a
-load_dotenv_file /opt/eden/shared/migration.env
+load_dotenv_file /opt/eden/shared/migration.env false
 set +a
 unexport_sensitive_environment
 is_true "${SNAPSHOT_RETENTION_ENABLED:-false}" || {
@@ -214,20 +239,24 @@ is_true "${SNAPSHOT_RETENTION_ENABLED:-false}" || {
 : "${MIGRATION_DB_USER:?Missing MIGRATION_DB_USER}"
 : "${MIGRATION_DB_PASSWORD:?Missing MIGRATION_DB_PASSWORD}"
 : "${DB_NAME:?Missing DB_NAME}"
-: "${DB_SSL_CA:?Missing DB_SSL_CA}"
-: "${DB_SSL_VERIFY_CERT:?Missing DB_SSL_VERIFY_CERT}"
 : "${DB_NETWORK_MODE:?Missing DB_NETWORK_MODE}"
 : "${DB_ALLOWED_CIDRS:?Missing DB_ALLOWED_CIDRS}"
 : "${SCHEDULER_ENABLED:?Missing SCHEDULER_ENABLED}"
 uv run python - <<'PY'
-from app.config import get_settings
+import sys
 
+from app.config import get_settings
+from app.repositories.database import verified_mariadb_connect_args
+
+if sys.version_info[:2] != (3, 12):
+    raise SystemExit("Production deployment requires Python 3.12.")
 settings = get_settings()
 if settings.ENVIRONMENT != "production":
     raise SystemExit("Application settings did not load in production mode.")
+connect_args = verified_mariadb_connect_args(settings)
+if connect_args["ssl"] is not True or connect_args["ssl_verify_cert"] is not True:
+    raise SystemExit("Application database TLS verification is not fixed on.")
 PY
-is_true "$DB_SSL_VERIFY_CERT" || { echo "DB TLS certificate verification is disabled." >&2; exit 1; }
-[[ -r "$DB_SSL_CA" ]] || { echo "DB TLS CA is not readable." >&2; exit 1; }
 [[ "$DB_USER" != "$INGESTION_DB_USER" && "$DB_USER" != "$MIGRATION_DB_USER" \
   && "$INGESTION_DB_USER" != "$MIGRATION_DB_USER" ]] || {
   echo "DB runtime, ingestion, and migration users must be distinct." >&2
@@ -292,14 +321,14 @@ chmod 600 "$db_probe_config"
   echo "port=${DB_PORT}"
   echo "user=${DB_USER}"
   echo "password=${DB_PASSWORD}"
-  echo "ssl-ca=${DB_SSL_CA}"
+  echo 'ssl'
   echo 'ssl-verify-server-cert'
 } >"$db_probe_config"
 ssl_capability="$(mariadb --defaults-extra-file="$db_probe_config" \
-  --ssl-ca="$DB_SSL_CA" --ssl-verify-server-cert --batch --skip-column-names \
+  --ssl --ssl-verify-server-cert --batch --skip-column-names \
   -e "SHOW VARIABLES LIKE 'have_ssl'")"
 ssl_cipher="$(mariadb --defaults-extra-file="$db_probe_config" \
-  --ssl-ca="$DB_SSL_CA" --ssl-verify-server-cert --batch --skip-column-names \
+  --ssl --ssl-verify-server-cert --batch --skip-column-names \
   -e "SHOW STATUS LIKE 'Ssl_cipher'")"
 printf '%s\n' "$ssl_capability" | grep -Eiq $'have_ssl\t(YES|ON|1)' || {
   echo "DB TLS gate failed: MariaDB SSL capability is unavailable." >&2
@@ -310,7 +339,7 @@ printf '%s\n' "$ssl_cipher" | awk 'NR == 1 {print $2}' | grep -Eqv '^(|NULL)$' |
   exit 1
 }
 runtime_grants="$(mariadb --defaults-extra-file="$db_probe_config" \
-  --ssl-ca="$DB_SSL_CA" --ssl-verify-server-cert --batch --skip-column-names \
+  --ssl --ssl-verify-server-cert --batch --skip-column-names \
   -e "SHOW GRANTS FOR CURRENT_USER()")"
 printf '%s\n' "$runtime_grants" \
   | uv run python scripts/verify_db_security.py grants \
@@ -323,11 +352,11 @@ chmod 600 "$ingestion_probe_config"
   echo "port=${DB_PORT}"
   echo "user=${INGESTION_DB_USER}"
   echo "password=${INGESTION_DB_PASSWORD}"
-  echo "ssl-ca=${DB_SSL_CA}"
+  echo 'ssl'
   echo 'ssl-verify-server-cert'
 } >"$ingestion_probe_config"
 ingestion_grants="$(mariadb --defaults-extra-file="$ingestion_probe_config" \
-  --ssl-ca="$DB_SSL_CA" --ssl-verify-server-cert --batch --skip-column-names \
+  --ssl --ssl-verify-server-cert --batch --skip-column-names \
   -e "SHOW GRANTS FOR CURRENT_USER()" "$DB_NAME")"
 printf '%s\n' "$ingestion_grants" \
   | uv run python scripts/verify_db_security.py grants \
@@ -360,6 +389,15 @@ if [[ -f /opt/eden/shared/.env ]]; then
   chown root:eden /opt/eden/shared/.env
   chmod 640 /opt/eden/shared/.env
 fi
+runuser -u eden -- "$release/.venv/bin/python" - <<'PY'
+import importlib
+import sys
+import sysconfig
+
+if sys.version_info[:2] != (3, 12):
+    raise SystemExit("Production deployment requires Python 3.12.")
+importlib.import_module(sysconfig._get_sysconfigdata_name())
+PY
 [[ -f "$release/dashboard/dist/index.html" ]] || {
   echo "Dashboard build artifact is missing from the release." >&2
   exit 1
@@ -373,6 +411,9 @@ ln -sfn "$dashboard_release" "$dashboard_root/current"
 systemctl stop eden-phase1-soak.timer 2>/dev/null || true
 systemctl stop eden-phase2-soak.timer 2>/dev/null || true
 systemctl stop eden-phase2-pilot-report.timer 2>/dev/null || true
+for unit in eden-phase1-query-plans eden-db-maintenance-report; do
+  systemctl stop "$unit.timer" "$unit.service" 2>/dev/null || true
+done
 systemctl stop eden-api 2>/dev/null || true
 runtime_user="$DB_USER"
 runtime_password="$DB_PASSWORD"
@@ -495,78 +536,6 @@ OnUnitActiveSec=5min
 AccuracySec=15s
 Persistent=true
 Unit=eden-phase2-soak.service
-
-[Install]
-WantedBy=timers.target
-UNIT
-
-cat >/etc/systemd/system/eden-phase1-query-plans.service <<'UNIT'
-[Unit]
-Description=EDEN Phase 1 bounded query-plan gate
-After=mariadb.service
-Requires=mariadb.service
-
-[Service]
-Type=oneshot
-User=eden
-Group=eden
-WorkingDirectory=/opt/eden/current
-EnvironmentFile=/opt/eden/shared/.env
-UnsetEnvironment=MIGRATION_DB_USER MIGRATION_DB_PASSWORD VPS_PASSWORD
-ExecStart=/opt/eden/current/.venv/bin/python scripts/phase1_query_plans.py
-StandardOutput=append:/opt/eden/phase1-evidence/query-plans.jsonl
-StandardError=journal
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=strict
-ReadWritePaths=/opt/eden/phase1-evidence
-UNIT
-
-cat >/etc/systemd/system/eden-phase1-query-plans.timer <<'UNIT'
-[Unit]
-Description=Verify EDEN Phase 1 query plans daily
-
-[Timer]
-OnCalendar=*-*-* 02:45:00
-Persistent=true
-Unit=eden-phase1-query-plans.service
-
-[Install]
-WantedBy=timers.target
-UNIT
-
-cat >/etc/systemd/system/eden-db-maintenance-report.service <<'UNIT'
-[Unit]
-Description=EDEN weekly ANALYZE candidates and slow-query report
-After=mariadb.service
-Requires=mariadb.service
-
-[Service]
-Type=oneshot
-User=eden
-Group=eden
-WorkingDirectory=/opt/eden/current
-EnvironmentFile=/opt/eden/shared/.env
-UnsetEnvironment=MIGRATION_DB_USER MIGRATION_DB_PASSWORD VPS_PASSWORD
-ExecStart=/opt/eden/current/.venv/bin/python scripts/phase1_db_maintenance.py
-StandardOutput=append:/opt/eden/phase1-evidence/database-maintenance.jsonl
-StandardError=journal
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=strict
-ReadWritePaths=/opt/eden/phase1-evidence
-UNIT
-
-cat >/etc/systemd/system/eden-db-maintenance-report.timer <<'UNIT'
-[Unit]
-Description=Collect EDEN database maintenance evidence weekly
-
-[Timer]
-OnCalendar=Sun *-*-* 03:30:00
-Persistent=true
-Unit=eden-db-maintenance-report.service
 
 [Install]
 WantedBy=timers.target
@@ -758,6 +727,7 @@ cat >/etc/systemd/system/eden-api.service.d/20-phase1-baseline.conf <<'UNIT'
 EnvironmentFile=/opt/eden/phase1-evidence/baseline.env
 UNIT
 systemctl daemon-reload
+systemctl reset-failed eden-api
 systemctl enable --now nginx eden-api
 for _ in $(seq 1 30); do
   curl -fsS http://127.0.0.1:8000/internal/readiness >/dev/null && break
@@ -771,8 +741,6 @@ rm -f /opt/eden/phase1-evidence/baseline.env
 systemctl daemon-reload
 systemctl restart eden-api
 systemctl restart systemd-journald
-systemctl start eden-phase1-query-plans.service
-systemctl start eden-db-maintenance-report.service
 
 for _ in $(seq 1 30); do
   curl -fsS http://127.0.0.1:8000/internal/readiness >/dev/null && break
@@ -787,6 +755,14 @@ curl -fsS --max-time 10 https://api.edenapi.org/openapi.json >/dev/null
 curl -fsS --max-time 10 'https://api.edenapi.org/v1/trends?keyword=%EC%A0%9C%EC%A3%BC&period=7d&time_unit=day&limit=1' >/dev/null
 systemctl enable --now eden-phase1-soak.timer \
   eden-phase2-soak.timer \
-  eden-phase1-query-plans.timer eden-db-maintenance-report.timer \
   eden-phase2-pilot-report.timer
+# Retire report-only units from older releases. Their prior state is included
+# in rollback above until the deployment finishes.
+for unit in eden-phase1-query-plans eden-db-maintenance-report; do
+  if [[ -f "/etc/systemd/system/$unit.timer" ]]; then
+    systemctl disable --now "$unit.timer"
+  fi
+  rm -f "/etc/systemd/system/$unit.timer" "/etc/systemd/system/$unit.service"
+done
+systemctl daemon-reload
 deployment_complete=1
