@@ -819,6 +819,7 @@ code {
 }
 
 .metric-value dd {
+  overflow-wrap: anywhere;
   margin: 10px 0 0;
   font-family: system-ui, sans-serif;
   font-size: clamp(25px, 3vw, 36px);

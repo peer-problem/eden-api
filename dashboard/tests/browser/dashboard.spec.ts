@@ -29,7 +29,7 @@ async function unavailableApi(page: Page) {
   });
 }
 
-test("all eight screens issue only same-origin API requests", async ({ page }) => {
+test("all eight screens issue only same-origin API requests", async ({ page, baseURL }) => {
   const apiRequests: string[] = [];
   page.on("request", (request) => {
     if (["fetch", "xhr"].includes(request.resourceType())) apiRequests.push(request.url());
@@ -60,7 +60,7 @@ test("all eight screens issue only same-origin API requests", async ({ page }) =
   expect(apiRequests).toHaveLength(8);
   for (const url of apiRequests) {
     const requestUrl = new URL(url);
-    expect(requestUrl.origin).toBe("http://127.0.0.1:4173");
+    expect(requestUrl.origin).toBe(new URL(baseURL!).origin);
     expect(requestUrl.pathname.startsWith("/v1/")).toBe(true);
   }
 });
@@ -156,4 +156,21 @@ test("layout stays within desktop and mobile viewports and exposes keyboard land
     document: document.documentElement.scrollWidth,
   }));
   expect(dimensions.document).toBeLessThanOrEqual(dimensions.viewport);
+
+  const areaId = "eden_area_6672fa064d0a5027bd84";
+  await page.route("**/v1/forecasts/visitors**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        meta: baseMeta,
+        data: { area_code: "1100000000", eden_area_id: areaId, horizon_days: 14, sources: [], daily: [] },
+      }),
+    });
+  });
+  await page.goto("./?view=forecasts&run=1&area_code=11&days=14");
+  await expect(page.getByText(areaId, { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+    await page.evaluate(() => window.innerWidth),
+  );
 });
