@@ -32,8 +32,15 @@ def retain_observations(
     now = now or datetime.now(UTC).replace(tzinfo=None)
     protected = defaultdict(set)
     with factory() as session:
-        for metadata in session.scalars(select(m.ReadModelSnapshot.metadata_json)):
-            for kind, identifiers in (metadata or {}).get("normalized_references", {}).items():
+        references = session.scalars(
+            select(m.ReadModelSnapshot.metadata_json["normalized_references"])
+            .execution_options(yield_per=10)
+        )
+        for reference in references:
+            if monotonic() >= deadline or (pause_reason and pause_reason()):
+                # Incomplete protection must never permit deletion.
+                return {}
+            for kind, identifiers in (reference or {}).items():
                 protected[kind].update(str(value) for value in identifiers)
     policies = [
         (m.RegionalVisitObservation, "observation_id", "period_start", now - timedelta(days=486)),

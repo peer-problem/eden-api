@@ -12,7 +12,7 @@ from enum import Enum
 from time import monotonic
 from typing import Any
 
-from sqlalchemy import delete, exists, select, text, update
+from sqlalchemy import delete, exists, func, select, text, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, aliased, sessionmaker
@@ -723,31 +723,39 @@ def _retention_candidate_ids(
 ) -> tuple[str, ...]:
     if older_than.tzinfo is not None:
         older_than = _database_time(older_than)
-    newer = aliased(ReadModelSnapshot)
+    retired = select(
+        ReadModelSnapshot.snapshot_id,
+        func.row_number().over(
+            partition_by=(ReadModelSnapshot.endpoint, ReadModelSnapshot.lookup_key_hash),
+            order_by=(ReadModelSnapshot.calculated_at.desc(), ReadModelSnapshot.snapshot_id.desc()),
+        ).label("version_rank"),
+    ).where(ReadModelSnapshot.state == "retired").subquery()
     is_current_head = exists(
         select(ReadModelHead.snapshot_id).where(
             ReadModelHead.snapshot_id == ReadModelSnapshot.snapshot_id
         )
     )
-    # Two newer retired rows are sufficient. Counting the entire history for
-    # every candidate made a small cleanup spend seconds scanning old versions.
-    has_newer_retired = (
-        select(newer.snapshot_id)
-        .where(
-            newer.endpoint == ReadModelSnapshot.endpoint,
-            newer.lookup_key_hash == ReadModelSnapshot.lookup_key_hash,
-            newer.state == "retired",
-            (newer.calculated_at > ReadModelSnapshot.calculated_at)
-            | (
-                (newer.calculated_at == ReadModelSnapshot.calculated_at)
-                & (newer.snapshot_id > ReadModelSnapshot.snapshot_id)
-            ),
-        )
-        .offset(1)
-        .limit(1)
-        .exists()
+    # Rank once, instead of scanning a key's history again for each candidate.
+    # Keep the two newest retired versions in addition to every current head.
+    is_retired_cleanup = ReadModelSnapshot.snapshot_id.in_(
+        select(retired.c.snapshot_id).where(retired.c.version_rank > 2)
     )
-    is_retired_cleanup = (ReadModelSnapshot.state == "retired") & has_newer_retired
+    if candidate_id:
+        # Under the per-key publication lock, recheck just this candidate using
+        # the key index. Re-ranking every key for each deletion wastes the budget.
+        newer = aliased(ReadModelSnapshot)
+        is_retired_cleanup = (ReadModelSnapshot.state == "retired") & (
+            select(newer.snapshot_id).where(
+                newer.endpoint == ReadModelSnapshot.endpoint,
+                newer.lookup_key_hash == ReadModelSnapshot.lookup_key_hash,
+                newer.state == "retired",
+                (newer.calculated_at > ReadModelSnapshot.calculated_at)
+                | (
+                    (newer.calculated_at == ReadModelSnapshot.calculated_at)
+                    & (newer.snapshot_id > ReadModelSnapshot.snapshot_id)
+                ),
+            ).offset(1).limit(1).exists()
+        )
     is_abandoned_staging = ReadModelSnapshot.state.in_(("staging", "ready"))
     return tuple(
         session.scalars(
