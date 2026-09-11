@@ -53,12 +53,12 @@ def create_app(
             factory = create_session_factory(engine)
             app.state.read_repository = MariaDBReadRepository(factory)
             app.state.session_factory = factory
-            scheduler_engine = create_scheduler_database_engine(resolved_settings)
-            scheduler_factory = create_session_factory(scheduler_engine)
-            app.state.pilot_session_factory = scheduler_factory
             if resolved_settings.SCHEDULER_ENABLED:
                 from app.scheduler.runtime import start_scheduler
 
+                scheduler_engine = create_scheduler_database_engine(resolved_settings)
+                scheduler_factory = create_session_factory(scheduler_engine)
+                app.state.pilot_session_factory = scheduler_factory
                 app.state.scheduler = start_scheduler(
                     resolved_settings,
                     scheduler_factory,

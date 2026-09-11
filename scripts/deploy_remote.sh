@@ -359,8 +359,9 @@ printf '%s\n' "$ingestion_grants" \
 rm -f "$db_probe_config" "$ingestion_probe_config"
 trap recover_previous_release EXIT
 case "$(printf '%s' "$SCHEDULER_ENABLED" | tr '[:upper:]' '[:lower:]')" in
-  true|1|yes|on) ;;
-  *) echo "SCHEDULER_ENABLED must be true for the Phase 1 concurrent soak." >&2; exit 1 ;;
+  true|1|yes|on) background_jobs_enabled=true ;;
+  false|0|no|off) background_jobs_enabled=false ;;
+  *) echo "Invalid SCHEDULER_ENABLED setting." >&2; exit 1 ;;
 esac
 
 install -d -m 750 /opt/eden/phase1-evidence /opt/eden/phase2-evidence
@@ -394,9 +395,9 @@ if sys.version_info[:2] != (3, 12):
 importlib.import_module(sysconfig._get_sysconfigdata_name())
 PY
 
-systemctl stop eden-phase1-soak.timer 2>/dev/null || true
-systemctl stop eden-phase2-soak.timer 2>/dev/null || true
-systemctl stop eden-phase2-pilot-report.timer 2>/dev/null || true
+for unit in eden-phase1-soak eden-phase2-soak eden-phase2-pilot-report; do
+  systemctl stop "$unit.timer" "$unit.service" 2>/dev/null || true
+done
 for unit in eden-phase1-query-plans eden-db-maintenance-report; do
   systemctl stop "$unit.timer" "$unit.service" 2>/dev/null || true
 done
@@ -430,7 +431,9 @@ export DB_USER="$runtime_user"
 export DB_PASSWORD="$runtime_password"
 # Update registry policy only. Historical imports and product rebuilds must
 # not bypass the scheduler capacity gate on every deployment.
-uv run python scripts/seed_reference.py
+if [[ "$background_jobs_enabled" == true ]]; then
+  uv run python scripts/seed_reference.py
+fi
 
 ln -sfn "$release" /opt/eden/current
 cat >/etc/systemd/system/eden-api.service <<'UNIT'
@@ -726,7 +729,9 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 curl -fsS http://127.0.0.1:8000/internal/readiness >/dev/null
-uv run python scripts/phase1_soak.py baseline --iterations 20
+if [[ "$background_jobs_enabled" == true ]]; then
+  uv run python scripts/phase1_soak.py baseline --iterations 20
+fi
 
 rm -f /etc/systemd/system/eden-api.service.d/20-phase1-baseline.conf
 rm -f /opt/eden/phase1-evidence/baseline.env
@@ -742,14 +747,21 @@ curl -fsS http://127.0.0.1:8000/internal/readiness >/dev/null
 # The API process owns the bounded payload cache. Prime it after the
 # scheduler-on restart so the first timed sample measures steady-state work.
 uv run python scripts/phase1_soak.py warmup >/dev/null
-systemctl start eden-phase2-pilot-report.service
+if [[ "$background_jobs_enabled" == true ]]; then
+  systemctl start eden-phase2-pilot-report.service
+fi
 curl -fsS --max-time 10 https://api.edenapi.org/openapi.json >/dev/null
 curl -fsS --max-time 10 https://api.edenapi.org/docs >/dev/null
 [[ "$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' https://api.edenapi.org/dashboard/)" == "410" ]]
 curl -fsS --max-time 10 'https://api.edenapi.org/v1/trends?keyword=%EC%A0%9C%EC%A3%BC&period=7d&time_unit=day&limit=1' >/dev/null
-systemctl enable --now eden-phase1-soak.timer \
-  eden-phase2-soak.timer \
-  eden-phase2-pilot-report.timer
+for unit in eden-phase1-soak eden-phase2-soak eden-phase2-pilot-report; do
+  if [[ "$background_jobs_enabled" == true ]]; then
+    systemctl enable --now "$unit.timer"
+  else
+    systemctl disable --now "$unit.timer"
+    systemctl stop "$unit.service"
+  fi
+done
 # Retire report-only units from older releases. Their prior state is included
 # in rollback above until the deployment finishes.
 for unit in eden-phase1-query-plans eden-db-maintenance-report; do
