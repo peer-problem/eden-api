@@ -91,6 +91,29 @@ def _window_rows(rows: list[dict[str, Any]], start: date, end: date) -> list[dic
     return [row for row in rows if start <= _day(str(row["period_start"])) <= end]
 
 
+def _coverage_rows(
+    rows: list[dict[str, Any]], visitor_type: str, *, allow_concentration: bool = False
+) -> list[dict[str, Any]]:
+    grouped = defaultdict(list)
+    for row in rows:
+        key = tuple(row.get(field) for field in (
+            "period_start", "grain", "subject_type", "subject_key"
+        ))
+        grouped[key].append(row)
+    covered = []
+    for group in grouped.values():
+        if visitor_type != "all":
+            covered.extend(
+                row for row in group
+                if row.get("visitor_type") == visitor_type and row.get("visitor_count") is not None
+            )
+        elif _visitor_totals(group)["all"] is not None:
+            covered.extend(row for row in group if row.get("visitor_count") is not None)
+        elif allow_concentration:
+            covered.extend(row for row in group if row.get("concentration_rate") is not None)
+    return covered
+
+
 def _latest_month(rows):
     if not rows:
         return []
@@ -142,8 +165,7 @@ def build_region_insight_view(
         observed_days = len(
             {
                 _day(str(row["period_start"]))
-                for row in visit_rows
-                if row.get("visitor_count") is not None
+                for row in _coverage_rows(visit_rows, visitor_type)
             }
         )
         completeness = min(1.0, observed_days / days)
@@ -164,7 +186,7 @@ def build_region_insight_view(
             "completeness_ratio": completeness,
             "reason": (
                 None
-                if completeness == 1
+                if visitor_state == Availability.AVAILABLE
                 else "일부 날짜의 방문 관측이 없습니다."
                 if visitor_available
                 else "요청 기간의 방문 관측이 없습니다."
@@ -183,8 +205,7 @@ def build_region_insight_view(
             baseline_days = len(
                 {
                     _day(str(row["period_start"]))
-                    for row in baseline_rows
-                    if row.get("visitor_count") is not None
+                    for row in _coverage_rows(baseline_rows, visitor_type)
                 }
             )
             change = _change_rate(
@@ -406,9 +427,11 @@ def build_visitor_timeseries_view(
     visitor_type = str(scope.get("visitor_type", "all"))
     for bucket in _expected_buckets(start, end, granularity):
         rows = buckets.get(bucket, [])
+        covered_rows = _coverage_rows(rows, visitor_type, allow_concentration=True)
         totals = _project_visitor_totals(_visitor_totals(rows), visitor_type)
         concentrations = [
-            value for row in rows if (value := _number(row.get("concentration_rate"))) is not None
+            value for row in covered_rows
+            if (value := _number(row.get("concentration_rate"))) is not None
         ]
         series.append(
             {
@@ -422,7 +445,7 @@ def build_visitor_timeseries_view(
                     bounded_index(mean(concentrations)) if concentrations else None
                 ),
                 "completeness_ratio": _bucket_completeness(
-                    rows, source_grain, granularity, bucket, start, end
+                    covered_rows, source_grain, granularity, bucket, start, end
                 ),
             }
         )
@@ -437,7 +460,11 @@ def build_visitor_timeseries_view(
         if point["concentration_rate"] is not None
     ]
     completeness = round(mean(point["completeness_ratio"] for point in series), 6)
-    availability = Availability.AVAILABLE if completeness == 1 else Availability.PARTIAL
+    availability = (
+        Availability.UNAVAILABLE
+        if total is None and not concentration_values
+        else Availability.AVAILABLE if completeness == 1 else Availability.PARTIAL
+    )
     return (
         {
             "area": product["area"],
@@ -461,5 +488,7 @@ def build_visitor_timeseries_view(
             "sources": ["SRC_TOURISM_ADMISSION" if attraction else "SRC_KTO_REGIONAL_VISITORS"],
         },
         availability,
-        None if availability == Availability.AVAILABLE else "시계열의 일부 날짜가 없습니다.",
+        None if availability == Availability.AVAILABLE
+        else "요청한 방문자 유형의 관측이 없습니다." if availability == Availability.UNAVAILABLE
+        else "시계열의 일부 날짜가 없습니다.",
     )

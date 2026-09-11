@@ -235,3 +235,40 @@ def test_timeseries_missing_requested_buckets_reduce_completeness() -> None:
     assert data["summary"]["completeness_ratio"] == round(1 / 7, 6)
     assert availability == Availability.PARTIAL
     assert reason == "시계열의 일부 날짜가 없습니다."
+
+
+@pytest.mark.parametrize("foreign_days", [0, 3, 7])
+def test_other_visitor_type_cannot_fill_missing_requested_observations(foreign_days):
+    visits = [
+        _visit("domestic", 100, period_start=f"2026-08-{day:02}") for day in range(23, 30)
+    ]
+    visits += [
+        _visit("foreign", 0, period_start=f"2026-08-{day:02}")
+        for day in range(23, 23 + foreign_days)
+    ]
+    scope = {"period": "7d", "visitor_type": "foreign", "include": ["visitors"]}
+    region, _, _ = build_region_insight_view({"area": _area(), "visits": visits}, scope)
+    series, availability, reason = build_visitor_timeseries_view(
+        {"area": _area(), "visits": visits}, scope
+    )
+    expected = (
+        Availability.UNAVAILABLE if foreign_days == 0 else
+        Availability.AVAILABLE if foreign_days == 7 else Availability.PARTIAL
+    )
+    assert availability == expected
+    assert region["visitors"]["availability"] == expected
+    assert region["visitors"]["completeness_ratio"] == foreign_days / 7
+    assert region["visitors"]["reason"] is not None if foreign_days < 7 else reason is None
+    assert series["summary"]["completeness_ratio"] == round(foreign_days / 7, 6)
+    assert series["summary"]["total"] == (0 if foreign_days else None)
+
+
+def test_all_visitor_coverage_requires_a_total_or_both_components():
+    visits = [_visit("domestic", 20, period_start=f"2026-08-{day:02}") for day in range(23, 30)]
+    visits.append(_visit("foreign", 5))
+    data, availability, _ = build_visitor_timeseries_view(
+        {"area": _area(), "visits": visits}, {"period": "7d", "visitor_type": "all"}
+    )
+    assert data["summary"]["total"] == 25
+    assert data["summary"]["completeness_ratio"] == round(1 / 7, 6)
+    assert availability == Availability.PARTIAL
