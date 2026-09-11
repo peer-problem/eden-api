@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from sqlalchemy import BigInteger, Integer, create_engine, select
+from sqlalchemy.orm import Session
 
 from app.normalization import forecast
+from app.repositories.models import ForecastInput
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "normalization" / "forecast" / "cases.json"
 
@@ -31,6 +34,83 @@ def test_weather_pivot_preserves_zero_and_only_source_horizon_dates() -> None:
 def test_weather_schema_drift_is_rejected() -> None:
     with pytest.raises(ValueError, match="unsupported source date"):
         forecast.normalize_weather_rows([_fixture()["malformed_weather_row"]])
+
+
+@pytest.fixture
+def forecast_session(monkeypatch):
+    engine = create_engine("sqlite://")
+    # Exercise real filtering and updates without a persistent database.
+    monkeypatch.setattr(
+        ForecastInput.__table__.c.input_id, "type", BigInteger().with_variant(Integer, "sqlite")
+    )
+    ForecastInput.__table__.create(engine)
+    monkeypatch.setattr(forecast, "_provenance", lambda *_args: None)
+    with Session(engine) as session:
+        yield session
+    engine.dispose()
+
+
+def test_unmapped_forecast_places_remain_distinct_and_repeat_updates_are_idempotent(
+    forecast_session,
+):
+    now = datetime.now(UTC) - timedelta(minutes=5)
+    raw = SimpleNamespace(raw_record_id=1, observed_at=now, source_updated_at=now, ingested_at=now)
+    for name, score in [("관광지 A", 10), ("관광지 B", 20), ("관광지 A", 30), (None, 40)]:
+        forecast._upsert_forecast_input(
+            forecast_session, raw, source_id=forecast.VISITOR_FORECAST_SOURCE,
+            area_id="area-11", place_id=None, forecast_date=datetime(2026, 9, 12),
+            source_forecast={"place_name": name, "concentration_rate": score},
+        )
+    rows = list(forecast_session.scalars(select(ForecastInput)))
+    assert len(rows) == 3
+    assert {row.source_forecast["place_name"]: row.source_forecast["concentration_rate"]
+            for row in rows} == {"관광지 A": 30, "관광지 B": 20, None: 40}
+
+
+@pytest.mark.parametrize("source_id", [forecast.VISITOR_FORECAST_SOURCE, forecast.WEATHER_SOURCE])
+@pytest.mark.parametrize("older_source_time", [True, False])
+def test_forecast_replay_preserves_latest_values_and_audit(
+    forecast_session, source_id, older_source_time,
+):
+    now = datetime.now(UTC) - timedelta(minutes=5)
+    raw = SimpleNamespace(raw_record_id=1, observed_at=now, source_updated_at=now, ingested_at=now)
+    old = SimpleNamespace(
+        raw_record_id=2, observed_at=now-timedelta(days=1),
+        source_updated_at=now-timedelta(days=1) if older_source_time else now,
+        ingested_at=now-timedelta(hours=1),
+    )
+    for record, value in [(raw, 90), (old, 5)]:
+        forecast._upsert_forecast_input(
+            forecast_session, record, source_id=source_id,
+            area_id="area-11", place_id=None, forecast_date=datetime(2026, 9, 12),
+            source_forecast={"place_name": "관광지 A", "concentration_rate": value}
+            if source_id == forecast.VISITOR_FORECAST_SOURCE else None,
+            weather={"temperature_c": value} if source_id == forecast.WEATHER_SOURCE else None,
+        )
+    row = forecast_session.scalar(select(ForecastInput))
+    assert row.source_updated_at == now.replace(tzinfo=None)
+    assert row.ingested_at == now.replace(tzinfo=None)
+    assert (row.source_forecast or row.weather) == (
+        {"place_name": "관광지 A", "concentration_rate": 90}
+        if source_id == forecast.VISITOR_FORECAST_SOURCE else {"temperature_c": 90}
+    )
+
+
+def test_older_independent_festival_is_retained_without_rewinding_audit(forecast_session):
+    now = datetime.now(UTC) - timedelta(minutes=5)
+    for time, name in [(now, "new"), (now-timedelta(days=1), "old"), (now, "new")]:
+        raw = SimpleNamespace(
+            raw_record_id=1, observed_at=time, source_updated_at=time, ingested_at=time
+        )
+        forecast._upsert_forecast_input(
+            forecast_session, raw, source_id=forecast.FESTIVAL_SOURCE,
+            area_id="area-11", place_id=None, forecast_date=datetime(2026, 9, 12),
+            festivals=[{"name": name, "start_date": "2026-09-12", "end_date": "2026-09-12"}],
+        )
+    row = forecast_session.scalar(select(ForecastInput))
+    assert {item["name"] for item in row.festivals} == {"new", "old"}
+    assert len(row.festivals) == 2
+    assert row.source_updated_at == now.replace(tzinfo=None)
 
 
 def test_weather_rejects_multiple_grids_for_one_area_date() -> None:
@@ -340,7 +420,10 @@ def test_visitor_forecast_normalizer_keeps_good_rows_after_bad_row(
 def test_forecast_fact_retains_raw_audit_timestamps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    existing = SimpleNamespace(input_id=7, festivals=None)
+    existing = SimpleNamespace(
+        input_id=7, festivals=None,
+        source_updated_at=datetime(2026, 8, 28), ingested_at=datetime(2026, 8, 28),
+    )
 
     class Session:
         def scalar(self, _statement: object) -> object:

@@ -61,7 +61,30 @@ def _upsert_forecast_input(
         if place_id is not None
         else statement.where(ForecastInput.place_id.is_(None))
     )
+    if source_id == VISITOR_FORECAST_SOURCE and place_id is None:
+        place_name = (source_forecast or {}).get("place_name")
+        statement = statement.where(
+            ForecastInput.source_forecast["place_name"].as_string() == place_name
+        )
     existing = session.scalar(statement.limit(1))
+    if existing is not None and (source_updated_at, ingested_at) < (
+        existing.source_updated_at, existing.ingested_at
+    ):
+        # Festival rows aggregate independent events. Keep older, previously unseen
+        # events without replacing newer events or moving the row's audit backwards.
+        if festivals:
+            events = {
+                (item.get("name"), item.get("start_date"), item.get("end_date")): item
+                for item in (existing.festivals or [])
+            }
+            for item in festivals:
+                events.setdefault(
+                    (item.get("name"), item.get("start_date"), item.get("end_date")), item
+                )
+            existing.festivals = list(events.values())
+            session.flush()
+            _provenance(session, "forecast_input", existing.input_id, (raw.raw_record_id,))
+        return existing.input_id
     values = {
         "area_id": area_id,
         "place_id": place_id,
