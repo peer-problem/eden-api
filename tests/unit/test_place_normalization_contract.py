@@ -70,6 +70,9 @@ def test_cached_place_identity_does_not_skip_newer_localization_update() -> None
         def execute(self, statement: object) -> None:
             self.statements.append(statement)
 
+        def get(self, _model: object, _identifier: object) -> None:
+            return None
+
         def flush(self) -> None:
             return None
 
@@ -102,3 +105,38 @@ def test_cached_place_identity_does_not_skip_newer_localization_update() -> None
     ]
     assert len(localization_statements) == 2
     assert localization_statements[-1].compile().params["title"] == "Updated title"
+
+
+def test_retired_tour_area_does_not_overwrite_verified_active_place_area(monkeypatch):
+    from app.repositories.models import Area, Place
+
+    statements = []
+    objects = {
+        (Place, "place-1"): SimpleNamespace(area_id="active-area"),
+        (Area, "retired-area"): SimpleNamespace(active=False),
+        (Area, "active-area"): SimpleNamespace(active=True),
+    }
+    session = SimpleNamespace(
+        info={}, get=lambda model, key: objects.get((model, key)), execute=statements.append
+    )
+    monkeypatch.setattr(places, "_existing_place_id", lambda *_args: "place-1")
+    monkeypatch.setattr(places, "_existing_localization_id", lambda *_args: 7)
+    monkeypatch.setattr(places, "_output_accepts_raw", lambda *_args: True)
+    monkeypatch.setattr(places, "_place_provenance", lambda *_args: None)
+    places._upsert_place(
+        session,
+        SimpleNamespace(raw_record_id=1),
+        "SRC_TOUR_KO",
+        "content-1",
+        "retired-area",
+        "실제 장소",
+        "ko",
+        "culture",
+        None,
+        None,
+        None,
+        None,
+        "KTO_CONTENT",
+    )
+    insert = next(statement for statement in statements if statement.table.name == "place")
+    assert insert.compile().params["area_id"] == "active-area"

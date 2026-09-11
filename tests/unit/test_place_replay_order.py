@@ -21,6 +21,9 @@ class _RecordingSession:
         self.scalar_statements.append(statement)
         return next(self._scalar_values)
 
+    def get(self, _model: object, _identifier: object) -> None:
+        return None
+
     def execute(self, statement: Any) -> None:
         self.statements.append(statement)
 
@@ -137,9 +140,7 @@ def test_older_other_language_adds_missing_localization_without_rewriting_place(
         "provenance_edge",
         "provenance_edge",
     ]
-    localization = session.statements[first_statement_count + 1].compile(
-        dialect=mysql.dialect()
-    )
+    localization = session.statements[first_statement_count + 1].compile(dialect=mysql.dialect())
     assert localization.params["language"] == "ko"
     assert localization.params["title"] == "Older Korean title"
 

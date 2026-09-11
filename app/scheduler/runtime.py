@@ -325,7 +325,10 @@ def _runtime_scope(
                     code = str(op["params"]["areaCode"])
                     prefix = KTO_TOURAPI_AREA_TO_MOIS_PREFIX[code]
                     allowed[code] = [
-                        external for external, area in maps if area and area[:2] == prefix
+                        external
+                        for external, area in maps
+                        if area
+                        and (area[:2] == prefix or (prefix in {"29", "46"} and area[:2] == "12"))
                     ]
                 operations.sort(
                     key=lambda op: (
@@ -412,7 +415,7 @@ def _runtime_scope(
     if not candidates:
         return {"operations": []}
     batch_count = max(1, math.ceil(len(candidates) / SEMAS_PLACES_PER_RUN))
-    batch_index = datetime.now(UTC).date().toordinal() % batch_count
+    batch_index = int(datetime.now(UTC).timestamp() // (6 * 3600)) % batch_count
     start = batch_index * SEMAS_PLACES_PER_RUN
     places = candidates[start : start + SEMAS_PLACES_PER_RUN]
     return {

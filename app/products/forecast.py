@@ -43,7 +43,20 @@ def build_forecast_snapshots(
         area_ids = list(
             session.scalars(
                 select(Area.eden_area_id)
-                .where(Area.active.is_(True), Area.level == "sido")
+                .where(
+                    Area.active.is_(True),
+                    or_(
+                        Area.level == "sido",
+                        select(ForecastInput.input_id)
+                        .where(
+                            ForecastInput.area_id == Area.eden_area_id,
+                            ForecastInput.source_id == "SRC_KTO_VISITOR_FORECAST",
+                            ForecastInput.forecast_date >= start,
+                            ForecastInput.forecast_date < end,
+                        )
+                        .exists(),
+                    ),
+                )
                 .order_by(Area.eden_area_id)
             ).all()
         )

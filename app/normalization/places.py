@@ -24,6 +24,7 @@ from app.normalization.public_data import (
     _text,
 )
 from app.repositories.models import (
+    Area,
     NearbyShop,
     Place,
     PlaceLocalization,
@@ -129,6 +130,14 @@ def _upsert_place(
 ) -> str:
     now = datetime.now(UTC).replace(tzinfo=None)
     place_id = _existing_place_id(session, source_id, external_id, lat, lng, namespace)
+    existing_place = session.get(Place, place_id)
+    incoming_area = session.get(Area, area_id)
+    if existing_place is not None and incoming_area is not None and not incoming_area.active:
+        current_area = session.get(Area, existing_place.area_id)
+        if current_area is not None and current_area.active:
+            # An unchanged source identity may still carry a retired area code.
+            # Keep its already verified active assignment across source refreshes.
+            area_id = existing_place.area_id
     source_updated_at = getattr(raw, "source_updated_at", None)
     incoming_timestamp = (
         _database_time(source_updated_at) if source_updated_at is not None else None
