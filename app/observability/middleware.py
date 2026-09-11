@@ -82,7 +82,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
         except Exception:
             route = request.scope.get("route")
-            stable_path = getattr(route, "path", request.url.path)
+            stable_path = getattr(route, "path", "unmatched")
             await _record_request_completion(
                 request,
                 request_id=request_id,
@@ -97,7 +97,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         response.headers["X-Request-ID"] = request_id
         duration_seconds = time.perf_counter() - started
         route = request.scope.get("route")
-        stable_path = getattr(route, "path", request.url.path)
+        stable_path = getattr(route, "path", "unmatched")
         stale = bool(getattr(request.state, "response_stale", False))
         raw_content_length = response.headers.get("content-length")
         if raw_content_length and raw_content_length.isdecimal():

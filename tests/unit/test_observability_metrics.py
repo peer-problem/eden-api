@@ -70,6 +70,27 @@ def test_source_metrics_capture_fetch_run_and_freshness() -> None:
     assert _sample("eden_source_consecutive_failures", fetch_labels) == 0
 
 
+def test_unknown_public_paths_and_methods_use_bounded_http_labels(contract_client) -> None:
+    from app.observability.metrics import HTTP_DURATION, HTTP_REQUESTS, HTTP_RESPONSE_BYTES
+
+    for index in range(25):
+        assert contract_client.get(f"/v1/missing-{index}").status_code == 404
+        assert contract_client.request(f"CUSTOM{index}", f"/v1/missing-{index}").status_code == 404
+    for metric in (HTTP_REQUESTS, HTTP_DURATION, HTTP_RESPONSE_BYTES):
+        samples = [sample for family in metric.collect() for sample in family.samples]
+        assert not any("/v1/missing-" in sample.labels.get("endpoint", "") for sample in samples)
+        methods = {
+            sample.labels["method"] for sample in samples
+            if sample.labels.get("endpoint") == "unmatched"
+        }
+        assert "OTHER" in methods
+        assert not any(method.startswith("CUSTOM") for method in methods)
+    assert contract_client.get("/v1/trends", params={"keyword": "test"}).status_code == 200
+    assert _sample("eden_http_requests_total", {
+        "method": "GET", "endpoint": "/v1/trends", "status_code": "200"
+    }) > 0
+
+
 def test_scheduler_dead_letter_and_product_metrics_use_bounded_labels() -> None:
     job_labels = {"job_type": "source"}
     duration_count_before = _sample("eden_scheduler_job_duration_seconds_count", job_labels)

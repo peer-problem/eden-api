@@ -233,6 +233,7 @@ def _query_operation(statement: str) -> str:
 
 
 def record_http_request(method: str, endpoint: str, status_code: int, duration: float) -> None:
+    method = _http_method_label(method)
     HTTP_REQUESTS.labels(method, endpoint, str(status_code)).inc()
     HTTP_DURATION.labels(method, endpoint).observe(duration)
     if endpoint.startswith("/v1/"):
@@ -252,7 +253,12 @@ def recent_api_p95_seconds(*, minimum_samples: int = 20) -> float | None:
 
 
 def record_http_response_size(method: str, endpoint: str, response_bytes: int) -> None:
-    HTTP_RESPONSE_BYTES.labels(method, endpoint).observe(max(0, response_bytes))
+    HTTP_RESPONSE_BYTES.labels(_http_method_label(method), endpoint).observe(max(0, response_bytes))
+
+
+def _http_method_label(method: str) -> str:
+    known = {"GET", "POST", "HEAD", "OPTIONS", "PUT", "PATCH", "DELETE", "TRACE", "CONNECT"}
+    return method if method in known else "OTHER"
 
 
 def record_api_availability(
