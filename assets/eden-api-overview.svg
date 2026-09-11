@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1032" viewBox="0 0 1440 1032" role="img" aria-labelledby="title desc">
+  <title id="title">EDEN API overview</title>
+  <desc id="desc">Eight independent endpoints grouped into discovery, analysis, and destination decisions. Every endpoint returns data and source metadata. Arrows suggest a usage flow, not dependencies between endpoints.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#1685ed"/></marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #17212d; }
+      .heading { font-size: 29px; font-weight: 700; }
+      .number { font-size: 28px; font-weight: 700; fill: #1685ed; }
+      .group { font-size: 25px; font-weight: 700; letter-spacing: .2px; }
+      .name { font-size: 24px; font-weight: 700; }
+      .detail { font-size: 20px; fill: #596778; }
+      .method { font-size: 15px; font-weight: 700; fill: #64748b; letter-spacing: 1px; }
+      .path { font-family: 'DejaVu Sans Mono', Consolas, monospace; font-size: 17px; }
+      .field { font-family: 'DejaVu Sans Mono', Consolas, monospace; font-size: 21px; }
+      .footer { font-size: 18px; fill: #596778; }
+    </style>
+  </defs>
+  <rect width="1440" height="1032" fill="#fff"/>
+  <text class="heading" x="48" y="55">EDEN API</text>
+  <text class="detail" x="48" y="91">From discovery to destination decisions</text>
+
+<g><rect x="24" y="126" width="432" height="698" rx="3" fill="#fff" stroke="#97a3b2" stroke-width="1.3"/>
+<text class="number" x="48" y="177">01</text><text class="group" x="102" y="177">DISCOVER</text><path d="M48 199 H432" stroke="#1685ed" stroke-width="1.5"/>
+<g><rect x="48" y="228" width="384" height="166" rx="3" fill="#fff" stroke="#cbd2db" stroke-width="1.2"/>
+<text class="name" x="68" y="264">Trends</text>
+<text class="detail" x="68" y="293">YouTube keyword metrics</text>
+<text class="method" x="68" y="341">GET</text>
+<text class="path" x="68" y="370">/v1/trends</text></g>
+<g><rect x="48" y="414" width="384" height="166" rx="3" fill="#fff" stroke="#cbd2db" stroke-width="1.2"/>
+<text class="name" x="68" y="450">Places</text>
+<text class="detail" x="68" y="479">Details, translations and nearby places</text>
+<text class="method" x="68" y="527">GET</text>
+<text class="path" x="68" y="556">/v1/places/{content_id}</text></g>
+<g><rect x="48" y="600" width="384" height="166" rx="3" fill="#fff" stroke="#cbd2db" stroke-width="1.2"/>
+<text class="name" x="68" y="636">Regional insights</text>
+<text class="detail" x="68" y="665">Visitor patterns and regional context</text>
+<text class="method" x="68" y="713">GET</text>
+<text class="path" x="68" y="742">/v1/regions/{area_code}/insights</text></g>
+</g>
+<g><rect x="504" y="126" width="432" height="698" rx="3" fill="#fff" stroke="#97a3b2" stroke-width="1.3"/>
+<text class="number" x="528" y="177">02</text><text class="group" x="582" y="177">UNDERSTAND</text><path d="M528 199 H912" stroke="#1685ed" stroke-width="1.5"/>
+<g><rect x="528" y="228" width="384" height="166" rx="3" fill="#fff" stroke="#cbd2db" stroke-width="1.2"/>
+<text class="name" x="548" y="264">Visitor history</text>
+<text class="detail" x="548" y="293">Daily, weekly and monthly indicators</text>
+<text class="method" x="548" y="341">GET</text>
+<text class="path" x="548" y="370">/v1/visitors/timeseries</text></g>
+<g><rect x="528" y="414" width="384" height="166" rx="3" fill="#fff" stroke="#cbd2db" stroke-width="1.2"/>
+<text class="name" x="548" y="450">Visitor outlook</text>
+<text class="detail" x="548" y="479">Historical demand index and context</text>
+<text class="method" x="548" y="527">GET</text>
+<text class="path" x="548" y="556">/v1/forecasts/visitors</text></g>
+<g><rect x="528" y="600" width="384" height="166" rx="3" fill="#fff" stroke="#cbd2db" stroke-width="1.2"/>
+<text class="name" x="548" y="636">Inbound markets</text>
+<text class="detail" x="548" y="665">Visits, flights and exchange rates</text>
+<text class="method" x="548" y="713">GET</text>
+<text class="path" x="548" y="742">/v1/markets/inbound</text></g>
+</g>
+<g><rect x="984" y="126" width="432" height="698" rx="3" fill="#fff" stroke="#97a3b2" stroke-width="1.3"/>
+<text class="number" x="1008" y="177">03</text><text class="group" x="1062" y="177">DECIDE</text><path d="M1008 199 H1392" stroke="#1685ed" stroke-width="1.5"/>
+<g><rect x="1008" y="228" width="384" height="166" rx="3" fill="#fff" stroke="#cbd2db" stroke-width="1.2"/>
+<text class="name" x="1028" y="264">Official alerts</text>
+<text class="detail" x="1028" y="293">Entry and safety notices</text>
+<text class="detail" x="1028" y="318">with source links</text>
+<text class="method" x="1028" y="341">GET</text>
+<text class="path" x="1028" y="370">/v1/markets/{country}/alerts</text></g>
+<g><rect x="1008" y="414" width="384" height="166" rx="3" fill="#fff" stroke="#cbd2db" stroke-width="1.2"/>
+<text class="name" x="1028" y="450">Destination recommendations</text>
+<text class="detail" x="1028" y="479">Suggested places and scoring reasons</text>
+<text class="method" x="1028" y="527">POST</text>
+<text class="path" x="1028" y="556">/v1/recommendations/destinations</text></g>
+</g>
+<path d="M456 286 H503" stroke="#1685ed" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M936 286 H983" stroke="#1685ed" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M240 824 V878" stroke="#97a3b2" stroke-width="1.3"/>
+<path d="M720 824 V878" stroke="#97a3b2" stroke-width="1.3"/>
+<path d="M1200 824 V878" stroke="#97a3b2" stroke-width="1.3"/>
+<rect x="24" y="878" width="1392" height="100" rx="3" fill="#fff" stroke="#97a3b2" stroke-width="1.3"/>
+<text class="name" x="48" y="918">Shared response context</text>
+<text class="field" x="48" y="953">data</text>
+<text class="field" x="320" y="953">meta.availability</text>
+<text class="field" x="710" y="953">meta.as_of</text>
+<text class="field" x="1070" y="953">meta.sources</text>
+<text class="footer" x="24" y="1014">Suggested usage flow. Endpoints are independent.</text>
+<text class="footer" x="1416" y="1014" text-anchor="end">https://api.edenapi.org</text>
+</svg>
