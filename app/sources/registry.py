@@ -25,6 +25,7 @@ PUBLIC_DATA_SOURCES = {
     item.source_id for item in SOURCES if item.auth_type == "public_data_service_key"
 }
 STATISTICAL_PUBLIC_DATA_SOURCES = {
+    "SRC_KTO_REGIONAL_VISITORS",
     "SRC_KTO_RESOURCE_DEMAND",
     "SRC_KTO_DEMAND_INTENSITY",
     "SRC_KTO_DIVERSITY",
@@ -123,9 +124,9 @@ def build_adapter(
             settings.YOUTUBE_API_KEY,
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
-            settings.SOURCE_MAX_REQUESTS_PER_RUN,
+            30,  # 15 daily market queries, each needs search and statistics.
             settings.SOURCE_MAX_RUN_BYTES,
-            settings.SOURCE_MAX_RUN_SECONDS,
+            120,
         )
     if source_id == "SRC_X":
         return XCountAdapter(
@@ -149,7 +150,7 @@ def build_adapter(
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
             (
-                settings.SOURCE_STATISTICAL_MAX_REQUESTS_PER_RUN
+                min(settings.SOURCE_STATISTICAL_MAX_REQUESTS_PER_RUN, 60)
                 if source_id in STATISTICAL_PUBLIC_DATA_SOURCES
                 else settings.SOURCE_MAX_REQUESTS_PER_RUN
             ),
@@ -176,7 +177,7 @@ def build_adapter(
             hosts,
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
-            settings.SOURCE_MAX_REQUESTS_PER_RUN,
+            20 if source_id == "SRC_EMBASSY_NOTICE" else settings.SOURCE_MAX_REQUESTS_PER_RUN,
             settings.SOURCE_MAX_RUN_BYTES,
             settings.SOURCE_MAX_RUN_SECONDS,
         )

@@ -52,6 +52,12 @@ from app.repositories.models import (
 from app.repositories.retry import run_with_disconnect_retry
 from app.scheduler.capacity import SchedulerCapacityGate
 from app.scheduler.locks import MariaDBAdvisoryLock
+from app.sources.essential import (
+    DISABLED_SOURCES,
+    EXPANSION_SOURCES,
+    SOURCE_INTERVALS,
+    essential_place_ids,
+)
 from app.sources.plans import (
     KTO_RELATED_PLACES_PER_RUN,
     kto_related_place_operations,
@@ -62,7 +68,7 @@ from app.sources.registry import build_adapter
 logger = logging.getLogger("eden.scheduler")
 SEMAS_CANDIDATE_LIMIT = 900
 RELATED_CANDIDATE_LIMIT = 900
-SEMAS_PLACES_PER_RUN = 10
+SEMAS_PLACES_PER_RUN = 5
 PLACE_PIPELINE_SOURCES = frozenset(
     {
         "SRC_KTO_PLACE_HUB",
@@ -199,9 +205,7 @@ def _pipeline_work(
     error_summary: str | None,
 ) -> tuple[bool, bool]:
     retrying_interrupted_pipeline = (
-        status == "failed"
-        and bool(error_summary)
-        and error_summary.startswith("pipeline:")
+        status == "failed" and bool(error_summary) and error_summary.startswith("pipeline:")
     )
     should_complete = status in {"succeeded", "partial"} or retrying_interrupted_pipeline
     should_normalize = should_complete and (raw_count > 0 or retrying_interrupted_pipeline)
@@ -221,6 +225,130 @@ def _runtime_scope(
     configured_scope: dict[str, object],
     factory: sessionmaker[Session],
 ) -> dict[str, object]:
+    if source_id == "SRC_HOLIDAY":
+        from dateutil.relativedelta import relativedelta
+
+        operations = []
+        for offset in range(4):
+            month = datetime.now(UTC) + relativedelta(months=offset)
+            operations.append(
+                {
+                    "operation": "getRestDeInfo",
+                    "external_key": "holiday:" + month.strftime("%Y%m"),
+                    "params": {"solYear": month.strftime("%Y"), "solMonth": month.strftime("%m")},
+                    "watermark": {"params": ["solYear", "solMonth"], "format": "%Y%m"},
+                    "max_pages": 1,
+                }
+            )
+        return {"operations": operations}
+    if source_id == "SRC_YOUTUBE":
+        from app.sources.plans import social_refresh_scope
+
+        return social_refresh_scope(source_id)
+    if source_id in {"SRC_KMA_FORECAST", "SRC_TOUR_KO", "SRC_KTO_REGIONAL_VISITORS"}:
+        from app.repositories.models import RegionalVisitObservation
+        from app.sources.plans import public_data_refresh_scope
+
+        with factory() as session:
+            registry = session.get(SourceRegistry, source_id)
+            cursor = int((registry.evidence or {}).get("collection_cursor", 0)) if registry else 0
+            areas = list(session.scalars(select(Area).where(Area.active.is_(True))))
+            codes = {
+                row.administrative_code: row.eden_area_id
+                for row in areas
+                if row.administrative_code
+            }
+            locations = {
+                row.administrative_code: (
+                    row.eden_area_id,
+                    float(row.center_lat),
+                    float(row.center_lng),
+                )
+                for row in areas
+                if row.administrative_code
+                and row.center_lat is not None
+                and row.center_lng is not None
+            }
+            scope = public_data_refresh_scope(source_id, tuple(codes), codes, locations)
+            if source_id == "SRC_KTO_REGIONAL_VISITORS":
+                latest = datetime.now(UTC).date() - timedelta(days=30)
+                present = {
+                    value.date()
+                    for value in session.scalars(
+                        select(RegionalVisitObservation.period_start)
+                        .join(
+                            Area,
+                            Area.eden_area_id == RegionalVisitObservation.area_id,
+                        )
+                        .where(
+                            Area.level == "sido",
+                            Area.active.is_(True),
+                            RegionalVisitObservation.grain == "day",
+                            RegionalVisitObservation.period_start >= latest - timedelta(days=455),
+                        )
+                        .group_by(RegionalVisitObservation.period_start)
+                        .having(
+                            func.count(func.distinct(RegionalVisitObservation.area_id))
+                            >= sum(row.level == "sido" for row in areas)
+                        )
+                    )
+                }
+                missing = next(
+                    (
+                        latest - timedelta(days=offset)
+                        for offset in range(456)
+                        if latest - timedelta(days=offset) not in present
+                    ),
+                    latest,
+                )
+                for op in scope["operations"]:
+                    op["params"]["endYmd"] = missing.strftime("%Y%m%d")
+                    op["params"]["startYmd"] = max(
+                        latest - timedelta(days=455), missing - timedelta(days=9)
+                    ).strftime("%Y%m%d")
+                return scope
+            operations = scope.get("operations", [])
+            if source_id == "SRC_TOUR_KO":
+                selected_ids = essential_place_ids(session)
+                maps = session.execute(
+                    select(PlaceSourceMap.external_content_id, Area.administrative_code)
+                    .join(Place, Place.eden_place_id == PlaceSourceMap.eden_place_id)
+                    .join(Area, Area.eden_area_id == Place.area_id)
+                    .where(
+                        Place.eden_place_id.in_(selected_ids), PlaceSourceMap.source_id == source_id
+                    )
+                ).all()
+                from app.sources.plans import KTO_TOURAPI_AREA_TO_MOIS_PREFIX
+
+                allowed = {}
+                for op in operations:
+                    code = str(op["params"]["areaCode"])
+                    prefix = KTO_TOURAPI_AREA_TO_MOIS_PREFIX[code]
+                    allowed[code] = [
+                        external for external, area in maps if area and area[:2] == prefix
+                    ]
+                operations.sort(
+                    key=lambda op: (
+                        len(allowed[str(op["params"]["areaCode"])]),
+                        str(op["params"]["areaCode"]),
+                    )
+                )
+                scope["allowed_content_ids"] = allowed
+                scope["new_places_limit"] = 30
+            batch = (
+                [
+                    operations[(cursor + offset) % len(operations)]
+                    for offset in range(min(5, len(operations)))
+                ]
+                if operations
+                else []
+            )
+            scope.update(
+                operations=batch,
+                rotate_operations=False,
+                next_cursor=(cursor + len(batch)) % max(1, len(operations)),
+            )
+            return scope
     if source_id == "SRC_KTO_PLACE_RELATED":
         with factory() as session:
             rows = session.execute(
@@ -256,6 +384,7 @@ def _runtime_scope(
     if source_id != "SRC_SEMAS_SHOPS":
         return configured_scope
     with factory() as session:
+        selected_ids = essential_place_ids(session)
         rows = session.execute(
             select(Place.eden_place_id, Place.lat, Place.lng)
             .outerjoin(
@@ -265,6 +394,7 @@ def _runtime_scope(
             )
             .where(
                 Place.merge_status == "active",
+                Place.eden_place_id.in_(selected_ids),
                 Place.lat.is_not(None),
                 Place.lng.is_not(None),
             )
@@ -299,7 +429,13 @@ def run_source_if_due(
     source_id: str,
     capacity_gate: SchedulerCapacityGate | None = None,
 ) -> None:
-    pause_reason = capacity_gate.source_pause_reason() if capacity_gate is not None else None
+    if source_id in DISABLED_SOURCES:
+        return
+    pause_reason = (
+        capacity_gate.source_pause_reason(expansion=source_id in EXPANSION_SOURCES)
+        if capacity_gate is not None
+        else None
+    )
     if pause_reason:
         logger.warning(
             "source_job_paused_capacity",
@@ -321,9 +457,20 @@ def run_source_if_due(
     if candidate is None:
         return
     registry, policy, state = candidate
-    interval_seconds = max(policy.interval_seconds, settings.SOURCE_MIN_INTERVAL_SECONDS)
+    interval_seconds = max(
+        SOURCE_INTERVALS.get(source_id, policy.interval_seconds),
+        settings.SOURCE_MIN_INTERVAL_SECONDS,
+    )
+    if state and state.consecutive_failures:
+        interval_seconds = min(
+            interval_seconds * 2 ** min(state.consecutive_failures, 4), 7 * 86400
+        )
     pipeline_retry = bool(state and state.reason and state.reason.startswith("pipeline:"))
-    jitter_seconds = _source_jitter_seconds(registry.source_id, policy.jitter_seconds)
+    jitter_seconds = (
+        0
+        if source_id == "SRC_KMA_FORECAST"
+        else _source_jitter_seconds(registry.source_id, policy.jitter_seconds)
+    )
     record_source_state(
         registry.source_id,
         last_success_at=state.last_success_at if state is not None else None,
@@ -436,9 +583,7 @@ def run_source_if_due(
                                 IngestionRun.error_summary,
                             ).where(IngestionRun.run_id == run_id)
                         ).one()
-                    resuming_pipeline = _resume_pipeline_without_fetch(
-                        scheduled_info.error_summary
-                    )
+                    resuming_pipeline = _resume_pipeline_without_fetch(scheduled_info.error_summary)
                     if resuming_pipeline:
                         ingestion.start_scheduled_pipeline_retry(
                             run_id,
@@ -456,6 +601,13 @@ def run_source_if_due(
                             defer_state=True,
                             scheduled_run_id=run_id,
                         )
+                        if "next_cursor" in scope:
+                            with factory.begin() as session:
+                                source = session.get(SourceRegistry, registry.source_id)
+                                source.evidence = {
+                                    **(source.evidence or {}),
+                                    "collection_cursor": scope["next_cursor"],
+                                }
                         with factory() as session:
                             run_info = session.execute(
                                 select(
@@ -697,9 +849,7 @@ def run_dead_letter_reprocessing(
                 result = reprocess_dead_letters(
                     factory,
                     batch_size=settings.DEAD_LETTER_BATCH_SIZE,
-                    pause_reason=(
-                        lambda: _dead_letter_pause_reason(settings, capacity_gate)
-                    ),
+                    pause_reason=(lambda: _dead_letter_pause_reason(settings, capacity_gate)),
                 )
                 logger.info(
                     "dead_letter_reprocessing_batch",
@@ -746,16 +896,10 @@ def _dead_letter_pause_reason(
     if capacity_gate is not None and (reason := capacity_gate.source_pause_reason()):
         return reason
     api_p95 = recent_api_p95_seconds()
-    if (
-        api_p95 is not None
-        and api_p95 >= settings.DEAD_LETTER_API_P95_PAUSE_SECONDS
-    ):
+    if api_p95 is not None and api_p95 >= settings.DEAD_LETTER_API_P95_PAUSE_SECONDS:
         return "api_latency_pressure"
     memory_percent = system_memory_used_percent()
-    if (
-        memory_percent is not None
-        and memory_percent >= settings.DEAD_LETTER_MEMORY_PAUSE_PERCENT
-    ):
+    if memory_percent is not None and memory_percent >= settings.DEAD_LETTER_MEMORY_PAUSE_PERCENT:
         return "database_host_memory_pressure"
     return None
 
@@ -774,6 +918,8 @@ def run_snapshot_retention(
     settings: Settings,
     factory: sessionmaker[Session],
 ) -> None:
+    if _dead_letter_pause_reason(settings, None):
+        return
     engine: Engine = factory.kw["bind"]
     connection = _open_job_lock_connection(engine)
     try:
@@ -816,13 +962,25 @@ def run_snapshot_retention(
                 cleanup_enabled = settings.SNAPSHOT_RETENTION_ENABLED
                 result = retain_snapshots(
                     factory,
-                    older_than=(
-                        datetime.now(UTC) - timedelta(days=settings.SNAPSHOT_RETENTION_DAYS)
-                    ).replace(tzinfo=None),
+                    older_than=(datetime.now(UTC) - timedelta(hours=1)).replace(tzinfo=None),
                     dry_run=not cleanup_enabled,
                     snapshot_batch_size=settings.SNAPSHOT_RETENTION_BATCH_SIZE,
                     provenance_batch_size=settings.SNAPSHOT_PROVENANCE_BATCH_SIZE,
+                    max_seconds=2.5,
+                    pause_reason=lambda: _dead_letter_pause_reason(settings, None),
                 )
+                # Reserve one second for lock release and transaction overhead.
+                remaining = 4.0 - (perf_counter() - heavy_lock_started_at)
+                deleted_observations = {}
+                if cleanup_enabled and remaining > 0:
+                    from app.ingestion.retention import retain_observations
+
+                    deleted_observations = retain_observations(
+                        factory,
+                        max_seconds=min(remaining, 5.0),
+                        batch_size=100,
+                        pause_reason=lambda: _dead_letter_pause_reason(settings, None),
+                    )
                 logger.info(
                     "snapshot_retention_batch",
                     extra={
@@ -831,6 +989,8 @@ def run_snapshot_retention(
                         "deleted_snapshots": result.deleted_snapshots,
                         "deleted_provenance_rows": result.deleted_provenance_rows,
                         "deleted_payloads": result.deleted_payloads,
+                        "deleted_observations": deleted_observations,
+                        "duration_ms": round((perf_counter() - heavy_lock_started_at) * 1000, 3),
                         "job_type": "snapshot_retention",
                         "outcome": "dry_run" if result.dry_run else "completed",
                     },
@@ -846,7 +1006,8 @@ def run_snapshot_retention(
 
 @observe_scheduler_job("alert")
 def run_alert_enrichment(
-    settings: Settings, factory: sessionmaker[Session],
+    settings: Settings,
+    factory: sessionmaker[Session],
     capacity_gate: SchedulerCapacityGate | None = None,
 ) -> AlertEnrichmentBatchResult | None:
     if capacity_gate is not None and capacity_gate.source_pause_reason():
@@ -858,7 +1019,9 @@ def run_alert_enrichment(
             if not enrichment_lock.acquired:
                 return None
             result = enrich_pending_alert_revisions(
-                settings, factory, limit=settings.ALERT_ENRICHMENT_BATCH_SIZE,
+                settings,
+                factory,
+                limit=settings.ALERT_ENRICHMENT_BATCH_SIZE,
             )
             record_alert_enrichment(
                 available=result.available,
@@ -966,7 +1129,7 @@ def start_scheduler(settings: Settings, factory: sessionmaker[Session]) -> Sched
     scheduler.add_job(
         run_snapshot_retention,
         "interval",
-        seconds=3600,
+        seconds=300,
         args=[settings, factory],
         id="eden:snapshot:retention",
         next_run_time=now + timedelta(seconds=120),

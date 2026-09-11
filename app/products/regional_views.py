@@ -91,6 +91,13 @@ def _window_rows(rows: list[dict[str, Any]], start: date, end: date) -> list[dic
     return [row for row in rows if start <= _day(str(row["period_start"])) <= end]
 
 
+def _latest_month(rows):
+    if not rows:
+        return []
+    latest = max(str(row["period_start"])[:7] for row in rows)
+    return [row for row in rows if str(row["period_start"])[:7] == latest]
+
+
 def build_region_insight_view(
     product: dict[str, Any], scope: dict[str, Any]
 ) -> tuple[dict[str, Any], Availability, str | None]:
@@ -120,7 +127,8 @@ def build_region_insight_view(
         ]
     if not all_dated_rows:
         raise ValueError("regional product contains no dated observations")
-    end = max(_day(str(row["period_start"])) for row in all_dated_rows)
+    anchor_rows = area_visit_rows if "visitors" in selected and area_visit_rows else all_dated_rows
+    end = max(_day(str(row["period_start"])) for row in anchor_rows)
     start = end - timedelta(days=days - 1)
     states: list[Availability] = []
 
@@ -131,7 +139,21 @@ def build_region_insight_view(
         visitor_type = str(scope.get("visitor_type", "all"))
         totals = _project_visitor_totals(_visitor_totals(visit_rows), visitor_type)
         visitor_available = totals["all"] is not None
-        visitor_state = Availability.AVAILABLE if visitor_available else Availability.UNAVAILABLE
+        observed_days = len(
+            {
+                _day(str(row["period_start"]))
+                for row in visit_rows
+                if row.get("visitor_count") is not None
+            }
+        )
+        completeness = min(1.0, observed_days / days)
+        visitor_state = (
+            Availability.AVAILABLE
+            if visitor_available and completeness == 1
+            else Availability.PARTIAL
+            if visitor_available
+            else Availability.UNAVAILABLE
+        )
         states.append(visitor_state)
         visitors = {
             "total": totals["all"],
@@ -139,7 +161,14 @@ def build_region_insight_view(
             "foreign": totals["foreign"],
             "change_rate": None,
             "availability": visitor_state.value,
-            "reason": None if visitor_available else "요청 기간의 방문 관측이 없습니다.",
+            "completeness_ratio": completeness,
+            "reason": (
+                None
+                if completeness == 1
+                else "일부 날짜의 방문 관측이 없습니다."
+                if visitor_available
+                else "요청 기간의 방문 관측이 없습니다."
+            ),
         }
         compare = scope.get("compare")
         if compare:
@@ -151,8 +180,15 @@ def build_region_insight_view(
                 baseline_end = _previous_year(end)
             baseline_rows = _window_rows(area_visit_rows, baseline_start, baseline_end)
             baseline_totals = _visitor_totals(baseline_rows)
+            baseline_days = len(
+                {
+                    _day(str(row["period_start"]))
+                    for row in baseline_rows
+                    if row.get("visitor_count") is not None
+                }
+            )
             change = _change_rate(
-                totals["all"],
+                totals["all"] if observed_days == days and baseline_days == days else None,
                 _project_visitor_totals(baseline_totals, visitor_type)["all"],
             )
             visitors["change_rate"] = change
@@ -165,7 +201,7 @@ def build_region_insight_view(
 
     demand = None
     if "demand" in selected:
-        rows = _window_rows(product.get("demand", []), start, end)
+        rows = _latest_month(product.get("demand", []))
         stay = [_number(row.get("stay_index")) for row in rows]
         spend = [_number(row.get("spend_index")) for row in rows]
         nights = [_number(row.get("avg_stay_nights")) for row in rows]
@@ -184,6 +220,7 @@ def build_region_insight_view(
         )
         states.append(state)
         demand = {
+            "data_period": str(rows[0]["period_start"])[:7] if rows else None,
             "stay_index": bounded_index(mean(stay_values)) if stay_values else None,
             "spend_index": bounded_index(mean(spend_values)) if spend_values else None,
             "avg_stay_nights": round(mean(night_values), 3) if night_values else None,
@@ -199,7 +236,7 @@ def build_region_insight_view(
 
     diversity = None
     if "diversity" in selected:
-        rows = _window_rows(product.get("diversity", []), start, end)
+        rows = _latest_month(product.get("diversity", []))
         ages = [value for row in rows if (value := _number(row.get("age_index"))) is not None]
         nationalities = [
             value for row in rows if (value := _number(row.get("nationality_index"))) is not None
@@ -214,6 +251,7 @@ def build_region_insight_view(
         )
         states.append(state)
         diversity = {
+            "data_period": str(rows[0]["period_start"])[:7] if rows else None,
             "age_index": bounded_index(mean(ages)) if ages else None,
             "nationality_index": (bounded_index(mean(nationalities)) if nationalities else None),
             "availability": state.value,
@@ -249,7 +287,9 @@ def build_region_insight_view(
     return (
         {
             "area": product["area"],
+            "reference_information": product.get("reference_information"),
             "period": period,
+            "basis_period": {"start": start.isoformat(), "end": end.isoformat()},
             "visitors": visitors,
             "demand": demand,
             "diversity": diversity,
@@ -402,6 +442,7 @@ def build_visitor_timeseries_view(
         {
             "area": product["area"],
             "period": period,
+            "basis_period": {"start": start.isoformat(), "end": end.isoformat()},
             "granularity": granularity,
             "visitor_type": visitor_type,
             "attraction_name": attraction,

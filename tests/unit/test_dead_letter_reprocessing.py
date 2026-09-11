@@ -44,7 +44,7 @@ def dead_letter_factory():
             IngestionRun(
                 run_id="run-1",
                 job_id="job-1",
-                source_id="SRC_NAVER_TREND",
+                source_id="SRC_YOUTUBE",
                 idempotency_key="run-1",
                 status="failed",
                 request_scope={},
@@ -61,7 +61,7 @@ def dead_letter_factory():
             session.add(
                 RawRecord(
                     raw_record_id=raw_id,
-                    source_id="SRC_NAVER_TREND",
+                    source_id="SRC_YOUTUBE",
                     external_key=f"key-{raw_id}",
                     observed_at=now,
                     source_updated_at=now,
@@ -112,8 +112,8 @@ def test_reprocessor_claims_only_one_run_per_batch_and_is_resumable(
 
     assert result.claimed_count == 1
     assert result.resolved_count == 1
-    assert normalized == [("SRC_NAVER_TREND", "run-1")]
-    assert dirtied == [("SRC_NAVER_TREND", "dead-letter:1")]
+    assert normalized == [("SRC_YOUTUBE", "run-1")]
+    assert dirtied == [("SRC_YOUTUBE", "dead-letter:1")]
     with dead_letter_factory() as session:
         statuses = list(
             session.execute(
@@ -138,7 +138,7 @@ def test_reprocessor_claims_only_one_run_per_batch_and_is_resumable(
 
     assert resumed.claimed_count == 1
     assert resumed.resolved_count == 1
-    assert normalized[-1] == ("SRC_NAVER_TREND", "run-2")
+    assert normalized[-1] == ("SRC_YOUTUBE", "run-2")
     with dead_letter_factory() as session:
         statuses = list(
             session.execute(
@@ -169,7 +169,7 @@ def test_reprocessor_claims_up_to_batch_size_from_the_selected_run(
 
     assert result.claimed_count == 2
     assert result.resolved_count == 2
-    assert normalized == [("SRC_NAVER_TREND", "run-1")]
+    assert normalized == [("SRC_YOUTUBE", "run-1")]
     with dead_letter_factory() as session:
         statuses = list(
             session.execute(

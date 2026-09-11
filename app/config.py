@@ -44,11 +44,11 @@ class Settings(BaseSettings):
 
     SOURCE_HTTP_TIMEOUT_SECONDS: float = 20.0
     SOURCE_MAX_RESPONSE_BYTES: int = 2 * 1024 * 1024
-    SOURCE_MAX_REQUESTS_PER_RUN: int = 20
+    SOURCE_MAX_REQUESTS_PER_RUN: int = 5
     SOURCE_STATISTICAL_MAX_REQUESTS_PER_RUN: int = 60
-    SOURCE_MAX_RUN_BYTES: int = 8 * 1024 * 1024
+    SOURCE_MAX_RUN_BYTES: int = 2 * 1024 * 1024
     SOURCE_MAX_RECORDS_PER_RUN: int = 10_000
-    SOURCE_MAX_RUN_SECONDS: float = 120.0
+    SOURCE_MAX_RUN_SECONDS: float = 60.0
     SOURCE_MIN_INTERVAL_SECONDS: int = 3600
     ALERT_ENRICHMENT_BATCH_SIZE: int = 2
     SOURCE_WORKERS: int = 1
@@ -63,8 +63,8 @@ class Settings(BaseSettings):
     SNAPSHOT_RETENTION_ENABLED: bool = False
     DERIVED_DAILY_GROWTH_BUDGET_BYTES: int = 100 * 1024 * 1024
     DISK_WARNING_PERCENT: float = 70.0
-    DISK_PRODUCT_PAUSE_PERCENT: float = 75.0
-    DISK_SOURCE_PAUSE_PERCENT: float = 80.0
+    DISK_PRODUCT_PAUSE_PERCENT: float = 80.0
+    DISK_SOURCE_PAUSE_PERCENT: float = 75.0
     DATABASE_MAX_BYTES: int = 20 * 1024**3
     MEMORY_WRITE_PAUSE_PERCENT: float = 85.0
     PUBLIC_DATA_SERVICE_KEY: SecretStr | None = None
@@ -131,15 +131,27 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_resource_limits(self) -> Settings:
         for name in (
-            "SOURCE_HTTP_TIMEOUT_SECONDS", "SOURCE_MAX_RESPONSE_BYTES",
-            "SOURCE_MAX_REQUESTS_PER_RUN", "SOURCE_STATISTICAL_MAX_REQUESTS_PER_RUN",
+            "SOURCE_HTTP_TIMEOUT_SECONDS",
+            "SOURCE_MAX_RESPONSE_BYTES",
+            "SOURCE_MAX_REQUESTS_PER_RUN",
+            "SOURCE_STATISTICAL_MAX_REQUESTS_PER_RUN",
             "SOURCE_MAX_RUN_BYTES",
-            "SOURCE_MAX_RECORDS_PER_RUN", "SOURCE_MIN_INTERVAL_SECONDS", "SOURCE_MAX_RUN_SECONDS",
-            "DATABASE_MAX_BYTES", "DERIVED_DAILY_GROWTH_BUDGET_BYTES",
+            "SOURCE_MAX_RECORDS_PER_RUN",
+            "SOURCE_MIN_INTERVAL_SECONDS",
+            "SOURCE_MAX_RUN_SECONDS",
+            "DATABASE_MAX_BYTES",
+            "DERIVED_DAILY_GROWTH_BUDGET_BYTES",
             "SNAPSHOT_RETENTION_DAYS",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+        if (
+            self.SOURCE_MAX_REQUESTS_PER_RUN > 20
+            or self.SOURCE_STATISTICAL_MAX_REQUESTS_PER_RUN > 60
+        ):
+            raise ValueError("Source request absolute limits are 20 and 60")
+        if self.SOURCE_MAX_RUN_BYTES > 8 * 1024 * 1024 or self.SOURCE_MAX_RUN_SECONDS > 120:
+            raise ValueError("Source absolute run limits are 8 MiB and 120 seconds")
         if self.SOURCE_MAX_RESPONSE_BYTES > self.SOURCE_MAX_RUN_BYTES:
             raise ValueError("Per-response byte limit must not exceed the run byte limit")
         if not 1 <= self.MEMORY_WRITE_PAUSE_PERCENT <= 100:
@@ -160,24 +172,18 @@ class Settings(BaseSettings):
             raise ValueError("DEAD_LETTER_API_P95_PAUSE_SECONDS must be positive")
         if not 1 <= self.DEAD_LETTER_MEMORY_PAUSE_PERCENT <= 100:
             raise ValueError("DEAD_LETTER_MEMORY_PAUSE_PERCENT must be between 1 and 100")
-        if (
-            self.SNAPSHOT_PROVENANCE_BATCH_SIZE < 1
-            or self.SNAPSHOT_PROVENANCE_BATCH_SIZE > 500
-        ):
+        if self.SNAPSHOT_PROVENANCE_BATCH_SIZE < 1 or self.SNAPSHOT_PROVENANCE_BATCH_SIZE > 500:
             raise ValueError("SNAPSHOT_PROVENANCE_BATCH_SIZE must be between 1 and 500")
-        if (
-            self.SNAPSHOT_RETENTION_BATCH_SIZE < 1
-            or self.SNAPSHOT_RETENTION_BATCH_SIZE > 500
-        ):
+        if self.SNAPSHOT_RETENTION_BATCH_SIZE < 1 or self.SNAPSHOT_RETENTION_BATCH_SIZE > 500:
             raise ValueError("SNAPSHOT_RETENTION_BATCH_SIZE must be between 1 and 500")
         if not (
             0
             < self.DISK_WARNING_PERCENT
-            < self.DISK_PRODUCT_PAUSE_PERCENT
             < self.DISK_SOURCE_PAUSE_PERCENT
+            < self.DISK_PRODUCT_PAUSE_PERCENT
             <= 100
         ):
-            raise ValueError("Disk thresholds must be ordered warning < product < source")
+            raise ValueError("Disk thresholds must be ordered warning < source < product")
         if self.DB_POOL_SIZE < 2:
             raise ValueError("DB_POOL_SIZE must reserve at least two API connections")
         if not 1 <= self.SCHEDULER_DB_POOL_SIZE <= 4:
@@ -203,9 +209,7 @@ class Settings(BaseSettings):
             and self.SCHEDULER_ENABLED
             and not self.SNAPSHOT_RETENTION_ENABLED
         ):
-            raise ValueError(
-                "Production scheduler requires SNAPSHOT_RETENTION_ENABLED=true"
-            )
+            raise ValueError("Production scheduler requires SNAPSHOT_RETENTION_ENABLED=true")
         return self
 
     def database_url_for(self, user: str, password: SecretStr) -> str:

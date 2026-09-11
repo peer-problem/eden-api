@@ -687,12 +687,16 @@ def test_fixture_source_reaches_raw_normalized_snapshot_and_forecast_api(
         assert run is not None
         assert run.raw_count == 1
         assert run.normalized_count == 2
-        assert session.scalar(
-            select(RawRecord).where(RawRecord.run_id == pipeline.forecast_run_id)
-        ) is not None
-        assert session.scalar(
-            select(ReadModelHead).where(ReadModelHead.endpoint == "forecast_product")
-        ) is not None
+        assert (
+            session.scalar(select(RawRecord).where(RawRecord.run_id == pipeline.forecast_run_id))
+            is not None
+        )
+        assert (
+            session.scalar(
+                select(ReadModelHead).where(ReadModelHead.endpoint == "forecast_product")
+            )
+            is not None
+        )
 
     response = pipeline.client.get(
         "/v1/forecasts/visitors",
@@ -708,7 +712,7 @@ def test_fixture_source_reaches_raw_normalized_snapshot_and_forecast_api(
     assert all(row["weather"] is None for row in payload["data"]["daily"])
     assert all(row["festivals"] is None for row in payload["data"]["daily"])
     assert all(row["holiday"] is None for row in payload["data"]["daily"])
-    assert all(0.5 <= row["confidence"] <= 0.8 for row in payload["data"]["daily"])
+    assert all(row["confidence"] is None for row in payload["data"]["daily"])
 
 
 def test_scheduled_lock_skip_is_audited_without_degrading_source_state(
@@ -1103,7 +1107,9 @@ def test_all_public_routes_return_explicit_unavailable_without_products() -> Non
 
 @pytest.mark.parametrize("inherited", [False, True])
 def test_forecast_snapshot_bounds_inputs_and_provenance_to_public_horizon(
-    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch, inherited: bool,
+    pipeline: Pipeline,
+    monkeypatch: pytest.MonkeyPatch,
+    inherited: bool,
 ) -> None:
     from app.products import forecast
 
@@ -1117,23 +1123,35 @@ def test_forecast_snapshot_bounds_inputs_and_provenance_to_public_horizon(
         area_id = AREA_ID
         if inherited:
             area_id = "eden_area_forecast_parent"
-            session.add(Area(
-                eden_area_id=area_id, name_ko="부모 지역", level="sido", active=True,
-                created_at=audit, updated_at=audit,
-            ))
+            session.add(
+                Area(
+                    eden_area_id=area_id,
+                    name_ko="부모 지역",
+                    level="sido",
+                    active=True,
+                    created_at=audit,
+                    updated_at=audit,
+                )
+            )
             session.get(Area, AREA_ID).parent_area_id = area_id
         for offset in (-1, 29, 30):
             raw = RawRecord(
-                source_id=source_id, external_key=f"horizon-{offset}",
-                observed_at=audit, source_updated_at=audit, ingested_at=audit,
-                content_type="application/json", body_json={"offset": offset},
+                source_id=source_id,
+                external_key=f"horizon-{offset}",
+                observed_at=audit,
+                source_updated_at=audit,
+                ingested_at=audit,
+                content_type="application/json",
+                body_json={"offset": offset},
                 content_hash=hashlib.sha256(str(offset).encode()).hexdigest(),
-                run_id=pipeline.forecast_run_id, tombstone=False,
+                run_id=pipeline.forecast_run_id,
+                tombstone=False,
             )
             session.add(raw)
             session.flush()
             row = ForecastInput(
-                area_id=area_id, forecast_date=start + timedelta(days=offset),
+                area_id=area_id,
+                forecast_date=start + timedelta(days=offset),
                 source_forecast=None if inherited else {"concentration_rate": 45},
                 weather={"condition": "clear"} if inherited else None,
                 **_fact_audit(source_id, audit),
@@ -1152,12 +1170,23 @@ def test_forecast_snapshot_bounds_inputs_and_provenance_to_public_horizon(
     build_forecast_snapshots(pipeline.session_factory)
     candidate = next(item for item in candidates if item.data["eden_area_id"] == AREA_ID)
     dates = {
-        datetime.fromisoformat(row["forecast_date"]).date()
-        for row in candidate.data["inputs"]
+        datetime.fromisoformat(row["forecast_date"]).date() for row in candidate.data["inputs"]
     }
     assert dates == {today, today + timedelta(days=1), today + timedelta(days=29)}
-    assert included_raw.issubset(candidate.raw_record_ids)
-    assert excluded_raw.isdisjoint(candidate.raw_record_ids)
+    assert candidate.raw_record_ids == ()
+    references = candidate.metadata["normalized_references"]["forecast_input"]
+    assert set(references) == {str(row["input_id"]) for row in candidate.data["inputs"]}
+    with pipeline.session_factory() as session:
+        raw_ids = set(
+            session.scalars(
+                select(ProvenanceEdge.raw_record_id).where(
+                    ProvenanceEdge.output_type == "forecast_input",
+                    ProvenanceEdge.output_id.in_(references),
+                )
+            )
+        )
+        assert included_raw.issubset(raw_ids)
+        assert excluded_raw.isdisjoint(raw_ids)
     with pipeline.session_factory() as session:
         assert len(session.scalars(select(ForecastInput)).all()) == 5
 
@@ -1219,7 +1248,7 @@ def test_inbound_snapshot_loads_only_supported_history_windows(
             keyword="boundary-social",
             country_id=COUNTRY_ID,
             area_id=None,
-            bucket_start=month_at(-23),
+            bucket_start=audit - timedelta(days=189),
             bucket_grain="month",
             post_count=1,
             view_count=None,
@@ -1233,7 +1262,7 @@ def test_inbound_snapshot_loads_only_supported_history_windows(
             keyword="ancient-social",
             country_id=COUNTRY_ID,
             area_id=None,
-            bucket_start=month_at(-24),
+            bucket_start=audit - timedelta(days=191),
             bucket_grain="month",
             post_count=1,
             view_count=None,
@@ -1352,9 +1381,7 @@ def test_regional_snapshot_keeps_comparison_history_and_excludes_ancient_rows(
             nationality_index=Decimal("1.0000"),
             **_fact_audit("SRC_KTO_DIVERSITY", audit),
         )
-        session.add_all(
-            [comparison_boundary, ancient_visit, ancient_demand, ancient_diversity]
-        )
+        session.add_all([comparison_boundary, ancient_visit, ancient_demand, ancient_diversity])
         session.flush()
         boundary_id = comparison_boundary.observation_id
         ancient_visit_id = ancient_visit.observation_id
@@ -1428,9 +1455,7 @@ def test_recommendation_snapshot_loads_only_latest_relation_generation(
     )
     event.listen(Session, "loaded_as_persistent", remember_loaded)
     try:
-        result = recommendations.build_recommendation_snapshot(
-            pipeline.session_factory
-        )
+        result = recommendations.build_recommendation_snapshot(pipeline.session_factory)
     finally:
         event.remove(Session, "loaded_as_persistent", remember_loaded)
 
@@ -1453,10 +1478,128 @@ def test_ingestion_retains_partial_fetch_evidence_for_normalization(pipeline: Pi
             )
 
     run_id = IngestionService(pipeline.session_factory).run(
-        PartialAdapter(), {}, "budget-evidence", defer_state=True,
+        PartialAdapter(),
+        {},
+        "budget-evidence",
+        defer_state=True,
     )
     with pipeline.session_factory() as session:
         run = session.get(IngestionRun, run_id)
         assert run.request_scope["_fetch_result"]["partial_errors"] == [
             "source_run:record_limit_exceeded",
         ]
+
+
+def test_retention_preserves_normalized_snapshot_references(pipeline):
+    from app.domain.enums import Availability
+    from app.ingestion.retention import retain_observations
+    from app.products.snapshots import SnapshotCandidate, SnapshotPublisher
+    from app.repositories.models import ReadModelSnapshot
+
+    now = datetime(2026, 9, 11)
+    old = datetime(2024, 1, 1)
+    with pipeline.session_factory.begin() as session:
+        row = RegionalVisitObservation(
+            area_id=AREA_ID,
+            subject_type="area",
+            subject_key="area",
+            grain="day",
+            visitor_type="all",
+            period_start=old,
+            visitor_count=10,
+            concentration_rate=None,
+            completeness_ratio=1,
+            **_fact_audit("SRC_KTO_REGIONAL_VISITORS", old),
+        )
+        session.add(row)
+        session.flush()
+        identifier = row.observation_id
+    candidate = SnapshotCandidate(
+        endpoint="regional_product",
+        lookup_key='{"area_code":"test"}',
+        data={"observed": 10},
+        metadata={"normalized_references": {"regional_visit_observation": [str(identifier)]}},
+        input_watermarks={},
+        formula_versions={},
+        observed_at=now.replace(tzinfo=UTC),
+        source_updated_at=now.replace(tzinfo=UTC),
+        ingested_at=now.replace(tzinfo=UTC),
+        calculated_at=now.replace(tzinfo=UTC),
+        availability=Availability.AVAILABLE,
+    )
+    snapshot = SnapshotPublisher(pipeline.session_factory).publish(candidate)
+    retain_observations(pipeline.session_factory, now=now)
+    with pipeline.session_factory() as session:
+        assert session.get(RegionalVisitObservation, identifier) is not None
+    with pipeline.session_factory.begin() as session:
+        session.get(ReadModelSnapshot, snapshot.snapshot_id).metadata_json = {}
+    retain_observations(pipeline.session_factory, now=now)
+    with pipeline.session_factory() as session:
+        assert session.get(RegionalVisitObservation, identifier) is None
+
+
+def test_alert_retention_keeps_active_entry_and_removes_expired_notice(pipeline):
+    from app.ingestion.retention import _retain_alerts
+
+    now = datetime(2026, 9, 11)
+    old = now - timedelta(days=100)
+    with pipeline.session_factory.begin() as session:
+        country_id = "retention-country"
+        session.add(
+            Country(
+                eden_country_id=country_id,
+                iso_alpha2="CA",
+                name_ko="캐나다",
+                name_en="Canada",
+                default_language="en",
+                default_currency="CAD",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.flush()
+        source_id = session.scalar(select(SourceRegistry.source_id).limit(1))
+        for identifier, kind in (("keep-entry", "entry"), ("expired-notice", "notice")):
+            session.add(
+                AlertDocument(
+                    alert_id=identifier,
+                    source_id=source_id,
+                    country_id=country_id,
+                    alert_type=kind,
+                    canonical_url="https://example.org/" + identifier,
+                    canonical_url_hash=identifier,
+                    source_name="Official",
+                    source_type="embassy",
+                    published_at=old,
+                    current_revision=1,
+                    active=True,
+                    created_at=old,
+                    updated_at=old,
+                )
+            )
+            session.flush()
+            session.add(
+                AlertRevision(
+                    alert_id=identifier,
+                    revision_number=1,
+                    title_original=identifier,
+                    body_original="Official text",
+                    language_original="en",
+                    content_hash=identifier,
+                    source_updated_at=old,
+                    ingested_at=old,
+                )
+            )
+        session.flush()
+        _retain_alerts(session, now, 100)
+    with pipeline.session_factory() as session:
+        assert session.get(AlertDocument, "keep-entry") is not None
+        assert session.get(AlertDocument, "expired-notice") is None
+        assert (
+            session.scalar(select(AlertRevision).where(AlertRevision.alert_id == "keep-entry"))
+            is not None
+        )
+        assert (
+            session.scalar(select(AlertRevision).where(AlertRevision.alert_id == "expired-notice"))
+            is None
+        )

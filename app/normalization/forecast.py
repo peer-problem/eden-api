@@ -178,11 +178,7 @@ def _match_area(session: Session, *text_values: str | None) -> str:
         .where(Area.active.is_(True))
         .order_by((Area.level == "sigungu").desc(), Area.name_ko)
     ).all()
-    matches = [
-        row
-        for row in areas
-        if row.name_ko and _contains_area_name(haystack, row.name_ko)
-    ]
+    matches = [row for row in areas if row.name_ko and _contains_area_name(haystack, row.name_ko)]
     if not matches:
         raise ValueError("festival area could not be mapped from its official address")
     child_matches = [row for row in matches if row.parent_area_id is not None]
@@ -203,9 +199,7 @@ def _match_area(session: Session, *text_values: str | None) -> str:
         # Seongnam 4113 and Sujeong-gu 41131. Prefer the one code that extends
         # every other matched code while leaving true siblings ambiguous.
         code_prefixes = {
-            row.eden_area_id: str(getattr(row, "administrative_code", "") or "").rstrip(
-                "0"
-            )
+            row.eden_area_id: str(getattr(row, "administrative_code", "") or "").rstrip("0")
             for row in parent_matches
         }
         nested_matches = [
@@ -298,8 +292,15 @@ def normalize_festival_run(session_factory: sessionmaker[Session], run_id: str) 
                         )
                         if end < start:
                             raise ValueError("festival end date precedes its start date")
+                        today = datetime.now(UTC).replace(
+                            tzinfo=None, hour=0, minute=0, second=0, microsecond=0
+                        )
+                        if end < today or start >= today + timedelta(days=90):
+                            continue
+                        start = max(start, today)
+                        end = min(end, today + timedelta(days=89))
                         original_days = (end - start).days + 1
-                        bounded_days = min(original_days, 60)
+                        bounded_days = original_days
                         area_id = _match_festival_area(
                             session,
                             _text(row, "rdnmadr", "도로명주소"),
@@ -321,11 +322,6 @@ def normalize_festival_run(session_factory: sessionmaker[Session], run_id: str) 
                                         "end_date": end.date().isoformat(),
                                     }
                                 ],
-                                quality_flags=(
-                                    ["festival_duration_bounded_at_60_days"]
-                                    if original_days > 60
-                                    else []
-                                ),
                             )
                             row_count += 1
                     normalized += row_count
@@ -339,7 +335,9 @@ def normalize_holiday_run(session_factory: sessionmaker[Session], run_id: str) -
     normalized = 0
     with session_factory.begin() as session:
         area_ids = list(
-            session.scalars(select(Area.eden_area_id).where(Area.active.is_(True))).all()
+            session.scalars(
+                select(Area.eden_area_id).where(Area.active.is_(True), Area.level == "sido")
+            ).all()
         )
         for raw in _run_records(session, run_id, HOLIDAY_SOURCE):
             try:
@@ -354,6 +352,11 @@ def normalize_holiday_run(session_factory: sessionmaker[Session], run_id: str) -
                         holiday_date = _date(
                             _text(row, "locdate", required=True) or "", ("%Y%m%d",)
                         )
+                        today = datetime.now(UTC).replace(
+                            tzinfo=None, hour=0, minute=0, second=0, microsecond=0
+                        )
+                        if not today <= holiday_date < today + timedelta(days=90):
+                            continue
                         is_holiday = (_text(row, "isHoliday") or "N").upper() == "Y"
                         holiday = {
                             "name": _text(row, "dateName", required=True),

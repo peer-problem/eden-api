@@ -141,9 +141,7 @@ def public_data_watermark(
         try:
             timestamp = datetime.strptime(value.strip(), date_format)
             if timestamp.tzinfo is None:
-                source_timezone = (
-                    SEOUL if source_id in _SEOUL_LOCAL_WATERMARK_SOURCES else UTC
-                )
+                source_timezone = SEOUL if source_id in _SEOUL_LOCAL_WATERMARK_SOURCES else UTC
                 timestamp = timestamp.replace(tzinfo=source_timezone)
             parsed.append(timestamp.astimezone(UTC))
         except ValueError:
@@ -380,6 +378,8 @@ class PublicDataAdapter(SourceAdapter):
         items: list[RawItem] = []
         errors: list[str] = []
         rotation_notices: list[str] = []
+        festival_counts: dict[str, int] = {}
+        new_places_remaining = min(int(scope.get("new_places_limit", 30)), 30)
         authentication_errors = 0
         authoritative_watermarks: list[datetime] = []
         missing_watermark_count = 0
@@ -485,6 +485,103 @@ class PublicDataAdapter(SourceAdapter):
                 else:
                     authoritative_watermarks.append(source_updated_at)
                     watermark_basis = "authoritative_source_period"
+                if scope.get("essential_catalog"):
+                    from app.sources.essential import balanced_catalog_rows
+
+                    source_rows = public_data_items(parsed)
+                    allowed = set(
+                        (scope.get("allowed_content_ids") or {}).get(
+                            str(params.get("areaCode")), []
+                        )
+                    )
+                    selected = [row for row in source_rows if str(row.get("contentid")) in allowed]
+                    target_size = (
+                        10
+                        if any(
+                            len(ids) < 10
+                            for ids in (scope.get("allowed_content_ids") or {}).values()
+                        )
+                        else 30
+                    )
+                    addition_limit = min(max(0, target_size - len(allowed)), new_places_remaining)
+                    additions = (
+                        balanced_catalog_rows(
+                            [
+                                row
+                                for row in source_rows
+                                if str(row.get("contentid")) not in allowed
+                            ],
+                            addition_limit,
+                        )
+                        if addition_limit
+                        else []
+                    )
+                    selected.extend(additions)
+                    new_places_remaining -= len(additions)
+                    parsed = {"items": selected, "scope": "bounded_province_catalog"}
+                    page_count = len(selected)
+                elif self.source_id == "SRC_FESTIVAL":
+                    from app.sources.essential import upcoming_festivals
+
+                    parsed = {
+                        "items": upcoming_festivals(
+                            public_data_items(parsed), now.astimezone(SEOUL).date(), festival_counts
+                        )
+                    }
+                elif self.source_id == "SRC_AIRPORT_COUNTRY":
+                    allowed_countries = {
+                        "JP",
+                        "CN",
+                        "TW",
+                        "US",
+                        "PH",
+                        "일본",
+                        "중국",
+                        "대만",
+                        "미국",
+                        "필리핀",
+                        "Japan",
+                        "China",
+                        "Taiwan",
+                        "United States",
+                        "Philippines",
+                    }
+                    selected = [
+                        row
+                        for row in public_data_items(parsed)
+                        if str(row.get("country", "")).strip() in allowed_countries
+                    ]
+                    parsed = {"items": selected}
+                elif self.source_id == "SRC_AIRPORT_WEEKLY":
+                    from app.normalization.inbound_sources import _weekly_flight_occurrences
+
+                    selected = []
+                    for row in public_data_items(parsed):
+                        try:
+                            occurrence = _weekly_flight_occurrences(
+                                row, now.astimezone(SEOUL).date()
+                            )
+                            if occurrence and occurrence[2]:
+                                selected.append(row)
+                        except ValueError:
+                            selected.append(row)  # Preserve malformed evidence for normalization.
+                    parsed = {"items": selected}
+                elif self.source_id == "SRC_SEMAS_SHOPS":
+                    from math import cos, radians
+
+                    cx, cy = float(params.get("cx", 0)), float(params.get("cy", 0))
+
+                    def distance(row, cx=cx, cy=cy):
+                        try:
+                            x = float(row.get("lon") or row.get("lng") or 0)
+                            y = float(row.get("lat") or 0)
+                            return ((x - cx) * cos(radians(cy))) ** 2 + (y - cy) ** 2
+                        except (TypeError, ValueError):
+                            return float("inf")
+
+                    selected = sorted(public_data_items(parsed), key=distance)[:5]
+                    parsed = {"items": selected, "scope": "nearest_shops_sample"}
+                    page_count = len(selected)
                 items.append(
                     RawItem(
                         external_key=f"{operation_key}:{page}",
@@ -558,9 +655,7 @@ class PublicDataAdapter(SourceAdapter):
             reason = None
         return FetchResult(
             status=SourceStatus.DEGRADED if degraded else SourceStatus.AVAILABLE,
-            data_as_of=(
-                max(authoritative_watermarks) if authoritative_watermarks else None
-            ),
+            data_as_of=(max(authoritative_watermarks) if authoritative_watermarks else None),
             items=tuple(items),
             reason=reason,
             # Rotation markers remain in run metadata so normalizers can tell

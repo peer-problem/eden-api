@@ -240,7 +240,7 @@ class YouTubeAggregateAdapter(SourceAdapter):
     def fetch(self, scope: dict[str, Any]) -> FetchResult:
         if self.api_key is None:
             return _missing_credentials(self.source_id, ["YOUTUBE_API_KEY"])
-        targets = _targets(scope)[:5]
+        targets = _targets(scope)[:15]
         if not targets:
             return FetchResult(
                 status=SourceStatus.UNAVAILABLE,
@@ -259,7 +259,7 @@ class YouTubeAggregateAdapter(SourceAdapter):
                     params={
                         "part": "snippet",
                         "type": "video",
-                        "maxResults": 50,
+                        "maxResults": 20,
                         "order": "date",
                         "q": target["keyword"],
                         "regionCode": target["country"],
@@ -334,7 +334,7 @@ class YouTubeAggregateAdapter(SourceAdapter):
                         quality_flags=(
                             "query_language_market_proxy",
                             "youtube_region_availability_filter",
-                            "latest_results_sample_max_50",
+                            "latest_results_sample_max_20",
                             "aggregate_only",
                         ),
                     )

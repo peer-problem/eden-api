@@ -1,6 +1,6 @@
 [project]
 name = "eden-api"
-version = "0.1.0"
+version = "0.2.0"
 description = "EDEN tourism intelligence public API and data pipeline"
 readme = "README.md"
 requires-python = ">=3.12"

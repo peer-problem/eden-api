@@ -89,8 +89,8 @@ def test_region_insight_ignores_unselected_and_attraction_dates() -> None:
     assert data["visitors"]["total"] == 10
     assert data["demand"] is None
     assert data["sources"] == ["SRC_KTO_REGIONAL_VISITORS"]
-    assert availability == Availability.AVAILABLE
-    assert reason is None
+    assert availability == Availability.PARTIAL
+    assert reason is not None
     RegionInsightData.model_validate(data)
 
 
@@ -143,7 +143,7 @@ def test_previous_year_comparison_uses_calendar_dates_across_leap_day() -> None:
 
     assert data["comparison"]["baseline_start"] == "2023-02-23"
     assert data["comparison"]["baseline_end"] == "2023-02-28"
-    assert data["comparison"]["change_rate"] == 20.0
+    assert data["comparison"]["change_rate"] is None  # Incomplete windows cannot be compared.
 
 
 def test_attraction_monthly_observation_is_not_relabelled_as_daily() -> None:
@@ -205,8 +205,9 @@ def test_visitor_type_projects_region_and_timeseries_counts() -> None:
         "domestic": None,
         "foreign": 60,
         "change_rate": None,
-        "availability": "available",
-        "reason": None,
+        "availability": "partial",
+        "reason": "일부 날짜의 방문 관측이 없습니다.",
+        "completeness_ratio": 1 / 7,
     }
     assert timeseries is not None
     observed = timeseries["series"][-1]

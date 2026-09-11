@@ -7,10 +7,10 @@ from typing import Any
 
 DOCUMENTATION_VERIFIED_AT = datetime(2026, 9, 10, tzinfo=UTC)
 
-KTO_RELATED_PLACES_PER_RUN = 20
-KMA_OPERATIONS_PER_RUN = 10
-PUBLIC_DATA_OPERATIONS_PER_RUN = 20
-SEMAS_PLACES_PER_RUN = 10
+KTO_RELATED_PLACES_PER_RUN = 5
+KMA_OPERATIONS_PER_RUN = 5
+PUBLIC_DATA_OPERATIONS_PER_RUN = 5
+SEMAS_PLACES_PER_RUN = 5
 
 KTO_ADMINISTRATIVE_AREA_CODES = (
     "11",
@@ -32,13 +32,19 @@ KTO_ADMINISTRATIVE_AREA_CODES = (
     "52",
 )
 
-SOCIAL_MARKET_TARGETS = (
-    {"country": "CN", "keyword": "韩国旅游"},
-    {"country": "JP", "keyword": "韓国旅行"},
-    {"country": "TW", "keyword": "韓國旅遊"},
-    {"country": "US", "keyword": "Korea travel"},
-    {"country": "PH", "keyword": "Korea travel"},
+SOCIAL_KEYWORDS = {
+    "CN": ("韩国旅游", "首尔旅游", "济州岛旅游"),
+    "JP": ("韓国旅行", "ソウル旅行", "済州島旅行"),
+    "TW": ("韓國旅遊", "首爾旅遊", "濟州島旅遊"),
+    "US": ("Korea travel", "Seoul travel", "Jeju travel"),
+    "PH": ("Korea travel", "Seoul travel", "Jeju travel"),
+}
+SOCIAL_MARKET_TARGETS = tuple(
+    {"country": country, "keyword": keywords[index]}
+    for index in range(3)
+    for country, keywords in SOCIAL_KEYWORDS.items()
 )
+
 SOCIAL_SCOPE_SOURCES = {
     "SRC_NAVER_TREND",
     "SRC_YOUTUBE",
@@ -51,14 +57,14 @@ SOCIAL_SCOPE_SOURCES = {
 # the MOIS administrative code.  Keep this explicit; guessing a crosswalk at
 # collection time would silently assign places to the wrong province.
 KTO_TOURAPI_AREA_TO_MOIS_PREFIX = {
-    "1": "11",   # Seoul
-    "2": "28",   # Incheon
-    "3": "30",   # Daejeon
-    "4": "27",   # Daegu
-    "5": "29",   # Gwangju
-    "6": "26",   # Busan
-    "7": "31",   # Ulsan
-    "8": "36",   # Sejong
+    "1": "11",  # Seoul
+    "2": "28",  # Incheon
+    "3": "30",  # Daejeon
+    "4": "27",  # Daegu
+    "5": "29",  # Gwangju
+    "6": "26",  # Busan
+    "7": "31",  # Ulsan
+    "8": "36",  # Sejong
     "31": "41",  # Gyeonggi
     "32": "51",  # Gangwon Special Self-Governing Province
     "33": "43",  # Chungbuk
@@ -159,20 +165,46 @@ def _kto_monthly_area_operations(
 
 
 _TOURAPI_CATALOG = {
+    "rotate_operations": True,
+    "max_operations_per_run": 5,
+    "rotation_seconds": 86400,
+    "essential_catalog": True,
     "operations": [
         {
             "operation": "areaBasedList2",
-            "external_key": "areaBasedList2:all",
-            "params": {"MobileOS": "ETC", "MobileApp": "EDEN", "arrange": "C"},
-            "watermark": {
-                "response_field": "modifiedtime",
-                "format": "%Y%m%d%H%M%S",
+            "external_key": f"areaBasedList2:area={code}",
+            "params": {
+                "MobileOS": "ETC",
+                "MobileApp": "EDEN",
+                "arrange": "C",
+                "areaCode": code,
+                "numOfRows": 1000,
             },
-            "max_pages": 20,
-            "rotate_pages": True,
-            "rotation_seconds": 24 * 3600,
+            "watermark": {"response_field": "modifiedtime", "format": "%Y%m%d%H%M%S"},
+            "max_pages": 1,
+            "paginate": False,
+            "bounded_sample": True,
         }
-    ]
+        for code in (
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "31",
+            "32",
+            "33",
+            "34",
+            "35",
+            "36",
+            "37",
+            "38",
+            "39",
+        )
+    ],
 }
 
 
@@ -185,7 +217,7 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "areaTarSvcDemList": ("tarSvcDemIxCd", "11"),
                 "areaCulResDemList": ("culResDemIxCd", "12"),
             }
-        )
+        ),
     },
     "SRC_KTO_REGIONAL_VISITORS": {
         "operations": [
@@ -207,7 +239,7 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 },
                 "max_pages": 20,
             }
-            for operation in ("metcoRegnVisitrDDList", "locgoRegnVisitrDDList")
+            for operation in ("metcoRegnVisitrDDList",)
         ]
     },
     "SRC_KTO_DEMAND_INTENSITY": {
@@ -218,7 +250,7 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "areaTarSjrnDsList": ("tarSjrnDsIxCd", "21"),
                 "areaTarExpDsList": ("tarExpDsIxCd", "22"),
             }
-        )
+        ),
     },
     "SRC_KTO_DIVERSITY": {
         "rotation_group_param": "baseYm",
@@ -229,7 +261,7 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "areaExpDivList": ("expDivIxCd", "32"),
                 "areaIntlDivList": ("intlDivIxCd", "33"),
             }
-        )
+        ),
     },
     "SRC_TOUR_KO": _TOURAPI_CATALOG,
     "SRC_TOUR_EN": _TOURAPI_CATALOG,
@@ -256,7 +288,7 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
     "SRC_KMA_FORECAST": {
         "rotate_operations": True,
         "max_operations_per_run": KMA_OPERATIONS_PER_RUN,
-        "rotation_seconds": 6 * 3600,
+        "rotation_seconds": 3 * 3600,
         "operations": [],
     },
     "SRC_SEMAS_SHOPS": {"operations": []},
@@ -329,7 +361,7 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "pagination_params": False,
             }
             for months in range(1, 49)
-        ]
+        ],
     },
     "SRC_AIRPORT_WEEKLY": {
         "operations": [
@@ -415,9 +447,7 @@ def kto_related_place_operations(
         rows.append(
             {
                 "operation": "searchKeyword1",
-                "external_key": (
-                    f"searchKeyword1:place={place_id}:month=$month_minus_2"
-                ),
+                "external_key": (f"searchKeyword1:place={place_id}:month=$month_minus_2"),
                 "params": {
                     "MobileOS": "ETC",
                     "MobileApp": "EDEN",
@@ -504,7 +534,9 @@ def semas_place_operations(
                 "cy": f"{lat:.7f}",
             },
             "response_type_param": "type",
-            "max_pages": 2,
+            "max_pages": 1,
+            "paginate": False,
+            "bounded_sample": True,
         }
         for place_id, lat, lng in places[:SEMAS_PLACES_PER_RUN]
     ]

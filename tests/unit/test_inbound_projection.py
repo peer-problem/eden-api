@@ -65,12 +65,26 @@ def test_youtube_query_sample_is_not_used_as_country_interest() -> None:
         {"SRC_YOUTUBE": 100.0},
     )
 
-    assert score is None
-    assert interest["youtube"] == {
-        "posts": None,
-        "views": None,
-        "reactions": None,
-        "score": None,
-        "availability": "unavailable",
-        "reason": "YouTube 지역 필터는 재생 가능 지역이며 시청자 거주 국가가 아닙니다.",
-    }
+    assert score == 100.0
+    assert interest["youtube"]["posts"] == 50
+    assert interest["youtube"]["views"] == 1000
+    assert interest["youtube"]["semantics"] == "search_sample_interest"
+    assert "실제 국적별 시청자 수가 아닙니다" in interest["youtube"]["reason"]
+
+
+def test_inbound_reader_preserves_explicit_youtube_sample_metrics():
+    value, excluded = _selected_inbound_social_interest(
+        {
+            "youtube": {
+                "posts": 20,
+                "views": 1234,
+                "score": None,
+                "availability": "available",
+                "semantics": "search_sample_interest",
+            },
+        },
+        {"youtube"},
+    )
+    assert value["youtube"]["views"] == 1234
+    assert value["youtube"]["score"] is None
+    assert excluded is False

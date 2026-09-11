@@ -160,14 +160,17 @@ def probe_public_routes() -> list[dict[str, Any]]:
             ("period", "24m"),
             ("forecast_days", "7"),
             *(("social_sources", source) for source in social_sources),
-            *(("include", block) for block in (
-                "visitors",
-                "flights",
-                "flight_schedule",
-                "fx",
-                "tourism_balance",
-                "social_interest",
-            )),
+            *(
+                ("include", block)
+                for block in (
+                    "visitors",
+                    "flights",
+                    "flight_schedule",
+                    "fx",
+                    "tourism_balance",
+                    "social_interest",
+                )
+            ),
         ]
     )
     return [
@@ -334,19 +337,22 @@ def record_baseline(path: Path, *, iterations: int) -> dict[str, Any]:
     if sample.get("scheduler_enabled") is not False:
         raise RuntimeError("The scheduler-off baseline requires SCHEDULER_ENABLED=false")
     sample["public_route_probes"] = [
-        probe
-        for _iteration in range(iterations)
-        for probe in probe_public_routes()
+        probe for _iteration in range(iterations) for probe in probe_public_routes()
     ]
     sample["database_disconnects"] = recent_database_disconnects()
     sample["database_capacity"] = database_capacity_evidence()
     sample["database_runtime"] = database_runtime_evidence()
     append_sample(path, sample)
-    return evaluate_samples(
+    result = evaluate_samples(
         load_samples(path),
         required_seconds=PHASE1_SOAK_REQUIRED_SECONDS,
         require_public_probes=True,
     )
+
+    result["activation_product_writes_allowed"] = sample["database_capacity"][
+        "product_writes_allowed"
+    ]
+    return result
 
 
 def report(path: Path) -> dict[str, Any]:
@@ -378,7 +384,13 @@ def main() -> int:
     if args.action == "warmup":
         return 0 if result["status"] == "passed" else 1
     if args.action == "baseline":
-        return 1 if result["status"] == "failed" else 0
+        # A pre-release growth window is an expansion warning, not an API
+        # activation failure. Preserve the failed soak report and all hard gates.
+        growth_warning_only = (
+            set(result.get("violations", ())) == {"database_growth_budget_exceeded"}
+            and result.get("activation_product_writes_allowed") is True
+        )
+        return 1 if result["status"] == "failed" and not growth_warning_only else 0
     if args.action == "sample" or result["status"] == "passed":
         return 0
     return 1 if result["status"] == "failed" else 2

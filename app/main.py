@@ -91,6 +91,14 @@ def create_app(
         openapi_url="/openapi.json",
         lifespan=lifespan,
     )
+    original_openapi = app.openapi
+
+    def documented_openapi():
+        from app.api.documentation import document_contract
+
+        return document_contract(original_openapi())
+
+    app.openapi = documented_openapi
     app.state.settings = resolved_settings
     app.add_middleware(BodyLimitMiddleware, max_body_bytes=resolved_settings.MAX_REQUEST_BODY_BYTES)
     app.add_middleware(
@@ -119,6 +127,13 @@ def create_app(
             {key: value for key, value in error.items() if key not in {"ctx", "input", "url"}}
             for error in exc.errors()
         ]
+        for detail in details:
+            detail["loc"] = [
+                part
+                for part in detail.get("loc", ())
+                if not isinstance(part, str)
+                or not (part.startswith("function-") or part.startswith("literal["))
+            ]
         payload = ErrorResponse(
             request_id=request_id,
             error=ErrorDetail(

@@ -44,7 +44,7 @@ def test_four_sources_coalesce_to_one_request_per_family(refresh_factory) -> Non
     assert set(rows) == {ProductFamily.INBOUND.value, ProductFamily.TRENDS.value}
     assert rows[ProductFamily.TRENDS.value].source_ids == sorted(source_ids)
     assert rows[ProductFamily.INBOUND.value].source_ids == sorted(
-        set(source_ids) - {"SRC_YOUTUBE"}
+        source_ids
     )
     assert all(row.status == PENDING for row in rows.values())
 
@@ -221,7 +221,4 @@ def test_family_dispatch_builds_only_the_requested_product(monkeypatch) -> None:
     registry.refresh_product_family(ProductFamily.TRENDS, object())
 
     assert calls == ["trends"]
-    assert product_families_for_source("SRC_KTO_INBOUND_STATS") == (
-        ProductFamily.INBOUND,
-        ProductFamily.TRENDS,
-    )
+    assert product_families_for_source("SRC_KTO_INBOUND_STATS") == (ProductFamily.INBOUND,)

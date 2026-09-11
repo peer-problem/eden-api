@@ -92,10 +92,7 @@ def test_phase1_soak_passes_only_after_contiguous_24_hour_evidence() -> None:
     started = datetime(2026, 8, 29, tzinfo=UTC)
     samples = [
         _sample(started, scheduler_enabled=False),
-        *[
-            _sample(started + timedelta(minutes=5 * index))
-            for index in range(1, 289)
-        ],
+        *[_sample(started + timedelta(minutes=5 * index)) for index in range(1, 289)],
     ]
 
     result = evaluate_samples(
@@ -241,4 +238,21 @@ def test_warmup_cli_fails_when_a_public_route_cannot_be_primed(monkeypatch: Any)
     )
     monkeypatch.setattr(sys, "argv", ["phase1_soak.py", "warmup"])
 
+    assert phase1_soak.main() == 1
+
+
+def test_baseline_growth_warning_preserves_soak_failure_and_absolute_gate(monkeypatch):
+    result = {
+        "status": "failed",
+        "violations": ["database_growth_budget_exceeded"],
+        "activation_product_writes_allowed": True,
+    }
+    monkeypatch.setattr(phase1_soak, "record_baseline", lambda *_args, **_kwargs: result)
+    monkeypatch.setattr(sys, "argv", ["phase1_soak.py", "baseline"])
+    assert phase1_soak.main() == 0
+    assert result["status"] == "failed"
+    result["activation_product_writes_allowed"] = False
+    assert phase1_soak.main() == 1
+    result["activation_product_writes_allowed"] = True
+    result["violations"].append("api_p95_exceeded")
     assert phase1_soak.main() == 1

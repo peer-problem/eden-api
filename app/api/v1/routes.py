@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
-from pydantic import BaseModel
+from pydantic import AwareDatetime, BaseModel, BeforeValidator
 
 from app.api.dependencies import get_read_repository
 from app.api.v1.common import Envelope, ErrorResponse, Freshness, Meta, SourceMeta
@@ -23,6 +22,7 @@ from app.api.v1.schemas import (
     VisitorForecastData,
     VisitorTimeseriesData,
     VisitorType,
+    normalize_keyword,
 )
 from app.domain.time import kst_now
 from app.observability.metrics import record_api_availability
@@ -36,6 +36,13 @@ router = APIRouter(
         404: {"model": ErrorResponse, "description": "Resource not found"},
         413: {"model": ErrorResponse, "description": "Request body too large"},
         422: {"model": ErrorResponse, "description": "Request validation failed"},
+        429: {
+            "model": ErrorResponse,
+            "description": "호출 제한. 프록시 본문은 JSON이 아닐 수 있습니다.",
+        },
+        502: {"description": "게이트웨이 오류. 본문은 JSON이 아닐 수 있습니다."},
+        503: {"model": ErrorResponse, "description": "일시적 서비스 제한"},
+        504: {"description": "게이트웨이 시간 초과. 본문은 JSON이 아닐 수 있습니다."},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -78,7 +85,11 @@ def _envelope[ModelT: BaseModel](
         and age_seconds > result.max_acceptable_age_seconds
     )
     source_meta = [SourceMeta.model_validate(source) for source in result.sources]
-    stale = stale_by_age or any(source.stale for source in source_meta)
+    stale = (
+        stale_by_age or any(source.stale for source in source_meta)
+        if result.stale is None
+        else result.stale
+    )
     request.state.response_stale = stale
     record_api_availability(request.scope["route"].path, result.availability, stale)
     freshness_status = "unavailable" if as_of is None else ("stale" if stale else "fresh")
@@ -116,7 +127,11 @@ def _envelope[ModelT: BaseModel](
 def get_trends(
     request: Request,
     repository: RepositoryDep,
-    keyword: Annotated[str, Query(min_length=1, max_length=200, examples=["Korea travel"])],
+    keyword: Annotated[
+        str,
+        BeforeValidator(normalize_keyword),
+        Query(min_length=1, max_length=200, examples=["Korea travel"]),
+    ],
     area_code: Annotated[str | None, Query(max_length=64)] = None,
     country: Annotated[CountryCode | Literal["all"], Query()] = "all",
     social_sources: Annotated[list[TrendSocialSource] | None, Query()] = None,
@@ -184,9 +199,12 @@ def get_place(
     request: Request,
     repository: RepositoryDep,
     content_id: Annotated[
-        str, Path(min_length=1, max_length=128, examples=["eden_place_20bff2c378635516aca3"])
+        str, Path(min_length=1, max_length=128, examples=["eden_place_161fb775402b53b78a0a"])
     ],
     lang: Annotated[Language, Query()] = "ko",
+    shops_limit: Annotated[
+        int, Query(ge=1, le=20, description="주변 상점 개수. 연관 관광지와 별도.")
+    ] = 5,
     radius_m: Annotated[int, Query(ge=100, le=5000)] = 1000,
     related_limit: Annotated[int, Query(ge=1, le=50)] = 5,
     include: Annotated[list[Literal["related", "shops", "hub"]] | None, Query()] = None,
@@ -201,6 +219,7 @@ def get_place(
         content_id=resolution.eden_place_id,
         lang=lang,
         radius_m=radius_m,
+        shops_limit=shops_limit,
         related_limit=related_limit,
         include=sorted(include or ["related", "shops", "hub"]),
     )
@@ -223,7 +242,7 @@ def get_visitor_forecast(
     repository: RepositoryDep,
     area_code: Annotated[str, Query(min_length=1, max_length=64, examples=["1100000000"])],
     place_name: Annotated[str | None, Query(max_length=300)] = None,
-    days: Annotated[int, Query(ge=1, le=30)] = 14,
+    days: Annotated[int, Query(ge=1, le=30)] = 7,
     nx: Annotated[int | None, Query()] = None,
     ny: Annotated[int | None, Query()] = None,
     include: Annotated[list[Literal["weather", "festivals", "holidays"]] | None, Query()] = None,
@@ -351,7 +370,15 @@ def get_market_alerts(
         Query(),
     ] = None,
     source_scope: Annotated[Literal["korean", "local", "all"], Query()] = "all",
-    since: Annotated[datetime | None, Query()] = None,
+    since: Annotated[
+        AwareDatetime | None,
+        Query(
+            description=(
+                "시간대 필수. 발표 또는 수집 시각이 since 이상인 공지. "
+                "수집 시각 내림차순. 동률이면 발표 시각 내림차순 후 ID 오름차순."
+            )
+        ),
+    ] = None,
     language: Annotated[Literal["ko", "en"], Query()] = "ko",
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> Envelope[AlertsData]:
@@ -382,7 +409,7 @@ def recommend_destinations(
     repository: RepositoryDep,
     payload: RecommendationRequest,
 ) -> Envelope[RecommendationsData]:
-    values = payload.model_dump(mode="json")
+    values = payload.model_dump(mode="json", exclude_unset=True)
     if payload.area_code:
         values["area_code"] = _resolve_area(repository, payload.area_code)
     key = lookup_key(**values)

@@ -11,7 +11,7 @@ from app.domain.enums import Availability
 from app.products.formulas import FORECAST_FORMULA_VERSION
 from app.products.snapshots import SnapshotCandidate, SnapshotPublisher
 from app.readmodels.keys import lookup_key
-from app.repositories.models import Area, ForecastInput, ProvenanceEdge
+from app.repositories.models import Area, ForecastInput
 
 FORECAST_PRODUCT_VERSION = "forecast_input_product_v1"
 FORECAST_MAX_AGE_SECONDS = 18 * 3600
@@ -42,7 +42,9 @@ def build_forecast_snapshots(
     with session_factory() as session:
         area_ids = list(
             session.scalars(
-                select(ForecastInput.area_id).distinct().order_by(ForecastInput.area_id)
+                select(Area.eden_area_id)
+                .where(Area.active.is_(True), Area.level == "sido")
+                .order_by(Area.eden_area_id)
             ).all()
         )
     publisher = SnapshotPublisher(session_factory)
@@ -74,30 +76,14 @@ def build_forecast_snapshots(
             )
             if not rows:
                 continue
-            raw_ids = tuple(
-                sorted(
-                    set(
-                        session.scalars(
-                            select(ProvenanceEdge.raw_record_id).where(
-                                ProvenanceEdge.output_type == "forecast_input",
-                                ProvenanceEdge.output_id.in_(
-                                    [str(row.input_id) for row in rows]
-                                ),
-                            )
-                        ).all()
-                    )
-                )
-            )
+
         watermarks: dict[str, datetime] = {}
         for row in rows:
             current = _aware(row.source_updated_at)
-            watermarks[row.source_id] = max(
-                watermarks.get(row.source_id, current), current
-            )
+            watermarks[row.source_id] = max(watermarks.get(row.source_id, current), current)
         has_base = any(row.source_id == "SRC_KTO_VISITOR_FORECAST" for row in rows)
         has_inherited_weather = any(
-            row.source_id == "SRC_KMA_FORECAST" and row.area_id != area_id
-            for row in rows
+            row.source_id == "SRC_KMA_FORECAST" and row.area_id != area_id for row in rows
         )
         availability = Availability.AVAILABLE if has_base else Availability.PARTIAL
         calculated_at = datetime.now(UTC)
@@ -119,9 +105,7 @@ def build_forecast_snapshots(
                                 {
                                     **row.weather,
                                     "grid_source": (
-                                        "parent_area"
-                                        if row.area_id != area_id
-                                        else "area_center"
+                                        "parent_area" if row.area_id != area_id else "area_center"
                                     ),
                                 }
                                 if row.weather is not None
@@ -137,12 +121,11 @@ def build_forecast_snapshots(
                 },
                 metadata={
                     "max_acceptable_age_seconds": FORECAST_MAX_AGE_SECONDS,
-                    "spatial_resolution": (
-                        "sido" if has_inherited_weather else area.level
-                    ),
-                    "weather_spatial_resolution": (
-                        "sido" if has_inherited_weather else area.level
-                    ),
+                    "normalized_references": {
+                        "forecast_input": [str(row.input_id) for row in rows]
+                    },
+                    "spatial_resolution": ("sido" if has_inherited_weather else area.level),
+                    "weather_spatial_resolution": ("sido" if has_inherited_weather else area.level),
                     "reason": None if has_base else "권위적 방문 예측 원천이 없습니다.",
                 },
                 input_watermarks=watermarks,
@@ -159,7 +142,7 @@ def build_forecast_snapshots(
                     *(("missing_authoritative_forecast",) if not has_base else ()),
                     *(("inherited_sido_weather",) if has_inherited_weather else ()),
                 ),
-                raw_record_ids=raw_ids,
+                raw_record_ids=(),
             )
         )
         published.append(area_id)

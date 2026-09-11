@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date, datetime, timedelta
+from statistics import median
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.domain.enums import Availability
-from app.products.formulas import adjusted_forecast, adjusted_forecast_index
+from app.products.regional_views import _visitor_totals
 
 SEOUL = ZoneInfo("Asia/Seoul")
 
@@ -99,6 +101,51 @@ def _weather_value(rows: list[dict[str, Any]], scope: dict[str, Any]) -> dict[st
     )
 
 
+def historical_weekday_proxy(visits: list[dict[str, Any]], target: date, today: date):
+    """Percentile reference, never a predicted visitor count or confidence."""
+    grouped = defaultdict(list)
+    for row in visits:
+        observed = _date(str(row["period_start"]))
+        if (
+            row.get("grain") == "day"
+            and row.get("subject_type") == "area"
+            and today - timedelta(days=89) <= observed <= today
+        ):
+            grouped[observed].append(row)
+    values = {
+        day: total
+        for day, rows in grouped.items()
+        if (total := _visitor_totals(rows)["all"]) is not None and total >= 0
+    }
+    if len(values) < 28 or (today - max(values)).days > 60:
+        return None
+    same_weekday = [value for day, value in values.items() if day.weekday() == target.weekday()]
+    fallback = len(same_weekday) < 3
+    samples = list(values.values()) if fallback else same_weekday
+    center = median(samples)
+    population = list(values.values())
+    percentile = (
+        (
+            sum(value < center for value in population)
+            + sum(value == center for value in population) / 2
+        )
+        / len(population)
+        * 100
+    )
+    return {
+        "demand_score": round(percentile, 4),
+        "method": "historical_weekday_proxy",
+        "basis_period": {"start": min(values).isoformat(), "end": max(values).isoformat()},
+        "sample_count": len(values),
+        "basis": (
+            "전체 일별 중앙값: 같은 요일 표본 3개 미만"
+            if fallback
+            else f"같은 요일 중앙값: {len(samples)}개 표본"
+        )
+        + (". 7일 이후도 동일한 역사적 기준의 참고값입니다." if (target - today).days >= 7 else ""),
+    }
+
+
 def build_forecast_view(
     product: dict[str, Any],
     scope: dict[str, Any],
@@ -106,7 +153,7 @@ def build_forecast_view(
     today: date | None = None,
 ) -> tuple[dict[str, Any], Availability, str | None]:
     today = today or datetime.now(SEOUL).date()
-    days = int(scope.get("days", 14))
+    days = int(scope.get("days", 7))
     include = set(scope.get("include") or ["weather", "festivals", "holidays"])
     place_name = scope.get("place_name")
     by_date: dict[date, list[dict[str, Any]]] = {}
@@ -147,48 +194,32 @@ def build_forecast_view(
         is_holiday = any(item.get("is_holiday") for item in holiday_values)
         factors: dict[str, float] = {}
         if weather and weather.get("availability") == "available":
-            condition = str(weather.get("condition") or "").casefold()
-            factors["weather"] = (
-                -0.1 if condition in {"rain", "rain_or_snow", "snow", "shower"} else 0.0
-            )
             all_weather.append(weather)
         if festival_values and "festivals" in include:
-            factors["festival"] = 0.1 if festivals else 0.0
             all_festivals.extend(festivals or [])
             any_festival_evidence = True
         if holiday_values and "holidays" in include:
-            factors["holiday"] = 0.05 if is_holiday else 0.0
             any_holiday = any_holiday or is_holiday
             any_holiday_evidence = True
-
         concentration = base.get("concentration_rate") if base else None
         expected = base.get("expected_visitors") if base else None
-        weather_factor = factors.get("weather")
-        festival_factor = factors.get("festival")
-        holiday_factor = factors.get("holiday")
-        demand_score, demand_confidence = adjusted_forecast_index(
-            float(concentration) if concentration is not None else None,
-            weather_factor,
-            festival_factor,
-            holiday_factor,
+        has_official = concentration is not None or expected is not None
+        proxy = (
+            historical_weekday_proxy(product.get("visits", []), target, today)
+            if not has_official and place_name is None
+            else None
         )
-        adjusted_visitors, visitor_confidence = adjusted_forecast(
-            int(expected) if expected is not None else None,
-            weather_factor,
-            festival_factor,
-            holiday_factor,
-        )
-        confidence = (
-            demand_confidence.value if demand_score is not None else visitor_confidence.value
-        )
-        has_base = concentration is not None or expected is not None
+        demand_score = concentration if has_official else proxy["demand_score"] if proxy else None
+        adjusted_visitors = expected
+        confidence = None
+        has_base = has_official or proxy is not None
         if has_base:
             available_days += 1
-            source_ids.add("SRC_KTO_VISITOR_FORECAST")
+            source_ids.add(
+                "SRC_KTO_VISITOR_FORECAST" if has_official else "SRC_KTO_REGIONAL_VISITORS"
+            )
         missing_adjustments: list[str] = []
-        if "weather" in include and (
-            weather is None or weather.get("availability") != "available"
-        ):
+        if "weather" in include and (weather is None or weather.get("availability") != "available"):
             missing_adjustments.append("weather")
         if "festivals" in include and not festival_values:
             missing_adjustments.append("festivals")
@@ -205,11 +236,12 @@ def build_forecast_view(
         )
         day_reason = None
         if not has_base:
-            day_reason = "해당 날짜의 권위적 원천 예측이 없습니다."
-        elif missing_adjustments:
-            day_reason = "요청한 일부 조정 원천이 없습니다: " + ", ".join(
-                missing_adjustments
+            day_reason = (
+                "공식 예측이 없고 참고 전망에 필요한 최근 90일 내 "
+                "28일 관측 또는 60일 최신성을 충족하지 못합니다."
             )
+        elif missing_adjustments:
+            day_reason = "일부 참고 정보가 없습니다: " + ", ".join(missing_adjustments)
         source_ids.update(str(row["source_id"]) for row in rows)
         daily.append(
             {
@@ -220,10 +252,12 @@ def build_forecast_view(
                 "confidence": confidence,
                 "weather": weather,
                 "festivals": festivals if "festivals" in include else None,
-                "holiday": (
-                    is_holiday if "holidays" in include and holiday_values else None
-                ),
+                "holiday": (is_holiday if "holidays" in include and holiday_values else None),
                 "adjustment_factors": factors,
+                "method": "official" if has_official else proxy["method"] if proxy else None,
+                "basis_period": proxy["basis_period"] if proxy else None,
+                "sample_count": proxy["sample_count"] if proxy else None,
+                "basis": proxy["basis"] if proxy else None,
                 "availability": day_availability,
                 "reason": day_reason,
             }
@@ -236,9 +270,9 @@ def build_forecast_view(
     if availability == Availability.AVAILABLE:
         reason = None
     elif available_days < days:
-        reason = f"요청 {days}일 중 {available_days}일의 권위적 예측만 있습니다."
+        reason = f"요청 {days}일 중 {available_days}일의 전망만 있습니다."
     else:
-        reason = "일부 날짜에서 요청한 조정 원천이 없습니다."
+        reason = "일부 날짜에서 요청한 참고 원천이 없습니다."
     return (
         {
             "area_code": product["area_code"],
@@ -247,14 +281,10 @@ def build_forecast_view(
             "horizon_days": days,
             "daily": daily,
             "weather": (all_weather or None) if "weather" in include else None,
-            "festivals": (
-                sorted(set(all_festivals)) if any_festival_evidence else None
-            )
+            "festivals": (sorted(set(all_festivals)) if any_festival_evidence else None)
             if "festivals" in include
             else None,
-            "holiday": (
-                any_holiday if any_holiday_evidence else None
-            )
+            "holiday": (any_holiday if any_holiday_evidence else None)
             if "holidays" in include
             else None,
             "sources": sorted(source_ids),

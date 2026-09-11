@@ -3,13 +3,16 @@ from __future__ import annotations
 import hashlib
 import json
 import zlib
+from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
+from time import monotonic
 from typing import Any
 
-from sqlalchemy import delete, exists, func, select, text, update
+from sqlalchemy import delete, exists, select, text, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, aliased, sessionmaker
@@ -29,7 +32,7 @@ MAX_SNAPSHOT_DECODE_BYTES = 64 * 1024 * 1024
 MAX_SNAPSHOT_UNCOMPRESSED_BYTES = MAX_SNAPSHOT_DECODE_BYTES
 MAX_NEW_SNAPSHOT_UNCOMPRESSED_BYTES = 8 * 1024 * 1024
 PROVENANCE_BATCH_SIZE = 500
-MAX_RETENTION_PROVENANCE_ROWS = 1000
+MAX_RETENTION_PROVENANCE_ROWS = 50_000
 
 
 class SnapshotPublishBusy(RuntimeError):
@@ -191,6 +194,7 @@ def decode_payload(
     uncompressed_bytes: int,
     compressed_bytes: int,
     max_uncompressed_bytes: int = MAX_SNAPSHOT_UNCOMPRESSED_BYTES,
+    expected_hash: str | None = None,
 ) -> dict[str, Any] | list[Any] | None:
     if encoding != PAYLOAD_ENCODING:
         raise SnapshotPayloadError(f"Unsupported snapshot payload encoding: {encoding}")
@@ -215,6 +219,8 @@ def decode_payload(
         raise SnapshotPayloadError("Snapshot payload contains an incomplete or trailing stream")
     if len(decoded) != uncompressed_bytes:
         raise SnapshotPayloadError("Uncompressed snapshot size does not match its metadata")
+    if expected_hash is not None and hashlib.sha256(decoded).hexdigest() != expected_hash:
+        raise SnapshotPayloadError("Snapshot payload hash mismatch")
     try:
         value = json.loads(decoded.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -358,6 +364,15 @@ class SnapshotPublisher:
                 f"Could not acquire the snapshot publish lock for {prepared.endpoint}"
             )
         try:
+            with session.begin():
+                current_id = session.scalar(
+                    select(ReadModelHead.snapshot_id).where(
+                        ReadModelHead.endpoint == prepared.endpoint,
+                        ReadModelHead.lookup_key_hash == prepared.lookup_key_hash,
+                    )
+                )
+            if current_id == prepared.snapshot_id:
+                return
             self._stage_payload(session, prepared)
             self._stage_snapshot(session, prepared)
             self._insert_provenance(session, prepared)
@@ -455,9 +470,7 @@ class SnapshotPublisher:
             "|".join(sorted(set(snapshot.formula_versions.values())))[:100] or "identity_v1"
         )
         for offset in range(0, len(snapshot.raw_record_ids), self.provenance_batch_size):
-            raw_record_ids = snapshot.raw_record_ids[
-                offset : offset + self.provenance_batch_size
-            ]
+            raw_record_ids = snapshot.raw_record_ids[offset : offset + self.provenance_batch_size]
             with session.begin():
                 if _is_mysql(session):
                     rows = [
@@ -706,6 +719,7 @@ def _retention_candidate_ids(
     *,
     older_than: datetime,
     limit: int,
+    candidate_id: str | None = None,
 ) -> tuple[str, ...]:
     if older_than.tzinfo is not None:
         older_than = _database_time(older_than)
@@ -715,29 +729,32 @@ def _retention_candidate_ids(
             ReadModelHead.snapshot_id == ReadModelSnapshot.snapshot_id
         )
     )
-    has_newer_retired = exists(
-        select(newer.snapshot_id).where(
+    # Two newer retired rows are sufficient. Counting the entire history for
+    # every candidate made a small cleanup spend seconds scanning old versions.
+    has_newer_retired = (
+        select(newer.snapshot_id)
+        .where(
             newer.endpoint == ReadModelSnapshot.endpoint,
             newer.lookup_key_hash == ReadModelSnapshot.lookup_key_hash,
             newer.state == "retired",
-            (
-                (newer.calculated_at > ReadModelSnapshot.calculated_at)
-                | (
-                    (newer.calculated_at == ReadModelSnapshot.calculated_at)
-                    & (newer.snapshot_id > ReadModelSnapshot.snapshot_id)
-                )
+            (newer.calculated_at > ReadModelSnapshot.calculated_at)
+            | (
+                (newer.calculated_at == ReadModelSnapshot.calculated_at)
+                & (newer.snapshot_id > ReadModelSnapshot.snapshot_id)
             ),
         )
+        .offset(1)
+        .limit(1)
+        .exists()
     )
-    is_retired_cleanup = (
-        (ReadModelSnapshot.state == "retired") & has_newer_retired
-    )
-    is_abandoned_staging = ReadModelSnapshot.state == "staging"
+    is_retired_cleanup = (ReadModelSnapshot.state == "retired") & has_newer_retired
+    is_abandoned_staging = ReadModelSnapshot.state.in_(("staging", "ready"))
     return tuple(
         session.scalars(
             select(ReadModelSnapshot.snapshot_id)
             .where(
                 is_retired_cleanup | is_abandoned_staging,
+                ReadModelSnapshot.snapshot_id == candidate_id if candidate_id else True,
                 ReadModelSnapshot.calculated_at < older_than,
                 ~is_current_head,
             )
@@ -745,6 +762,23 @@ def _retention_candidate_ids(
             .limit(limit)
         ).all()
     )
+
+
+@contextmanager
+def _retention_session(factory, snapshot_id):
+    # Keep GET_LOCK attached to a physical connection across DELETE commits.
+    bind = factory.kw.get("bind")
+    with bind.connect() as connection, factory(bind=connection) as session:
+        with session.begin():
+            snapshot = session.get(ReadModelSnapshot, snapshot_id)
+            key_hash = snapshot.lookup_key_hash if snapshot else None
+        lock_name = f"eden:publish:{key_hash[:45]}" if key_hash else None
+        acquired = bool(lock_name and SnapshotPublisher._acquire_lock(session, lock_name, 0))
+        try:
+            yield session if acquired else None
+        finally:
+            if acquired:
+                SnapshotPublisher._release_lock(session, lock_name)
 
 
 def retain_snapshots(
@@ -755,6 +789,8 @@ def retain_snapshots(
     snapshot_batch_size: int = 100,
     provenance_batch_size: int = PROVENANCE_BATCH_SIZE,
     provenance_delete_limit: int = MAX_RETENTION_PROVENANCE_ROWS,
+    max_seconds: float = 5.0,
+    pause_reason: Callable[[], str | None] | None = None,
 ) -> RetentionResult:
     """Deletes bounded retired or abandoned staging rows without touching safe points.
 
@@ -766,26 +802,29 @@ def retain_snapshots(
         raise ValueError(f"provenance_batch_size must be between 1 and {PROVENANCE_BATCH_SIZE}")
     if not 1 <= provenance_delete_limit <= MAX_RETENTION_PROVENANCE_ROWS:
         raise ValueError(
-            "provenance_delete_limit must be between 1 and "
-            f"{MAX_RETENTION_PROVENANCE_ROWS}"
+            f"provenance_delete_limit must be between 1 and {MAX_RETENTION_PROVENANCE_ROWS}"
         )
 
+    deadline = monotonic() + max_seconds
+    if max_seconds <= 0:
+        raise ValueError("max_seconds must be positive")
     with session_factory() as session:
         candidate_ids = _retention_candidate_ids(
             session,
             older_than=older_than,
             limit=snapshot_batch_size,
         )
-        provenance_rows = int(
-            session.scalar(
-                select(func.count())
-                .select_from(ProvenanceEdge)
-                .where(
-                    ProvenanceEdge.output_type == "read_model_snapshot",
-                    ProvenanceEdge.output_id.in_(candidate_ids),
+        provenance_rows = len(
+            tuple(
+                session.scalars(
+                    select(ProvenanceEdge.provenance_id)
+                    .where(
+                        ProvenanceEdge.output_type == "read_model_snapshot",
+                        ProvenanceEdge.output_id.in_(candidate_ids),
+                    )
+                    .limit(provenance_delete_limit if dry_run else provenance_batch_size)
                 )
             )
-            or 0
         )
     if dry_run or not candidate_ids:
         return RetentionResult(
@@ -798,13 +837,25 @@ def retain_snapshots(
     deleted_provenance_rows = 0
     deleted_payloads = 0
     for snapshot_id in candidate_ids:
-        with session_factory() as session:
+        if monotonic() >= deadline or (pause_reason and pause_reason()):
+            break
+        with _retention_session(session_factory, snapshot_id) as session:
+            if session is None:
+                continue
+            with session.begin():
+                eligible = _retention_candidate_ids(
+                    session, older_than=older_than, limit=1, candidate_id=snapshot_id
+                )
+            if snapshot_id not in eligible:
+                continue
             while deleted_provenance_rows < provenance_delete_limit:
+                if monotonic() >= deadline or (pause_reason and pause_reason()):
+                    break
                 with session.begin():
                     still_deletable = session.scalar(
                         select(ReadModelSnapshot.snapshot_id).where(
                             ReadModelSnapshot.snapshot_id == snapshot_id,
-                            ReadModelSnapshot.state.in_(("retired", "staging")),
+                            ReadModelSnapshot.state.in_(("retired", "staging", "ready")),
                             ~exists(
                                 select(ReadModelHead.snapshot_id).where(
                                     ReadModelHead.snapshot_id == snapshot_id
@@ -839,6 +890,8 @@ def retain_snapshots(
                     )
                     deleted_provenance_rows += result.rowcount or 0
 
+            if monotonic() >= deadline or (pause_reason and pause_reason()):
+                break
             with session.begin():
                 provenance_remains = bool(
                     session.scalar(
@@ -855,7 +908,7 @@ def retain_snapshots(
                 payload_id = session.scalar(
                     select(ReadModelSnapshot.payload_id).where(
                         ReadModelSnapshot.snapshot_id == snapshot_id,
-                        ReadModelSnapshot.state.in_(("retired", "staging")),
+                        ReadModelSnapshot.state.in_(("retired", "staging", "ready")),
                         ~exists(
                             select(ReadModelHead.snapshot_id).where(
                                 ReadModelHead.snapshot_id == snapshot_id
@@ -866,7 +919,7 @@ def retain_snapshots(
                 result = session.execute(
                     delete(ReadModelSnapshot).where(
                         ReadModelSnapshot.snapshot_id == snapshot_id,
-                        ReadModelSnapshot.state.in_(("retired", "staging")),
+                        ReadModelSnapshot.state.in_(("retired", "staging", "ready")),
                         ~exists(
                             select(ReadModelHead.snapshot_id).where(
                                 ReadModelHead.snapshot_id == snapshot_id
@@ -880,9 +933,7 @@ def retain_snapshots(
                 )
                 if payload_id is not None and not payload_in_use:
                     payload_result = session.execute(
-                        delete(ReadModelPayload).where(
-                            ReadModelPayload.payload_id == payload_id
-                        )
+                        delete(ReadModelPayload).where(ReadModelPayload.payload_id == payload_id)
                     )
                     deleted_payloads += payload_result.rowcount or 0
         if deleted_provenance_rows >= provenance_delete_limit:

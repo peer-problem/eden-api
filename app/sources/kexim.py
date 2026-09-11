@@ -66,7 +66,9 @@ class KeximFxAdapter(SourceAdapter):
                 rates = [
                     item
                     for item in document
-                    if isinstance(item, dict) and item.get("cur_unit")
+                    if isinstance(item, dict)
+                    and str(item.get("cur_unit", "")).split("(")[0]
+                    in {"JPY", "CNY", "USD", "TWD", "PHP"}
                 ]
                 if not rates:
                     errors.append(f"{rate_date.isoformat()}:no_published_rates")

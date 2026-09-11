@@ -18,6 +18,7 @@ class ReadResult:
     spatial_resolution: SpatialResolution
     formula_versions: dict[str, str] = field(default_factory=dict)
     sources: list[dict[str, Any]] = field(default_factory=list)
+    stale: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -108,19 +108,7 @@ def _existing_place_id(
         place_id = tour_cache[external_id]
         if place_id is not None:
             return place_id
-    if lat is not None and lng is not None:
-        coordinate_cache = session.info.setdefault("eden_place_coordinate_map", {})
-        coordinate_key = (lat, lng)
-        if coordinate_key not in coordinate_cache:
-            coordinate_cache[coordinate_key] = session.scalar(
-                select(Place.eden_place_id)
-                .where(Place.lat == lat, Place.lng == lng, Place.merge_status == "active")
-                .order_by(Place.eden_place_id)
-                .limit(1)
-            )
-        place_id = coordinate_cache[coordinate_key]
-        if place_id is not None:
-            return place_id
+    # Coordinates alone cannot establish facility identity.
     return stable_eden_id("place", namespace, external_id)
 
 
@@ -220,9 +208,9 @@ def _upsert_place(
                 PlaceLocalization.language == language,
             )
         )
-        session.info.setdefault("eden_place_localization", {})[
-            (place_id, language)
-        ] = localization_id
+        session.info.setdefault("eden_place_localization", {})[(place_id, language)] = (
+            localization_id
+        )
     if localization_id is None:
         raise RuntimeError("place localization was not resolved")
     _place_provenance(session, place_id, localization_id, raw.raw_record_id)
@@ -833,8 +821,7 @@ def _write_shop_batch(session: Session, groups: list[dict[str, Any]]) -> None:
         )
     ).all()
     shop_ids = {
-        (external_id, observed_at): shop_id
-        for external_id, observed_at, shop_id in resolved
+        (external_id, observed_at): shop_id for external_id, observed_at, shop_id in resolved
     }
 
     provenance_rows: list[dict[str, Any]] = []
@@ -859,7 +846,5 @@ def _write_shop_batch(session: Session, groups: list[dict[str, Any]]) -> None:
         edge_batch = provenance_rows[offset : offset + SHOP_WRITE_BATCH_SIZE]
         edge_upsert = insert(ProvenanceEdge).values(edge_batch)
         session.execute(
-            edge_upsert.on_duplicate_key_update(
-                provenance_id=ProvenanceEdge.provenance_id
-            )
+            edge_upsert.on_duplicate_key_update(provenance_id=ProvenanceEdge.provenance_id)
         )

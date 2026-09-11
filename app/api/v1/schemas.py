@@ -2,12 +2,17 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
+from unicodedata import normalize
 
 import pycountry
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, HttpUrl, StringConstraints
 
 from app.api.v1.common import BlockAvailability, SourceMeta
 from app.domain.enums import Availability
+
+
+def normalize_keyword(value: str) -> str:
+    return normalize("NFKC", value).strip()
 
 
 def _country_code(value: str) -> str:
@@ -45,6 +50,7 @@ class ApiModel(BaseModel):
 
 class SourceMetric(ApiModel):
     source_id: str
+    observed_at: datetime | None = None
     posts: int | None = Field(default=None, ge=0)
     views: int | None = Field(default=None, ge=0)
     reactions: int | None = Field(default=None, ge=0)
@@ -91,6 +97,7 @@ class AreaSummary(ApiModel):
 
 
 class VisitorSummary(ApiModel):
+    completeness_ratio: float | None = Field(default=None, ge=0, le=1)
     total: int | None = Field(default=None, ge=0)
     domestic: int | None = Field(default=None, ge=0)
     foreign: int | None = Field(default=None, ge=0)
@@ -100,6 +107,7 @@ class VisitorSummary(ApiModel):
 
 
 class DemandSummary(ApiModel):
+    data_period: str | None = None
     stay_index: float | None = Field(default=None, ge=0, le=100)
     spend_index: float | None = Field(default=None, ge=0, le=100)
     avg_stay_nights: float | None = Field(default=None, ge=0)
@@ -108,6 +116,7 @@ class DemandSummary(ApiModel):
 
 
 class DiversitySummary(ApiModel):
+    data_period: str | None = None
     age_index: float | None = Field(default=None, ge=0, le=100)
     nationality_index: float | None = Field(default=None, ge=0, le=100)
     availability: Availability
@@ -121,7 +130,15 @@ class Comparison(ApiModel):
     change_rate: float | None = None
 
 
+class RegionReferenceInformation(ApiModel):
+    place_category_counts: dict[str, int]
+    scope: str
+
+
 class RegionInsightData(ApiModel):
+    reference_information: RegionReferenceInformation | None = None
+    requested_area_code: str | None = None
+    basis_period: dict[str, date] | None = None
     area: AreaSummary
     period: PeriodShort
     visitors: VisitorSummary | None = None
@@ -186,6 +203,11 @@ class Weather(ApiModel):
     reason: str | None = None
 
 
+class BasisPeriod(ApiModel):
+    start: date
+    end: date
+
+
 class ForecastDay(ApiModel):
     date: date
     source_concentration_rate: float | None = Field(default=None, ge=0, le=100)
@@ -196,12 +218,19 @@ class ForecastDay(ApiModel):
     festivals: list[str] | None = None
     holiday: bool | None = None
     adjustment_factors: dict[str, float] = Field(default_factory=dict)
+    method: Literal["official", "historical_weekday_proxy"] | None = None
+    basis_period: BasisPeriod | None = None
+    sample_count: int | None = Field(default=None, ge=0)
+    basis: str | None = None
     availability: Availability
     reason: str | None = None
 
 
 class VisitorForecastData(ApiModel):
     area_code: str
+    requested_area_code: str | None = None
+    data_area_code: str | None = None
+    spatial_resolution: str | None = None
     eden_area_id: str | None = None
     place_name: str | None = None
     horizon_days: int = Field(ge=1, le=30)
@@ -233,6 +262,8 @@ class TimeseriesPoint(ApiModel):
 
 
 class VisitorTimeseriesData(ApiModel):
+    requested_area_code: str | None = None
+    basis_period: dict[str, date] | None = None
     area: AreaSummary
     period: str
     granularity: Literal["day", "week", "month"]
@@ -269,6 +300,7 @@ class FxData(ApiModel):
 
 
 class SocialInterest(ApiModel):
+    semantics: str | None = None
     posts: int | None = Field(default=None, ge=0)
     views: int | None = Field(default=None, ge=0)
     reactions: int | None = Field(default=None, ge=0)
@@ -331,7 +363,13 @@ class AlertsData(ApiModel):
 
 class TravelWindow(ApiModel):
     season: Literal["spring", "summer", "autumn", "winter"]
-    days: int = Field(ge=1, le=30)
+    days: int | None = Field(
+        default=None,
+        ge=1,
+        le=30,
+        deprecated=True,
+        description="호환 입력. 일정 가능성과 순위에 반영하지 않습니다.",
+    )
 
 
 class RecommendationConstraints(ApiModel):
@@ -348,9 +386,8 @@ class RecommendationRequest(ApiModel):
             "examples": [
                 {
                     "target_country": "JP",
-                    "travel_window": {"season": "autumn", "days": 3},
+                    "travel_window": {"season": "autumn"},
                     "themes": ["culture", "nature"],
-                    "party_size": 2,
                     "limit": 5,
                 }
             ]
@@ -362,7 +399,13 @@ class RecommendationRequest(ApiModel):
     budget_krw: int | None = Field(default=None, ge=0)
     themes: list[Literal["nature", "culture", "food", "kpop"]] = Field(default_factory=list)
     area_code: str | None = None
-    party_size: int = Field(default=1, ge=1, le=100)
+    party_size: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        deprecated=True,
+        description="호환 입력. 수용량과 순위에 반영하지 않습니다.",
+    )
     constraints: RecommendationConstraints = Field(default_factory=RecommendationConstraints)
     limit: int = Field(default=5, ge=1, le=20)
 
@@ -393,5 +436,13 @@ class RecommendationItem(ApiModel):
     formula_version: str
 
 
+class UnappliedInput(ApiModel):
+    field: str
+    value: Any
+    reason: str
+
+
 class RecommendationsData(ApiModel):
     recommendations: list[RecommendationItem]
+    applied_constraints: dict[str, Any] = Field(default_factory=dict)
+    unapplied_inputs: list[UnappliedInput] = Field(default_factory=list)

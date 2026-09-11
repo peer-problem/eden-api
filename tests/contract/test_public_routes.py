@@ -46,6 +46,7 @@ PUBLIC_REQUESTS = (
             "lang": "ko",
             "radius_m": 1000,
             "related_limit": 5,
+            "shops_limit": 5,
             "include": ["hub", "related", "shops"],
         },
     ),
@@ -56,7 +57,7 @@ PUBLIC_REQUESTS = (
         "visitor_forecast",
         {
             "area_code": "eden-area:11",
-            "days": 14,
+            "days": 7,
             "include": ["festivals", "holidays", "weather"],
         },
     ),
@@ -111,15 +112,6 @@ PUBLIC_REQUESTS = (
         {
             "target_country": "US",
             "travel_window": {"season": "spring", "days": 3},
-            "themes": [],
-            "party_size": 1,
-            "constraints": {
-                "max_travel_minutes": None,
-                "avoid_crowds": False,
-                "accessibility_required": False,
-                "extra": {},
-            },
-            "limit": 5,
         },
     ),
 )
@@ -437,3 +429,48 @@ def test_all_eight_route_calls_are_socket_free(
         assert response.status_code == 200, (method, path, response.text)
 
     assert len(fake_read_repository.calls) == 8
+
+
+@pytest.mark.parametrize("keyword", ["   ", "\t\n", "\u3000"])
+def test_blank_keyword_is_invalid_after_unicode_normalization(contract_client, keyword):
+    response = contract_client.get("/v1/trends", params={"keyword": keyword})
+    assert response.status_code == 422
+
+
+def test_keyword_nfkc_and_country_error_location(contract_client, fake_read_repository):
+    response = contract_client.get("/v1/trends", params={"keyword": " Ｋｏｒｅａ travel "})
+    assert response.status_code == 200
+    assert fake_read_repository.calls[-1].scope["keyword"] == "Korea travel"
+    response = contract_client.get("/v1/trends", params={"keyword": "x", "country": "ZZ"})
+    assert response.status_code == 422
+    assert all(
+        error["loc"] == ["query", "country"] for error in response.json()["error"]["details"]
+    )
+
+
+def test_since_requires_timezone(contract_client):
+    assert (
+        contract_client.get(
+            "/v1/markets/JP/alerts", params={"since": "2026-09-11T12:00:00"}
+        ).status_code
+        == 422
+    )
+    assert (
+        contract_client.get(
+            "/v1/markets/JP/alerts", params={"since": "2026-09-11T12:00:00+09:00"}
+        ).status_code
+        == 200
+    )
+
+
+def test_recommendation_days_and_party_are_optional_and_not_filled_in(
+    contract_client, fake_read_repository
+):
+    response = contract_client.post(
+        "/v1/recommendations/destinations",
+        json={"target_country": "JP", "travel_window": {"season": "autumn"}},
+    )
+    assert response.status_code == 200
+    scope = fake_read_repository.calls[-1].scope
+    assert "days" not in scope["travel_window"]
+    assert "party_size" not in scope

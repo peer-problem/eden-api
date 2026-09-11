@@ -1,0 +1,1888 @@
+{
+  "/v1/trends": {
+    "summary": "2026-09-11 실제 게시 자료 조회 예시",
+    "description": "/v1/trends?keyword=Korea%20travel&country=US&social_sources=youtube",
+    "value": {
+      "data": {
+        "keyword": "Korea travel",
+        "area_code": null,
+        "country": "US",
+        "period": "30d",
+        "time_unit": "day",
+        "interest_index": null,
+        "change_rate": null,
+        "source_metrics": [
+          {
+            "source_id": "SRC_YOUTUBE",
+            "observed_at": "2026-09-10T00:00:00Z",
+            "posts": 50,
+            "views": 51132,
+            "reactions": null,
+            "search_ratio": null,
+            "score": null,
+            "availability": "partial",
+            "reason": "최근 공개 동영상 최대 20건의 표본이며 지역 필터는 시청자 거주 국가가 아닌 재생 가능 지역입니다."
+          }
+        ],
+        "source_availability": {
+          "SRC_YOUTUBE": {
+            "availability": "partial",
+            "reason": "최근 공개 동영상 최대 20건의 표본이며 지역 필터는 시청자 거주 국가가 아닌 재생 가능 지역입니다."
+          }
+        },
+        "series": [
+          {
+            "timestamp": "2026-09-10T00:00:00Z",
+            "search_ratio": null,
+            "youtube_views": 51132,
+            "sns_mentions": null,
+            "destination_searches": null,
+            "interest_index": null
+          }
+        ],
+        "rising_keywords": [],
+        "sources": [
+          "SRC_YOUTUBE"
+        ]
+      },
+      "meta": {
+        "request_id": "aa1418b3-3150-458b-b9a6-6601640002f0",
+        "generated_at": "2026-09-11T12:06:22.388355+09:00",
+        "as_of": "2026-09-11T03:36:04+09:00",
+        "timezone": "Asia/Seoul",
+        "spatial_resolution": "none",
+        "stale": false,
+        "freshness": {
+          "status": "fresh",
+          "age_seconds": 30618,
+          "max_acceptable_age_seconds": 172800
+        },
+        "availability": "partial",
+        "reason": "일부 social signal 원천 또는 정규화 점수를 제공할 수 없습니다.",
+        "formula_versions": {
+          "interest_index": "interest_index_v1",
+          "rising_keywords": "rising_keyword_equal_window_v1"
+        },
+        "sources": [
+          {
+            "source_id": "SRC_YOUTUBE",
+            "status": "available",
+            "data_as_of": "2026-09-10T18:36:04Z",
+            "last_success_at": "2026-09-10T18:36:06Z",
+            "last_checked_at": "2026-09-10T18:36:06Z",
+            "stale": false,
+            "reason": null
+          }
+        ]
+      }
+    }
+  },
+  "/v1/regions/{area_code}/insights": {
+    "summary": "2026-09-11 실제 게시 자료 조회 예시",
+    "description": "/v1/regions/1100000000/insights?period=30d",
+    "value": {
+      "data": {
+        "reference_information": {
+          "place_category_counts": {
+            "AC": 3,
+            "C01": 3,
+            "EV": 3,
+            "EX": 3,
+            "FD": 3,
+            "HS": 3,
+            "LS": 2,
+            "NA": 2,
+            "SH": 2,
+            "VE": 2,
+            "관광지": 2,
+            "숙박": 2
+          },
+          "scope": "현재 선정한 한국어 관광지의 실제 분류별 수. 공식 수요 또는 다양성 지수가 아닙니다."
+        },
+        "requested_area_code": null,
+        "basis_period": {
+          "start": "2026-07-13",
+          "end": "2026-08-11"
+        },
+        "area": {
+          "area_code": "1100000000",
+          "eden_area_id": "eden_area_6672fa064d0a5027bd84",
+          "name": "서울특별시",
+          "spatial_resolution": "sido"
+        },
+        "period": "30d",
+        "visitors": {
+          "completeness_ratio": 1.0,
+          "total": 193744284,
+          "domestic": 188160179,
+          "foreign": 5584105,
+          "change_rate": null,
+          "availability": "available",
+          "reason": null
+        },
+        "demand": {
+          "data_period": "2026-07",
+          "stay_index": 78.8517,
+          "spend_index": 100.0,
+          "avg_stay_nights": null,
+          "availability": "partial",
+          "reason": "일부 수요 차원이 없습니다."
+        },
+        "diversity": {
+          "data_period": "2026-07",
+          "age_index": null,
+          "nationality_index": 100.0,
+          "availability": "partial",
+          "reason": "연령 다양성 원천이 없어 국적 다양성만 제공합니다."
+        },
+        "comparison": null,
+        "sources": [
+          "SRC_KTO_REGIONAL_VISITORS",
+          "SRC_KTO_DEMAND_INTENSITY",
+          "SRC_KTO_DIVERSITY"
+        ]
+      },
+      "meta": {
+        "request_id": "e8603f0b-dc6d-4c74-a134-9b76584602eb",
+        "generated_at": "2026-09-11T12:06:22.422315+09:00",
+        "as_of": "2026-07-01T09:00:00+09:00",
+        "timezone": "Asia/Seoul",
+        "spatial_resolution": "sido",
+        "stale": true,
+        "freshness": {
+          "status": "stale",
+          "age_seconds": 6231982,
+          "max_acceptable_age_seconds": 259200
+        },
+        "availability": "partial",
+        "reason": "일부 지역 데이터 블록이 없습니다.",
+        "formula_versions": {
+          "regional_product": "regional_product_v1"
+        },
+        "sources": [
+          {
+            "source_id": "SRC_KTO_DEMAND_INTENSITY",
+            "status": "stale",
+            "data_as_of": "2026-07-01T00:00:00Z",
+            "last_success_at": "2026-09-10T09:52:23Z",
+            "last_checked_at": "2026-09-10T09:52:23Z",
+            "stale": true,
+            "reason": "data_age_exceeded: 원천 데이터가 freshness 기준을 초과했습니다."
+          },
+          {
+            "source_id": "SRC_KTO_DIVERSITY",
+            "status": "stale",
+            "data_as_of": "2026-07-01T00:00:00Z",
+            "last_success_at": "2026-09-10T09:52:37Z",
+            "last_checked_at": "2026-09-10T09:52:37Z",
+            "stale": true,
+            "reason": "data_age_exceeded: 원천 데이터가 freshness 기준을 초과했습니다."
+          },
+          {
+            "source_id": "SRC_KTO_REGIONAL_VISITORS",
+            "status": "available",
+            "data_as_of": "2026-08-11T00:00:00Z",
+            "last_success_at": "2026-09-10T16:49:44Z",
+            "last_checked_at": "2026-09-10T16:49:44Z",
+            "stale": false,
+            "reason": null
+          }
+        ]
+      }
+    }
+  },
+  "/v1/places/{content_id}": {
+    "summary": "2026-09-11 실제 게시 자료 조회 예시",
+    "description": "/v1/places/eden_place_161fb775402b53b78a0a?lang=ko&shops_limit=5",
+    "value": {
+      "data": {
+        "content_id": "eden_place_161fb775402b53b78a0a",
+        "language": "ko",
+        "requested_language": "ko",
+        "fallback": false,
+        "available_languages": [
+          "ko"
+        ],
+        "title": "짜장면박물관",
+        "category": "VE",
+        "address": "인천광역시 제물포구 차이나타운로 56-14",
+        "location": {
+          "lat": 37.4747905,
+          "lng": 126.6181675
+        },
+        "location_availability": {
+          "availability": "available",
+          "reason": null
+        },
+        "overview": null,
+        "hub": null,
+        "related_places": null,
+        "nearby_shops": [
+          {
+            "shop_id": "eden_shop_e010db8bc14159c5ad27",
+            "name": "티에이치중부",
+            "category": "경영 컨설팅업",
+            "distance_m": 778.756
+          },
+          {
+            "shop_id": "eden_shop_06a144bf306d5d93bbdc",
+            "name": "올댓빈티지",
+            "category": "기타 의류 소매업",
+            "distance_m": 779.687
+          },
+          {
+            "shop_id": "eden_shop_2897388b04ed5966af71",
+            "name": "이베로-아시아인스티튜트",
+            "category": "교육컨설팅업",
+            "distance_m": 783.78
+          },
+          {
+            "shop_id": "eden_shop_caed0c665a555a92b197",
+            "name": "등나무집",
+            "category": "돼지고기 구이/찜",
+            "distance_m": 786.411
+          },
+          {
+            "shop_id": "eden_shop_9811bc9d74f15c558e26",
+            "name": "오빈티지",
+            "category": "기타 의류 소매업",
+            "distance_m": 794.641
+          }
+        ],
+        "sources": [
+          "SRC_SEMAS_SHOPS",
+          "SRC_TOUR_KO"
+        ]
+      },
+      "meta": {
+        "request_id": "121be509-a1d4-497b-b3a4-0c199a7f054c",
+        "generated_at": "2026-09-11T12:06:22.497329+09:00",
+        "as_of": "2026-08-21T02:31:26+09:00",
+        "timezone": "Asia/Seoul",
+        "spatial_resolution": "place",
+        "stale": true,
+        "freshness": {
+          "status": "stale",
+          "age_seconds": 1848896,
+          "max_acceptable_age_seconds": 259200
+        },
+        "availability": "partial",
+        "reason": "중심 관광지 원천을 사용할 수 없습니다. 연관 관광지 원천을 사용할 수 없습니다.",
+        "formula_versions": {
+          "related_score": "inverse_rank_v1",
+          "nearby_distance": "haversine_wgs84_v1"
+        },
+        "sources": [
+          {
+            "source_id": "SRC_KTO_PLACE_HUB",
+            "status": "stale",
+            "data_as_of": "2026-07-01T00:00:00Z",
+            "last_success_at": "2026-09-10T09:58:16Z",
+            "last_checked_at": "2026-09-10T09:58:16Z",
+            "stale": true,
+            "reason": "data_age_exceeded: 원천 데이터가 freshness 기준을 초과했습니다."
+          },
+          {
+            "source_id": "SRC_KTO_PLACE_RELATED",
+            "status": "stale",
+            "data_as_of": "2026-07-01T00:00:00Z",
+            "last_success_at": "2026-09-10T12:32:05Z",
+            "last_checked_at": "2026-09-10T12:32:05Z",
+            "stale": true,
+            "reason": "data_age_exceeded: 원천 데이터가 freshness 기준을 초과했습니다."
+          },
+          {
+            "source_id": "SRC_SEMAS_SHOPS",
+            "status": "degraded",
+            "data_as_of": null,
+            "last_success_at": "2026-09-10T04:01:50Z",
+            "last_checked_at": "2026-09-10T04:01:50Z",
+            "stale": false,
+            "reason": "일부 operation 또는 page 수집 실패"
+          },
+          {
+            "source_id": "SRC_TOUR_KO",
+            "status": "degraded",
+            "data_as_of": "2026-09-09T13:26:56Z",
+            "last_success_at": "2026-09-10T15:01:12Z",
+            "last_checked_at": "2026-09-10T15:01:12Z",
+            "stale": false,
+            "reason": "일부 operation 또는 page 수집 실패"
+          }
+        ]
+      }
+    }
+  },
+  "/v1/forecasts/visitors": {
+    "summary": "2026-09-11 실제 게시 자료 조회 예시",
+    "description": "/v1/forecasts/visitors?area_code=1100000000&days=7",
+    "value": {
+      "data": {
+        "area_code": "1100000000",
+        "requested_area_code": "1100000000",
+        "data_area_code": "1100000000",
+        "spatial_resolution": "sido",
+        "eden_area_id": "eden_area_6672fa064d0a5027bd84",
+        "place_name": null,
+        "horizon_days": 7,
+        "daily": [
+          {
+            "date": "2026-09-11",
+            "source_concentration_rate": null,
+            "demand_score": 72.8814,
+            "expected_visitors": null,
+            "confidence": null,
+            "weather": {
+              "temperature_c": 20.0,
+              "precipitation_probability_pct": 20.0,
+              "condition": "cloudy",
+              "grid_source": "area_center",
+              "nx": 60,
+              "ny": 127,
+              "availability": "available",
+              "reason": null
+            },
+            "festivals": null,
+            "holiday": null,
+            "adjustment_factors": {},
+            "method": "historical_weekday_proxy",
+            "basis_period": {
+              "start": "2026-06-14",
+              "end": "2026-08-11"
+            },
+            "sample_count": 59,
+            "basis": "같은 요일 중앙값: 8개 표본",
+            "availability": "partial",
+            "reason": "일부 참고 정보가 없습니다: festivals, holidays"
+          },
+          {
+            "date": "2026-09-12",
+            "source_concentration_rate": null,
+            "demand_score": 57.6271,
+            "expected_visitors": null,
+            "confidence": null,
+            "weather": {
+              "temperature_c": 21.0,
+              "precipitation_probability_pct": 20.0,
+              "condition": "cloudy",
+              "grid_source": "area_center",
+              "nx": 60,
+              "ny": 127,
+              "availability": "available",
+              "reason": null
+            },
+            "festivals": null,
+            "holiday": null,
+            "adjustment_factors": {},
+            "method": "historical_weekday_proxy",
+            "basis_period": {
+              "start": "2026-06-14",
+              "end": "2026-08-11"
+            },
+            "sample_count": 59,
+            "basis": "같은 요일 중앙값: 8개 표본",
+            "availability": "partial",
+            "reason": "일부 참고 정보가 없습니다: festivals, holidays"
+          },
+          {
+            "date": "2026-09-13",
+            "source_concentration_rate": null,
+            "demand_score": 9.322,
+            "expected_visitors": null,
+            "confidence": null,
+            "weather": {
+              "temperature_c": 20.0,
+              "precipitation_probability_pct": 20.0,
+              "condition": "cloudy",
+              "grid_source": "area_center",
+              "nx": 60,
+              "ny": 127,
+              "availability": "available",
+              "reason": null
+            },
+            "festivals": null,
+            "holiday": null,
+            "adjustment_factors": {},
+            "method": "historical_weekday_proxy",
+            "basis_period": {
+              "start": "2026-06-14",
+              "end": "2026-08-11"
+            },
+            "sample_count": 59,
+            "basis": "같은 요일 중앙값: 9개 표본",
+            "availability": "partial",
+            "reason": "일부 참고 정보가 없습니다: festivals, holidays"
+          },
+          {
+            "date": "2026-09-14",
+            "source_concentration_rate": null,
+            "demand_score": 41.5254,
+            "expected_visitors": null,
+            "confidence": null,
+            "weather": {
+              "temperature_c": 22.0,
+              "precipitation_probability_pct": 10.0,
+              "condition": "clear",
+              "grid_source": "area_center",
+              "nx": 60,
+              "ny": 127,
+              "availability": "available",
+              "reason": null
+            },
+            "festivals": null,
+            "holiday": null,
+            "adjustment_factors": {},
+            "method": "historical_weekday_proxy",
+            "basis_period": {
+              "start": "2026-06-14",
+              "end": "2026-08-11"
+            },
+            "sample_count": 59,
+            "basis": "같은 요일 중앙값: 9개 표본",
+            "availability": "partial",
+            "reason": "일부 참고 정보가 없습니다: festivals, holidays"
+          },
+          {
+            "date": "2026-09-15",
+            "source_concentration_rate": null,
+            "demand_score": 50.0,
+            "expected_visitors": null,
+            "confidence": null,
+            "weather": {
+              "temperature_c": 19.0,
+              "precipitation_probability_pct": 0.0,
+              "condition": "clear",
+              "grid_source": "area_center",
+              "nx": 60,
+              "ny": 127,
+              "availability": "available",
+              "reason": null
+            },
+            "festivals": null,
+            "holiday": null,
+            "adjustment_factors": {},
+            "method": "historical_weekday_proxy",
+            "basis_period": {
+              "start": "2026-06-14",
+              "end": "2026-08-11"
+            },
+            "sample_count": 59,
+            "basis": "같은 요일 중앙값: 9개 표본",
+            "availability": "partial",
+            "reason": "일부 참고 정보가 없습니다: festivals, holidays"
+          },
+          {
+            "date": "2026-09-16",
+            "source_concentration_rate": null,
+            "demand_score": 57.6271,
+            "expected_visitors": null,
+            "confidence": null,
+            "weather": null,
+            "festivals": null,
+            "holiday": null,
+            "adjustment_factors": {},
+            "method": "historical_weekday_proxy",
+            "basis_period": {
+              "start": "2026-06-14",
+              "end": "2026-08-11"
+            },
+            "sample_count": 59,
+            "basis": "같은 요일 중앙값: 8개 표본",
+            "availability": "partial",
+            "reason": "일부 참고 정보가 없습니다: weather, festivals, holidays"
+          },
+          {
+            "date": "2026-09-17",
+            "source_concentration_rate": null,
+            "demand_score": 62.7119,
+            "expected_visitors": null,
+            "confidence": null,
+            "weather": null,
+            "festivals": null,
+            "holiday": null,
+            "adjustment_factors": {},
+            "method": "historical_weekday_proxy",
+            "basis_period": {
+              "start": "2026-06-14",
+              "end": "2026-08-11"
+            },
+            "sample_count": 59,
+            "basis": "같은 요일 중앙값: 8개 표본",
+            "availability": "partial",
+            "reason": "일부 참고 정보가 없습니다: weather, festivals, holidays"
+          }
+        ],
+        "weather": [
+          {
+            "temperature_c": 20.0,
+            "precipitation_probability_pct": 20.0,
+            "condition": "cloudy",
+            "grid_source": "area_center",
+            "nx": 60,
+            "ny": 127,
+            "availability": "available",
+            "reason": null
+          },
+          {
+            "temperature_c": 21.0,
+            "precipitation_probability_pct": 20.0,
+            "condition": "cloudy",
+            "grid_source": "area_center",
+            "nx": 60,
+            "ny": 127,
+            "availability": "available",
+            "reason": null
+          },
+          {
+            "temperature_c": 20.0,
+            "precipitation_probability_pct": 20.0,
+            "condition": "cloudy",
+            "grid_source": "area_center",
+            "nx": 60,
+            "ny": 127,
+            "availability": "available",
+            "reason": null
+          },
+          {
+            "temperature_c": 22.0,
+            "precipitation_probability_pct": 10.0,
+            "condition": "clear",
+            "grid_source": "area_center",
+            "nx": 60,
+            "ny": 127,
+            "availability": "available",
+            "reason": null
+          },
+          {
+            "temperature_c": 19.0,
+            "precipitation_probability_pct": 0.0,
+            "condition": "clear",
+            "grid_source": "area_center",
+            "nx": 60,
+            "ny": 127,
+            "availability": "available",
+            "reason": null
+          }
+        ],
+        "festivals": null,
+        "holiday": null,
+        "sources": [
+          "SRC_KMA_FORECAST",
+          "SRC_KTO_REGIONAL_VISITORS"
+        ]
+      },
+      "meta": {
+        "request_id": "8502a99a-6ffa-4253-877d-2dbb8b232313",
+        "generated_at": "2026-09-11T12:06:22.548834+09:00",
+        "as_of": "2026-08-27T05:35:17+09:00",
+        "timezone": "Asia/Seoul",
+        "spatial_resolution": "sido",
+        "stale": false,
+        "freshness": {
+          "status": "fresh",
+          "age_seconds": 1319465,
+          "max_acceptable_age_seconds": 5184000
+        },
+        "availability": "partial",
+        "reason": "일부 날짜에서 요청한 참고 원천이 없습니다.",
+        "formula_versions": {
+          "visitor_forecast": "historical_weekday_proxy"
+        },
+        "sources": [
+          {
+            "source_id": "SRC_KMA_FORECAST",
+            "status": "available",
+            "data_as_of": "2026-09-10T14:00:00Z",
+            "last_success_at": "2026-09-10T16:50:15Z",
+            "last_checked_at": "2026-09-10T16:50:15Z",
+            "stale": false,
+            "reason": null
+          },
+          {
+            "source_id": "SRC_KTO_REGIONAL_VISITORS",
+            "status": "available",
+            "data_as_of": "2026-08-11T00:00:00Z",
+            "last_success_at": "2026-09-10T16:49:44Z",
+            "last_checked_at": "2026-09-10T16:49:44Z",
+            "stale": false,
+            "reason": null
+          }
+        ]
+      }
+    }
+  },
+  "/v1/visitors/timeseries": {
+    "summary": "2026-09-11 실제 게시 자료 조회 예시",
+    "description": "/v1/visitors/timeseries?area_code=1100000000&period=30d&granularity=day",
+    "value": {
+      "data": {
+        "requested_area_code": null,
+        "basis_period": {
+          "start": "2026-07-13",
+          "end": "2026-08-11"
+        },
+        "area": {
+          "area_code": "1100000000",
+          "eden_area_id": "eden_area_6672fa064d0a5027bd84",
+          "name": "서울특별시",
+          "spatial_resolution": "sido"
+        },
+        "period": "30d",
+        "granularity": "day",
+        "visitor_type": "all",
+        "attraction_name": null,
+        "summary": {
+          "total": 193744284,
+          "domestic": 188160179,
+          "foreign": 5584105,
+          "peak_visitors": 6887682,
+          "peak_concentration_rate": null,
+          "completeness_ratio": 1.0
+        },
+        "series": [
+          {
+            "period_start": "2026-07-13",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6486570,
+            "domestic": 6300522,
+            "foreign": 186048,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-14",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6469906,
+            "domestic": 6293431,
+            "foreign": 176475,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-15",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6640076,
+            "domestic": 6464241,
+            "foreign": 175835,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-16",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6837816,
+            "domestic": 6658369,
+            "foreign": 179447,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-17",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6273159,
+            "domestic": 6078219,
+            "foreign": 194940,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-18",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6301457,
+            "domestic": 6100420,
+            "foreign": 201037,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-19",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6168640,
+            "domestic": 5976184,
+            "foreign": 192456,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-20",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6435234,
+            "domestic": 6252922,
+            "foreign": 182312,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-21",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6530625,
+            "domestic": 6360162,
+            "foreign": 170463,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-22",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6652871,
+            "domestic": 6483716,
+            "foreign": 169155,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-23",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6676385,
+            "domestic": 6505461,
+            "foreign": 170924,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-24",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6887682,
+            "domestic": 6698525,
+            "foreign": 189157,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-25",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6637176,
+            "domestic": 6444309,
+            "foreign": 192867,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-26",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6179684,
+            "domestic": 5988914,
+            "foreign": 190770,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-27",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6530305,
+            "domestic": 6344422,
+            "foreign": 185883,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-28",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6611369,
+            "domestic": 6429441,
+            "foreign": 181928,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-29",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6698790,
+            "domestic": 6519013,
+            "foreign": 179777,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-30",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6720619,
+            "domestic": 6538946,
+            "foreign": 181673,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-07-31",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6835290,
+            "domestic": 6650865,
+            "foreign": 184425,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-08-01",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6147089,
+            "domestic": 5964106,
+            "foreign": 182983,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-08-02",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 5806494,
+            "domestic": 5625956,
+            "foreign": 180538,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-08-03",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6236135,
+            "domestic": 6056295,
+            "foreign": 179840,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-08-04",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6331659,
+            "domestic": 6150925,
+            "foreign": 180734,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-08-05",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6396670,
+            "domestic": 6212189,
+            "foreign": 184481,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-08-06",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6400097,
+            "domestic": 6207026,
+            "foreign": 193071,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-08-07",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6539024,
+            "domestic": 6336288,
+            "foreign": 202736,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-08-08",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6357455,
+            "domestic": 6154425,
+            "foreign": 203030,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-08-09",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6003389,
+            "domestic": 5803599,
+            "foreign": 199790,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-08-10",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6418952,
+            "domestic": 6221671,
+            "foreign": 197281,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          },
+          {
+            "period_start": "2026-08-11",
+            "grain": "day",
+            "subject_type": "area",
+            "total": 6533666,
+            "domestic": 6339617,
+            "foreign": 194049,
+            "concentration_rate": null,
+            "completeness_ratio": 1.0
+          }
+        ],
+        "sources": [
+          "SRC_KTO_REGIONAL_VISITORS"
+        ]
+      },
+      "meta": {
+        "request_id": "9413a859-3ec8-4938-8c25-e70a93b872bc",
+        "generated_at": "2026-09-11T12:06:22.578617+09:00",
+        "as_of": "2026-08-27T05:35:17+09:00",
+        "timezone": "Asia/Seoul",
+        "spatial_resolution": "sido",
+        "stale": false,
+        "freshness": {
+          "status": "fresh",
+          "age_seconds": 1319465,
+          "max_acceptable_age_seconds": 2937600
+        },
+        "availability": "available",
+        "reason": null,
+        "formula_versions": {
+          "regional_product": "regional_product_v1"
+        },
+        "sources": [
+          {
+            "source_id": "SRC_KTO_REGIONAL_VISITORS",
+            "status": "available",
+            "data_as_of": "2026-08-11T00:00:00Z",
+            "last_success_at": "2026-09-10T16:49:44Z",
+            "last_checked_at": "2026-09-10T16:49:44Z",
+            "stale": false,
+            "reason": null
+          }
+        ]
+      }
+    }
+  },
+  "/v1/markets/inbound": {
+    "summary": "2026-09-11 실제 게시 자료 조회 예시",
+    "description": "/v1/markets/inbound?countries=JP&countries=CN",
+    "value": {
+      "data": {
+        "period": "12m",
+        "markets": [
+          {
+            "country": "CN",
+            "visitors": 6158257,
+            "visitor_change_rate": 27.7129,
+            "arriving_flights": 41913,
+            "passengers": null,
+            "flight_schedule": {
+              "forecast_days": 7,
+              "flights": 1175,
+              "change_rate": null,
+              "major_routes": [
+                {
+                  "origin": "PVG",
+                  "destination": "ICN",
+                  "flights": 286
+                },
+                {
+                  "origin": "TAO",
+                  "destination": "ICN",
+                  "flights": 281
+                },
+                {
+                  "origin": "PEK",
+                  "destination": "ICN",
+                  "flights": 135
+                },
+                {
+                  "origin": "CAN",
+                  "destination": "ICN",
+                  "flights": 73
+                },
+                {
+                  "origin": "SZX",
+                  "destination": "ICN",
+                  "flights": 71
+                },
+                {
+                  "origin": "HGH",
+                  "destination": "ICN",
+                  "flights": 65
+                },
+                {
+                  "origin": "DLC",
+                  "destination": "ICN",
+                  "flights": 60
+                },
+                {
+                  "origin": "NKG",
+                  "destination": "ICN",
+                  "flights": 57
+                },
+                {
+                  "origin": "TFU",
+                  "destination": "ICN",
+                  "flights": 42
+                },
+                {
+                  "origin": "CKG",
+                  "destination": "ICN",
+                  "flights": 35
+                }
+              ],
+              "availability": "available",
+              "reason": null
+            },
+            "fx": {
+              "currency": "CNY",
+              "krw_rate": 199.65,
+              "change_rate": null,
+              "rate_date": "2026-09-10",
+              "source_id": "SRC_KEXIM_FX",
+              "availability": "available",
+              "reason": null
+            },
+            "tourism_balance_usd": -50300000.0,
+            "tourism_balance_scope": "KR_total",
+            "tourism_balance_period": "2026-07",
+            "social_interest": null,
+            "source_availability": {
+              "flight_schedule": {
+                "availability": "available",
+                "reason": null
+              },
+              "flights": {
+                "availability": "partial",
+                "reason": "국가별 도착 운항편 수는 있으나 여객 수는 원천에서 제공하지 않습니다."
+              },
+              "fx": {
+                "availability": "available",
+                "reason": null
+              },
+              "social_interest": {
+                "availability": "unavailable",
+                "reason": "요청한 SNS 원천의 관측이 없습니다."
+              },
+              "tourism_balance": {
+                "availability": "available",
+                "reason": "한국 전체 일반여행 수지이며 국가별 수지가 아닙니다."
+              },
+              "visitors": {
+                "availability": "available",
+                "reason": null
+              }
+            },
+            "inbound_score": 91.2016,
+            "sources": [
+              {
+                "source_id": "SRC_AIRPORT_COUNTRY",
+                "status": "stale",
+                "data_as_of": "2026-07-01T00:00:00Z",
+                "last_success_at": "2026-09-10T09:52:15Z",
+                "last_checked_at": "2026-09-10T09:52:15Z",
+                "stale": true,
+                "reason": "data_age_exceeded: 원천 데이터가 freshness 기준을 초과했습니다."
+              },
+              {
+                "source_id": "SRC_AIRPORT_WEEKLY",
+                "status": "degraded",
+                "data_as_of": "2026-09-10T22:21:24Z",
+                "last_success_at": "2026-09-10T22:21:26Z",
+                "last_checked_at": "2026-09-10T22:21:26Z",
+                "stale": false,
+                "reason": "원천 발표시각을 확인할 수 없어 freshness를 보수적으로 처리했습니다."
+              },
+              {
+                "source_id": "SRC_BOK_ECOS",
+                "status": "available",
+                "data_as_of": "2026-09-10T00:00:00Z",
+                "last_success_at": "2026-09-10T12:31:59Z",
+                "last_checked_at": "2026-09-10T12:31:59Z",
+                "stale": false,
+                "reason": null
+              },
+              {
+                "source_id": "SRC_KEXIM_FX",
+                "status": "available",
+                "data_as_of": "2026-09-09T15:00:00Z",
+                "last_success_at": "2026-09-10T12:31:57Z",
+                "last_checked_at": "2026-09-10T12:31:57Z",
+                "stale": false,
+                "reason": null
+              },
+              {
+                "source_id": "SRC_KTO_INBOUND_STATS",
+                "status": "stale",
+                "data_as_of": "2026-07-31T14:59:59Z",
+                "last_success_at": "2026-09-10T09:57:43Z",
+                "last_checked_at": "2026-09-10T09:57:43Z",
+                "stale": true,
+                "reason": "data_age_exceeded: 원천 데이터가 freshness 기준을 초과했습니다."
+              },
+              {
+                "source_id": "SRC_YOUTUBE",
+                "status": "available",
+                "data_as_of": "2026-09-10T18:36:04Z",
+                "last_success_at": "2026-09-10T18:36:06Z",
+                "last_checked_at": "2026-09-10T18:36:06Z",
+                "stale": false,
+                "reason": null
+              }
+            ]
+          },
+          {
+            "country": "JP",
+            "visitors": 4014334,
+            "visitor_change_rate": 15.7506,
+            "arriving_flights": 52341,
+            "passengers": null,
+            "flight_schedule": {
+              "forecast_days": 7,
+              "flights": 1896,
+              "change_rate": null,
+              "major_routes": [
+                {
+                  "origin": "NRT",
+                  "destination": "ICN",
+                  "flights": 547
+                },
+                {
+                  "origin": "KIX",
+                  "destination": "ICN",
+                  "flights": 442
+                },
+                {
+                  "origin": "FUK",
+                  "destination": "ICN",
+                  "flights": 375
+                },
+                {
+                  "origin": "NGO",
+                  "destination": "ICN",
+                  "flights": 210
+                },
+                {
+                  "origin": "CTS",
+                  "destination": "ICN",
+                  "flights": 161
+                },
+                {
+                  "origin": "OKA",
+                  "destination": "ICN",
+                  "flights": 98
+                },
+                {
+                  "origin": "HND",
+                  "destination": "ICN",
+                  "flights": 63
+                }
+              ],
+              "availability": "available",
+              "reason": null
+            },
+            "fx": {
+              "currency": "JPY",
+              "krw_rate": 8.7242,
+              "change_rate": null,
+              "rate_date": "2026-09-10",
+              "source_id": "SRC_KEXIM_FX",
+              "availability": "available",
+              "reason": null
+            },
+            "tourism_balance_usd": -50300000.0,
+            "tourism_balance_scope": "KR_total",
+            "tourism_balance_period": "2026-07",
+            "social_interest": null,
+            "source_availability": {
+              "flight_schedule": {
+                "availability": "available",
+                "reason": null
+              },
+              "flights": {
+                "availability": "partial",
+                "reason": "국가별 도착 운항편 수는 있으나 여객 수는 원천에서 제공하지 않습니다."
+              },
+              "fx": {
+                "availability": "available",
+                "reason": null
+              },
+              "social_interest": {
+                "availability": "unavailable",
+                "reason": "요청한 SNS 원천의 관측이 없습니다."
+              },
+              "tourism_balance": {
+                "availability": "available",
+                "reason": "한국 전체 일반여행 수지이며 국가별 수지가 아닙니다."
+              },
+              "visitors": {
+                "availability": "available",
+                "reason": null
+              }
+            },
+            "inbound_score": 75.9572,
+            "sources": [
+              {
+                "source_id": "SRC_AIRPORT_COUNTRY",
+                "status": "stale",
+                "data_as_of": "2026-07-01T00:00:00Z",
+                "last_success_at": "2026-09-10T09:52:15Z",
+                "last_checked_at": "2026-09-10T09:52:15Z",
+                "stale": true,
+                "reason": "data_age_exceeded: 원천 데이터가 freshness 기준을 초과했습니다."
+              },
+              {
+                "source_id": "SRC_AIRPORT_WEEKLY",
+                "status": "degraded",
+                "data_as_of": "2026-09-10T22:21:24Z",
+                "last_success_at": "2026-09-10T22:21:26Z",
+                "last_checked_at": "2026-09-10T22:21:26Z",
+                "stale": false,
+                "reason": "원천 발표시각을 확인할 수 없어 freshness를 보수적으로 처리했습니다."
+              },
+              {
+                "source_id": "SRC_BOK_ECOS",
+                "status": "available",
+                "data_as_of": "2026-09-10T00:00:00Z",
+                "last_success_at": "2026-09-10T12:31:59Z",
+                "last_checked_at": "2026-09-10T12:31:59Z",
+                "stale": false,
+                "reason": null
+              },
+              {
+                "source_id": "SRC_KEXIM_FX",
+                "status": "available",
+                "data_as_of": "2026-09-09T15:00:00Z",
+                "last_success_at": "2026-09-10T12:31:57Z",
+                "last_checked_at": "2026-09-10T12:31:57Z",
+                "stale": false,
+                "reason": null
+              },
+              {
+                "source_id": "SRC_KTO_INBOUND_STATS",
+                "status": "stale",
+                "data_as_of": "2026-07-31T14:59:59Z",
+                "last_success_at": "2026-09-10T09:57:43Z",
+                "last_checked_at": "2026-09-10T09:57:43Z",
+                "stale": true,
+                "reason": "data_age_exceeded: 원천 데이터가 freshness 기준을 초과했습니다."
+              },
+              {
+                "source_id": "SRC_YOUTUBE",
+                "status": "available",
+                "data_as_of": "2026-09-10T18:36:04Z",
+                "last_success_at": "2026-09-10T18:36:06Z",
+                "last_checked_at": "2026-09-10T18:36:06Z",
+                "stale": false,
+                "reason": null
+              }
+            ]
+          }
+        ]
+      },
+      "meta": {
+        "request_id": "b084dbdf-ec70-4c53-8d4a-6291f8b69dde",
+        "generated_at": "2026-09-11T12:06:22.613226+09:00",
+        "as_of": "2026-07-01T09:00:00+09:00",
+        "timezone": "Asia/Seoul",
+        "spatial_resolution": "country",
+        "stale": true,
+        "freshness": {
+          "status": "stale",
+          "age_seconds": 6231982,
+          "max_acceptable_age_seconds": 172800
+        },
+        "availability": "partial",
+        "reason": "요청한 일부 방한시장 데이터 제품을 아직 제공할 수 없습니다.",
+        "formula_versions": {
+          "inbound_score": "inbound_score_v1"
+        },
+        "sources": [
+          {
+            "source_id": "SRC_AIRPORT_COUNTRY",
+            "status": "stale",
+            "data_as_of": "2026-08-01T00:00:00Z",
+            "last_success_at": "2026-09-10T09:52:15Z",
+            "last_checked_at": "2026-09-10T09:52:15Z",
+            "stale": true,
+            "reason": "data_age_exceeded: 원천 데이터가 freshness 기준을 초과했습니다."
+          },
+          {
+            "source_id": "SRC_AIRPORT_WEEKLY",
+            "status": "degraded",
+            "data_as_of": null,
+            "last_success_at": "2026-09-10T22:21:26Z",
+            "last_checked_at": "2026-09-10T22:21:26Z",
+            "stale": false,
+            "reason": "원천 발표시각을 확인할 수 없어 freshness를 보수적으로 처리했습니다."
+          },
+          {
+            "source_id": "SRC_BOK_ECOS",
+            "status": "available",
+            "data_as_of": "2026-09-10T00:00:00Z",
+            "last_success_at": "2026-09-10T12:31:59Z",
+            "last_checked_at": "2026-09-10T12:31:59Z",
+            "stale": false,
+            "reason": null
+          },
+          {
+            "source_id": "SRC_KEXIM_FX",
+            "status": "available",
+            "data_as_of": "2026-09-09T15:00:00Z",
+            "last_success_at": "2026-09-10T12:31:57Z",
+            "last_checked_at": "2026-09-10T12:31:57Z",
+            "stale": false,
+            "reason": null
+          },
+          {
+            "source_id": "SRC_KTO_INBOUND_STATS",
+            "status": "stale",
+            "data_as_of": "2026-07-31T14:59:59Z",
+            "last_success_at": "2026-09-10T09:57:43Z",
+            "last_checked_at": "2026-09-10T09:57:43Z",
+            "stale": true,
+            "reason": "data_age_exceeded: 원천 데이터가 freshness 기준을 초과했습니다."
+          },
+          {
+            "source_id": "SRC_YOUTUBE",
+            "status": "available",
+            "data_as_of": "2026-09-10T18:36:04Z",
+            "last_success_at": "2026-09-10T18:36:06Z",
+            "last_checked_at": "2026-09-10T18:36:06Z",
+            "stale": false,
+            "reason": null
+          }
+        ]
+      }
+    }
+  },
+  "/v1/markets/{country}/alerts": {
+    "summary": "2026-09-11 실제 게시 자료 조회 예시",
+    "description": "/v1/markets/JP/alerts?limit=20",
+    "value": {
+      "data": {
+        "country": "JP",
+        "items": [
+          {
+            "id": "eden_alert_bc651220f8e3594d91e1",
+            "type": "safety",
+            "title": "간사이 지역 호우 및 토사재해 관련 안전 유의[경보 해제]",
+            "title_original": "간사이 지역 호우 및 토사재해 관련 안전 유의[경보 해제]",
+            "language_original": "ko",
+            "summary": null,
+            "language": "ko",
+            "requested_language": "ko",
+            "fallback": false,
+            "translation_availability": {
+              "availability": "available",
+              "reason": null
+            },
+            "summary_availability": {
+              "availability": "unavailable",
+              "reason": "요청 언어의 검증된 요약이 없습니다."
+            },
+            "translation_model": null,
+            "status": "active",
+            "published_at": "2026-09-09T00:00:00Z",
+            "source_country": "JP",
+            "source_type": "embassy",
+            "source_name": "주일본 대한민국 대사관",
+            "source_url": "https://overseas.mofa.go.kr/jp-ko/brd/m_26893/view.do?seq=1945804&page=1",
+            "updated_at": "2026-09-10T18:56:53Z"
+          },
+          {
+            "id": "eden_alert_f488684d8e2f53eaa3bb",
+            "type": "safety",
+            "title": "도카이(東海) 지역 호우발생 가능성에 따른 안전 유의",
+            "title_original": "도카이(東海) 지역 호우발생 가능성에 따른 안전 유의",
+            "language_original": "ko",
+            "summary": null,
+            "language": "ko",
+            "requested_language": "ko",
+            "fallback": false,
+            "translation_availability": {
+              "availability": "available",
+              "reason": null
+            },
+            "summary_availability": {
+              "availability": "unavailable",
+              "reason": "요청 언어의 검증된 요약이 없습니다."
+            },
+            "translation_model": null,
+            "status": "active",
+            "published_at": "2026-09-08T00:00:00Z",
+            "source_country": "JP",
+            "source_type": "embassy",
+            "source_name": "주일본 대한민국 대사관",
+            "source_url": "https://overseas.mofa.go.kr/jp-ko/brd/m_26893/view.do?seq=1945803&page=1",
+            "updated_at": "2026-09-10T18:56:53Z"
+          },
+          {
+            "id": "eden_alert_629e880cfb735ee6a8cf",
+            "type": "safety",
+            "title": "도쿄도 이즈제도, 치바현, 이바라키현 폭우 관련 안전 공지",
+            "title_original": "도쿄도 이즈제도, 치바현, 이바라키현 폭우 관련 안전 공지",
+            "language_original": "ko",
+            "summary": null,
+            "language": "ko",
+            "requested_language": "ko",
+            "fallback": false,
+            "translation_availability": {
+              "availability": "available",
+              "reason": null
+            },
+            "summary_availability": {
+              "availability": "unavailable",
+              "reason": "요청 언어의 검증된 요약이 없습니다."
+            },
+            "translation_model": null,
+            "status": "active",
+            "published_at": "2026-09-07T00:00:00Z",
+            "source_country": "JP",
+            "source_type": "embassy",
+            "source_name": "주일본 대한민국 대사관",
+            "source_url": "https://overseas.mofa.go.kr/jp-ko/brd/m_26893/view.do?seq=1945802&page=1",
+            "updated_at": "2026-09-10T18:56:53Z"
+          },
+          {
+            "id": "eden_alert_351648162db8519da6f4",
+            "type": "safety",
+            "title": "동북지방 집중호우에 따른 안전공지 (아오모리현, 아키타현)",
+            "title_original": "동북지방 집중호우에 따른 안전공지 (아오모리현, 아키타현)",
+            "language_original": "ko",
+            "summary": null,
+            "language": "ko",
+            "requested_language": "ko",
+            "fallback": false,
+            "translation_availability": {
+              "availability": "available",
+              "reason": null
+            },
+            "summary_availability": {
+              "availability": "unavailable",
+              "reason": "요청 언어의 검증된 요약이 없습니다."
+            },
+            "translation_model": null,
+            "status": "active",
+            "published_at": "2026-09-03T00:00:00Z",
+            "source_country": "JP",
+            "source_type": "embassy",
+            "source_name": "주일본 대한민국 대사관",
+            "source_url": "https://overseas.mofa.go.kr/jp-ko/brd/m_26893/view.do?seq=1945797&page=1",
+            "updated_at": "2026-09-10T18:56:53Z"
+          },
+          {
+            "id": "eden_alert_9fe0cef9cfad59c4b592",
+            "type": "safety",
+            "title": "주나고야총영사관 관할지역 임시대피소 안내",
+            "title_original": "주나고야총영사관 관할지역 임시대피소 안내",
+            "language_original": "ko",
+            "summary": null,
+            "language": "ko",
+            "requested_language": "ko",
+            "fallback": false,
+            "translation_availability": {
+              "availability": "available",
+              "reason": null
+            },
+            "summary_availability": {
+              "availability": "unavailable",
+              "reason": "요청 언어의 검증된 요약이 없습니다."
+            },
+            "translation_model": null,
+            "status": "active",
+            "published_at": "2026-09-01T00:00:00Z",
+            "source_country": "JP",
+            "source_type": "embassy",
+            "source_name": "주일본 대한민국 대사관",
+            "source_url": "https://overseas.mofa.go.kr/jp-ko/brd/m_26893/view.do?seq=1945792&page=1",
+            "updated_at": "2026-09-10T18:56:53Z"
+          },
+          {
+            "id": "eden_alert_ce8a553f7a48553badde",
+            "type": "market_trend",
+            "title": "(일본)JTB 해외여행 리포트 2026를 통해 본 ‘가기 쉬운 한국’에서 ‘가고 싶은 한국’으로",
+            "title_original": "(일본)JTB 해외여행 리포트 2026를 통해 본‘가기 쉬운 한국’에서‘가고 싶은 한국’으로",
+            "language_original": "ko",
+            "summary": "도쿄지사가 2026-08-31에 게시한 이 안내는 JTB 해외여행 리포트 2026을 바탕으로 일본 아웃바운드 시장과 방한관광 시사점을 정리한다. 2025년 일본인 출국자 수는 1,473만 명으로 2019년의 73.4% 수준에 머물렀고, 방일외래객은 4,268만 명으로 2019년의 134.0%까지 증가해 인·아웃바운드 회복 격차가 커졌다. 해외여행 저해 요인으로는 높은 여행비용(54.9%), 치안 우려(54.0%), 언어 불안(44.4%)이 꼽혔으며, 엔저와 물가 상승, 높은 항공운임·유류할증료가 복합적으로 작용하고 있으나 엔저 자체에 대한 소비자 저항감은 다소 완화되는 양상이다. 한국은 일본 아웃바운드 회복에서 예외적인 시장으로, 한국 노선 항공좌석은 2019년 대비 129%까지 회복되었고 2025년 방한 일본인 수는 약 365만 명으로 최근 20년간 최대를 기록했으나, 희망 목적지 순위에서는 하와이(52.3%), 이탈리아(39.1%), 프랑스(34.6%), 호주(34.2%), 대만(33.0%)에 이어 6위(31.4%)에 머물렀다. 방한시장은 여성, 특히 2030 여성 비중이 30~40%로 시장을 이끌지만 최근 1030 남성 수요가 늘어 성별 집중이 완화되는 특징이 있다. 여행 경향은 목적지보다 여행 방식을 중시하는 Whycation으로 확대되고 있으며, 주요 목적은 자연풍경 감상(47.3%), 현지 음식 경험(38.7%), 휴양·휴식(34.7%) 순이다. 또한 모험보다 안심을 중시하는 경향이 강해, 예상외의 일을 피하고 예측 가능한 여행을 선호하며, 비일상의 의미도 완전히 다른 모험보다 익숙한 카페·거리 등을 통해 ‘평소와 조금 다른 일상(異日常)’을 즐기는 방향으로 변화하고 있다. Z세대 등 젊은층의 해외여행 의향은 높지만 실제 출국은 제한적이며, 해외여행을 2~3년에 1회 이상 간다는 응답은 2016년 14.7%에서 2026년 8.1%로 약 절반 감소했다. JTB는 회복 지연 요인으로 단카이세대(1947~1949년생)의 고령화, 가족층의 비용 부담, 젊은층의 가치관 변화, 아웃바운드용 항공좌석 부족을 제시하며, Safe·Secure·Stress-free와 일정 유연성, 학교 휴가제도 개선 등 가족여행 제약 완화, 성수기·주요 공항 중심에서 계절·지역별 잠재수요 발굴이 필요하다고 본다. 방한관광 마케팅 측면에서는 ‘가깝고 쉽게 갈 수 있는 곳’에서 ‘일부러 선택하는 곳’으로 가치를 확장하고, 장기휴가 시 하와이·유럽과 달리 제주·강릉 등 해양·자연·미식·카페·웰니스를 결합한 가까운 휴양 포지셔닝, 가족여행을 신규 성장축으로 육성, Z세대에는 異日常과 실패 없는 여행 이미지 강화, 서울·쇼핑 중심 반복방문을 지역·체험 중심으로 확장, 여름 해양·고원·야간관광, 겨울 미식·온천·설경, 봄·가을 지역축제·트레킹 등 계절별 여행동기 개발과 골든위크 직후 5월병 연계 재충전 여행 등 비수기 재해석이 제안된다.",
+            "language": "ko",
+            "requested_language": "ko",
+            "fallback": false,
+            "translation_availability": {
+              "availability": "available",
+              "reason": null
+            },
+            "summary_availability": {
+              "availability": "available",
+              "reason": null
+            },
+            "translation_model": "solar-pro4",
+            "status": "active",
+            "published_at": "2026-08-31T16:25:00Z",
+            "source_country": "JP",
+            "source_type": "tourism_board",
+            "source_name": "한국관광공사 관광데이터랩",
+            "source_url": "https://datalab.visitkorea.or.kr/site/portal/ex/bbs/View.do?cbIdx=1602&cbIdx2=1132&bcIdx=311190&pageIndex=1&tgtTypeCd=&searchKey=&searchKey1=&searchKey2=&searchKey3=",
+            "updated_at": "2026-09-10T16:49:05Z"
+          },
+          {
+            "id": "eden_alert_5ae4f10ec04c545bb72b",
+            "type": "entry",
+            "title": "출입국사실증명 발급 안내 — 주일본 대한민국 대사관",
+            "title_original": "출입국사실증명 안내",
+            "language_original": "und",
+            "summary": "출입국사실증명 발급 안내 — 주일본 대한민국 대사관. 신청 대상: 한국 국적자만 신청 가능하며, 일본 내 재류자격이 있는 사람만 신청할 수 있습니다(외국 국적자는 불가). 재류자격이 없는 경우(관광비자 입국, 불법체류 등)에는 발급되지 않습니다. 공통 구비서류: 출입국사실증명 발급신청서 1부(영사관 비치), 한국 여권 원본(영사관 조회가 가능한 신분증은 여권이며 유효한 여권 필요). 수수료: 1건당 260엔. 소요시간: 즉시 발급(접수 순서대로 발급하므로 대기시간이 있을 수 있음). 참고사항: 우편접수는 시행하지 않습니다. 한국 여권의 출입국 기록 조회 및 발급만 가능합니다. 위임을 받은 사람도 발급 가능하며, 이 경우 본인의 위임장과 여권, 대리인의 여권이 필요합니다. 위임장은 위임자가 서식 하단 위임장란을 작성해야 하며, 서명란은 위임자의 여권상 서명과 일치해야 하므로 여권에 사인이 없는 경우 여권에 사인이 필요합니다. 미성년자는 친권자가 신청해야 하며, 가족관계증명서(주민번호 13자리 표기본) 1부와 부 또는 모의 여권이 필요합니다(위임장란 작성 불요). 조회 결과 입국-입국, 출국-출국으로 나타나는 경우 당 영사관에서는 발급이 불가하며, 담당부서(인천공항출입국 관리사무소, 032-740-7391)로 연락·문의해야 합니다. 주소: 東京都港区南麻布1-2-5(우편번호 106-0047). 전화: +81-3-3455-2601(영사, 근무시간), +81-3-3452-7611/9(대표). 업무시간: 대사관(월-금) 09:00~18:00, 점심시간 12:00~13:15; 영사과(월-금) 09:00~17:00, 민원창구 휴게시간 12:00~13:30. 긴급연락처(사건사고 등 긴급상황, 휴일·평일 18:00 이후): +81-70-2153-5454.",
+            "language": "ko",
+            "requested_language": "ko",
+            "fallback": false,
+            "translation_availability": {
+              "availability": "available",
+              "reason": null
+            },
+            "summary_availability": {
+              "availability": "available",
+              "reason": null
+            },
+            "translation_model": "solar-pro4",
+            "status": "active",
+            "published_at": "2015-11-04T00:00:00Z",
+            "source_country": "JP",
+            "source_type": "embassy",
+            "source_name": "주일본 대한민국 대사관",
+            "source_url": "https://overseas.mofa.go.kr/jp-ko/wpge/m_1163/contents.do",
+            "updated_at": "2026-08-10T16:58:16Z"
+          },
+          {
+            "id": "eden_alert_c4ceb542827e5c4e920e",
+            "type": "visa",
+            "title": "K-ETA 상담센터 휴무 안내 (2026.08.17.(월))",
+            "title_original": "■ K-ETA 상담센터 휴무 안내 (2026.08.17.(월)) ■",
+            "language_original": "und",
+            "summary": "K-ETA 상담센터 휴무 안내 (2026.08.17.(월) / 광복절 대체공휴일): 2026년 8월 17일 K-ETA 상담 업무가 한시적으로 중단됩니다. 해당 기간에도 K-ETA 심사는 정상적으로 진행됩니다. 문의 사항 접수는 가능하나, 답변은 2026년 8월 18일(화)부터 순차적으로 받아보실 수 있습니다.",
+            "language": "ko",
+            "requested_language": "ko",
+            "fallback": false,
+            "translation_availability": {
+              "availability": "available",
+              "reason": null
+            },
+            "summary_availability": {
+              "availability": "available",
+              "reason": null
+            },
+            "translation_model": "solar-pro4",
+            "status": "active",
+            "published_at": "2026-08-06T15:00:00Z",
+            "source_country": "JP",
+            "source_type": "immigration",
+            "source_name": "대한민국 법무부 K-ETA",
+            "source_url": "https://www.k-eta.go.kr/portal/board/viewboarddetail.do?bbsSn=320937&esntlPnotiMtYn=Y",
+            "updated_at": "2026-08-10T16:13:18Z"
+          }
+        ]
+      },
+      "meta": {
+        "request_id": "4e714efc-e93b-45a5-ad60-66a242581553",
+        "generated_at": "2026-09-11T12:06:22.640175+09:00",
+        "as_of": "2026-09-11T03:56:53+09:00",
+        "timezone": "Asia/Seoul",
+        "spatial_resolution": "country",
+        "stale": true,
+        "freshness": {
+          "status": "stale",
+          "age_seconds": 29369,
+          "max_acceptable_age_seconds": 10800
+        },
+        "availability": "available",
+        "reason": null,
+        "formula_versions": {},
+        "sources": [
+          {
+            "source_id": "SRC_EMBASSY_NOTICE",
+            "status": "available",
+            "data_as_of": "2026-09-09T00:00:00Z",
+            "last_success_at": "2026-09-10T18:56:53Z",
+            "last_checked_at": "2026-09-10T18:56:53Z",
+            "stale": false,
+            "reason": null
+          },
+          {
+            "source_id": "SRC_KETA",
+            "status": "available",
+            "data_as_of": "2026-09-10T22:37:34Z",
+            "last_success_at": "2026-09-10T22:37:37Z",
+            "last_checked_at": "2026-09-10T22:37:37Z",
+            "stale": false,
+            "reason": null
+          },
+          {
+            "source_id": "SRC_KTO_MARKET_TREND",
+            "status": "available",
+            "data_as_of": "2026-08-31T19:17:00Z",
+            "last_success_at": "2026-09-10T22:13:41Z",
+            "last_checked_at": "2026-09-10T22:13:41Z",
+            "stale": false,
+            "reason": null
+          }
+        ]
+      }
+    }
+  },
+  "/v1/recommendations/destinations": {
+    "summary": "2026-09-11 실제 게시 자료 조회 예시",
+    "description": "/v1/recommendations/destinations",
+    "value": {
+      "data": {
+        "recommendations": [
+          {
+            "rank": 1,
+            "score": 88.0,
+            "region": {
+              "area_code": "2812500000",
+              "eden_area_id": "eden_area_159a13682c965e30aa19",
+              "name": "제물포구"
+            },
+            "place": {
+              "content_id": "eden_place_3a3ebecb1d645f268db2",
+              "title": "쓰라린 아픔을 견뎌내고 문화가 된 역사를 기억하는 여행",
+              "location": {
+                "lat": 37.4728825,
+                "lng": 126.6209923
+              }
+            },
+            "estimated_budget_krw": null,
+            "budget_availability": {
+              "availability": "unavailable",
+              "reason": "검증된 관광지별 예산 원천이 없습니다."
+            },
+            "crowd_index": null,
+            "related_places": [],
+            "reasons": [
+              "요청한 테마와 관광지 분류가 일치합니다."
+            ],
+            "sources": [
+              "SRC_TOUR_KO"
+            ],
+            "formula_version": "recommendation_score_v1"
+          },
+          {
+            "rank": 2,
+            "score": 80.5853,
+            "region": {
+              "area_code": "5011000000",
+              "eden_area_id": "eden_area_19dd56856c83593f80f2",
+              "name": "제주시"
+            },
+            "place": {
+              "content_id": "eden_place_1e6c2d9214b359edbd4b",
+              "title": "2025 제주 반려동물 문화산업 한마당",
+              "location": {
+                "lat": 33.4918757,
+                "lng": 126.5238622
+              }
+            },
+            "estimated_budget_krw": null,
+            "budget_availability": {
+              "availability": "unavailable",
+              "reason": "검증된 관광지별 예산 원천이 없습니다."
+            },
+            "crowd_index": null,
+            "related_places": [],
+            "reasons": [
+              "요청한 테마와 관광지 분류가 일치합니다.",
+              "공식 지역 수요 지수를 반영했습니다."
+            ],
+            "sources": [
+              "SRC_KTO_DEMAND_INTENSITY",
+              "SRC_TOUR_KO"
+            ],
+            "formula_version": "recommendation_score_v1"
+          },
+          {
+            "rank": 3,
+            "score": 78.4624,
+            "region": {
+              "area_code": "5013000000",
+              "eden_area_id": "eden_area_cb9a47435cd454bb9795",
+              "name": "서귀포시"
+            },
+            "place": {
+              "content_id": "eden_place_00dd0af88fe4583bb523",
+              "title": "서귀포천문과학문화관",
+              "location": {
+                "lat": 33.2888777,
+                "lng": 126.4604112
+              }
+            },
+            "estimated_budget_krw": null,
+            "budget_availability": {
+              "availability": "unavailable",
+              "reason": "검증된 관광지별 예산 원천이 없습니다."
+            },
+            "crowd_index": null,
+            "related_places": [],
+            "reasons": [
+              "요청한 테마와 관광지 분류가 일치합니다.",
+              "공식 지역 수요 지수를 반영했습니다."
+            ],
+            "sources": [
+              "SRC_KTO_DEMAND_INTENSITY",
+              "SRC_TOUR_KO"
+            ],
+            "formula_version": "recommendation_score_v1"
+          },
+          {
+            "rank": 4,
+            "score": 78.4624,
+            "region": {
+              "area_code": "5013000000",
+              "eden_area_id": "eden_area_cb9a47435cd454bb9795",
+              "name": "서귀포시"
+            },
+            "place": {
+              "content_id": "eden_place_048b8368b09051849ffd",
+              "title": "2026 서귀포 원도심 문화페스티벌",
+              "location": {
+                "lat": 33.2470808,
+                "lng": 126.5644589
+              }
+            },
+            "estimated_budget_krw": null,
+            "budget_availability": {
+              "availability": "unavailable",
+              "reason": "검증된 관광지별 예산 원천이 없습니다."
+            },
+            "crowd_index": null,
+            "related_places": [],
+            "reasons": [
+              "요청한 테마와 관광지 분류가 일치합니다.",
+              "공식 지역 수요 지수를 반영했습니다."
+            ],
+            "sources": [
+              "SRC_KTO_DEMAND_INTENSITY",
+              "SRC_TOUR_KO"
+            ],
+            "formula_version": "recommendation_score_v1"
+          },
+          {
+            "rank": 5,
+            "score": 72.8716,
+            "region": {
+              "area_code": "1111000000",
+              "eden_area_id": "eden_area_8ea219a62fbd52138725",
+              "name": "종로구"
+            },
+            "place": {
+              "content_id": "eden_place_0017794b4e3d50f8851b",
+              "title": "경희궁",
+              "location": {
+                "lat": 37.5703879,
+                "lng": 126.9684918
+              }
+            },
+            "estimated_budget_krw": null,
+            "budget_availability": {
+              "availability": "unavailable",
+              "reason": "검증된 관광지별 예산 원천이 없습니다."
+            },
+            "crowd_index": null,
+            "related_places": [],
+            "reasons": [
+              "요청한 테마와 관광지 분류가 일치합니다.",
+              "공식 지역 수요 지수를 반영했습니다."
+            ],
+            "sources": [
+              "SRC_KTO_DEMAND_INTENSITY",
+              "SRC_TOUR_KO"
+            ],
+            "formula_version": "recommendation_score_v1"
+          }
+        ],
+        "applied_constraints": {
+          "target_country": "JP",
+          "themes": [
+            "culture"
+          ]
+        },
+        "unapplied_inputs": [
+          {
+            "field": "travel_window.season",
+            "value": "autumn",
+            "reason": "계절별 관측에 근거한 혼잡도 회피 순위를 적용하지 않았습니다."
+          }
+        ]
+      },
+      "meta": {
+        "request_id": "7d48310c-9930-43ea-882f-8dec88ce9afe",
+        "generated_at": "2026-09-11T12:06:22.670432+09:00",
+        "as_of": "2026-07-01T09:00:00+09:00",
+        "timezone": "Asia/Seoul",
+        "spatial_resolution": "place",
+        "stale": true,
+        "freshness": {
+          "status": "stale",
+          "age_seconds": 6231982,
+          "max_acceptable_age_seconds": 259200
+        },
+        "availability": "partial",
+        "reason": "관광지별 검증 예산 원천이 없어 예산 값은 제공하지 않습니다.",
+        "formula_versions": {
+          "crowd_index": "crowd_index_v1",
+          "recommendation_score": "recommendation_score_v1"
+        },
+        "sources": [
+          {
+            "source_id": "SRC_KTO_DEMAND_INTENSITY",
+            "status": "stale",
+            "data_as_of": "2026-07-01T00:00:00Z",
+            "last_success_at": "2026-09-10T09:52:23Z",
+            "last_checked_at": "2026-09-10T09:52:23Z",
+            "stale": true,
+            "reason": "data_age_exceeded: 원천 데이터가 freshness 기준을 초과했습니다."
+          },
+          {
+            "source_id": "SRC_KTO_PLACE_RELATED",
+            "status": "stale",
+            "data_as_of": "2026-07-01T00:00:00Z",
+            "last_success_at": "2026-09-10T12:32:05Z",
+            "last_checked_at": "2026-09-10T12:32:05Z",
+            "stale": true,
+            "reason": "data_age_exceeded: 원천 데이터가 freshness 기준을 초과했습니다."
+          },
+          {
+            "source_id": "SRC_KTO_REGIONAL_VISITORS",
+            "status": "available",
+            "data_as_of": "2026-08-11T00:00:00Z",
+            "last_success_at": "2026-09-10T16:49:44Z",
+            "last_checked_at": "2026-09-10T16:49:44Z",
+            "stale": false,
+            "reason": null
+          },
+          {
+            "source_id": "SRC_TOUR_KO",
+            "status": "degraded",
+            "data_as_of": "2026-09-09T13:26:56Z",
+            "last_success_at": "2026-09-10T15:01:12Z",
+            "last_checked_at": "2026-09-10T15:01:12Z",
+            "stale": false,
+            "reason": "일부 operation 또는 page 수집 실패"
+          }
+        ]
+      }
+    }
+  }
+}

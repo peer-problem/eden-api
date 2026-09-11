@@ -99,7 +99,7 @@ def test_place_alias_collision_is_ambiguous_until_aliases_share_canonical_id() -
     assert repository.resolve_place("place-b").eden_place_id == "place-a"
 
 
-def test_place_language_fallback_never_uses_arbitrary_non_korean_content() -> None:
+def test_legacy_foreign_only_place_returns_its_actual_language() -> None:
     factory = _factory()
     now = datetime(2026, 8, 29, 1, 0, 0)
     with factory.begin() as session:
@@ -125,10 +125,11 @@ def test_place_language_fallback_never_uses_arbitrary_non_korean_content() -> No
             lang="en",
             radius_m=1000,
             related_limit=5,
-            include=["related"],
+            include=["shops"],
+            # Fixture has no coordinates, so nearby data stays unavailable.
         ),
     )
 
-    assert result.data is None
-    assert result.availability.value == "unavailable"
-    assert result.reason == "요청 언어와 한국어 fallback 콘텐츠가 모두 없습니다."
+    assert result.data["language"] == "ja"
+    assert result.data["requested_language"] == "en"
+    assert result.data["fallback"] is True

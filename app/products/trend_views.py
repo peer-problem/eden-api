@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from statistics import mean
 from typing import Any
 
+from app.api.v1.schemas import normalize_keyword
 from app.domain.enums import Availability
 from app.products.formulas import (
     INTEREST_FORMULA_VERSION,
@@ -205,16 +206,14 @@ def build_trend_view(
     observations = product.get("observations")
     if not isinstance(observations, list):
         return None, Availability.UNAVAILABLE, "게시된 social signal 관측이 없습니다."
-    requested_sources = set(scope.get("social_sources") or SOURCE_NAMES)
-    selected_source_ids = ALWAYS_INCLUDED_SOURCES | {
-        SOURCE_NAMES[name] for name in requested_sources if name in SOURCE_NAMES
-    }
-    keyword = str(scope["keyword"])
+    requested_sources = set(scope.get("social_sources") or ["youtube"])
+    selected_source_ids = {SOURCE_NAMES[name] for name in requested_sources if name in SOURCE_NAMES}
+    keyword = normalize_keyword(str(scope["keyword"]))
     candidates = [
         row
         for row in observations
         if isinstance(row, dict)
-        and str(row.get("keyword", "")).casefold() == keyword.casefold()
+        and normalize_keyword(str(row.get("keyword", ""))).casefold() == keyword.casefold()
         and row.get("source_id") in selected_source_ids
         and (scope.get("country") == "all" or row.get("country") == scope.get("country"))
         and (scope.get("area_code") is None or row.get("area_id") == scope.get("area_code"))
@@ -288,7 +287,7 @@ def build_trend_view(
             continue
         score = source_scores.get(source_id)
         source_reason = (
-            "최근 공개 동영상 최대 50건의 표본이며 지역 필터는 시청자 거주 국가가 "
+            "최근 공개 동영상 최대 20건의 표본이며 지역 필터는 시청자 거주 국가가 "
             "아닌 재생 가능 지역입니다."
             if source_id == "SRC_YOUTUBE"
             else None
@@ -298,6 +297,7 @@ def build_trend_view(
         source_metrics.append(
             {
                 "source_id": source_id,
+                "observed_at": max(_timestamp(row["bucket_start"]) for row in source_rows),
                 "posts": _sum_optional([row.get("post_count") for row in source_rows]),
                 "views": _sum_optional([row.get("view_count") for row in source_rows]),
                 "reactions": _sum_optional([row.get("reaction_count") for row in source_rows]),

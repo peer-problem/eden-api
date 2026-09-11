@@ -38,7 +38,7 @@ def test_relation_rank_requires_a_positive_integer() -> None:
         places._positive_rank({"rank": "1.5"}, "rank")
 
 
-def test_tour_localizations_with_different_ids_merge_by_coordinates() -> None:
+def test_tour_ids_do_not_merge_by_coordinates_alone() -> None:
     responses = iter((None, None, "eden-place-ko"))
     session = SimpleNamespace(info={}, scalar=lambda _statement: next(responses))
     en = _fixture()["en"]
@@ -53,7 +53,8 @@ def test_tour_localizations_with_different_ids_merge_by_coordinates() -> None:
         "KTO_CONTENT",
     )
 
-    assert place_id == "eden-place-ko"
+    assert place_id != "eden-place-ko"
+    assert place_id.startswith("eden_place_")
 
 
 def test_cached_place_identity_does_not_skip_newer_localization_update() -> None:

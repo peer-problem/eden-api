@@ -108,9 +108,7 @@ class SchedulerCapacityGate:
                         "disk_used_percent": decision.disk_used_percent,
                         "derived_daily_growth_bytes": decision.derived_daily_growth_bytes,
                         "total_database_bytes": decision.total_database_bytes,
-                        "system_memory_used_percent": (
-                            decision.system_memory_used_percent
-                        ),
+                        "system_memory_used_percent": (decision.system_memory_used_percent),
                         "reasons": decision.reasons,
                     },
                 )
@@ -123,8 +121,14 @@ class SchedulerCapacityGate:
                 self._memory_write_pause_percent = memory_limit
                 return self._decision
 
-    def source_pause_reason(self) -> str | None:
-        return self._pause_reason(write_class="source")
+    def source_pause_reason(self, *, expansion: bool = False) -> str | None:
+        reason = self._pause_reason(write_class="source")
+        if reason or not expansion:
+            return reason
+        with self._lock:
+            if self._decision and not self._decision.expansion_writes_allowed:
+                return "daily_growth_budget_exceeded"
+        return None
 
     def product_pause_reason(self) -> str | None:
         return self._pause_reason(write_class="product")
@@ -159,9 +163,7 @@ class SchedulerCapacityGate:
             decision = self._decision
         return production_readiness_reasons(
             environment=getattr(settings, "ENVIRONMENT", "development"),
-            retention_enabled=(
-                getattr(settings, "SNAPSHOT_RETENTION_ENABLED", False) is True
-            ),
+            retention_enabled=(getattr(settings, "SNAPSHOT_RETENTION_ENABLED", False) is True),
             capacity_decision=decision,
         )
 

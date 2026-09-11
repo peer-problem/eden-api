@@ -22,7 +22,6 @@ def test_regional_visitor_scope_stays_within_recent_bounded_window() -> None:
 
     assert {operation["operation"] for operation in operations} == {
         "metcoRegnVisitrDDList",
-        "locgoRegnVisitrDDList",
     }
     assert all(operation["params"]["startYmd"] == "$today_minus_39d" for operation in operations)
     assert all(operation["params"]["endYmd"] == "$today_minus_30d" for operation in operations)
@@ -44,7 +43,7 @@ def test_kma_scope_rotates_complete_province_forecasts_within_record_budget() ->
     scope = public_data_refresh_scope("SRC_KMA_FORECAST", codes, area_ids)
 
     assert len(scope["operations"]) == len(KTO_ADMINISTRATIVE_AREA_CODES)
-    assert scope["max_operations_per_run"] == KMA_OPERATIONS_PER_RUN == 10
+    assert scope["max_operations_per_run"] == KMA_OPERATIONS_PER_RUN == 5
     assert all(
         operation["params"]["numOfRows"] == 1000
         and operation["max_pages"] == 1

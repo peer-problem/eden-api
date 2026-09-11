@@ -32,6 +32,7 @@ from app.repositories.models import (
     SourceState,
 )
 from app.sources.catalog import CADENCE_SECONDS, EXPECTED_PUBLISH_LAG_SECONDS, SOURCES
+from app.sources.essential import DISABLED_SOURCES, SOURCE_INTERVALS
 from app.sources.kto_inbound import DEFAULT_COUNTRIES
 from app.sources.plans import (
     DOCUMENTATION_VERIFIED_AT,
@@ -133,6 +134,8 @@ def seed_reference_data(session: Session) -> None:
     }
     for source in SOURCES:
         interval, max_age = CADENCE_SECONDS[source.cadence_tier]
+        interval = SOURCE_INTERVALS.get(source.source_id, interval)
+        max_age = max(max_age, interval * 2)
         expected_publish_lag = EXPECTED_PUBLISH_LAG_SECONDS[source.cadence_tier]
         if source.source_id == "SRC_KTO_REGIONAL_VISITORS":
             # The official daily series is published about one month later.
@@ -148,11 +151,13 @@ def seed_reference_data(session: Session) -> None:
         if source.source_id == "SRC_KTO_INBOUND_STATS":
             refresh_scope = {"months": 2, "countries": DEFAULT_COUNTRIES}
         elif source.source_id == "SRC_BOK_ECOS":
-            refresh_scope = {"months": 48, "fx_days": 14}
+            refresh_scope = {"months": 24, "fx_days": 14}
         elif social_scope := social_refresh_scope(source.source_id):
             refresh_scope = social_scope
         elif source.source_id == "SRC_EMBASSY_NOTICE":
-            refresh_scope = {"targets": official_notice_targets()}
+            refresh_scope = {
+                "targets": [{**target, "max_items": 2} for target in official_notice_targets()]
+            }
         elif source.source_id == "SRC_KETA":
             refresh_scope = {"limit": 20}
         elif source.source_id == "SRC_KTO_MARKET_TREND":
@@ -199,7 +204,7 @@ def seed_reference_data(session: Session) -> None:
                 "documented_auth_type": source.auth_type,
                 "documentation_url": source.docs_url,
             },
-            "enabled": source.source_id not in EXCLUDED_SOCIAL_SOURCE_IDS,
+            "enabled": source.source_id not in EXCLUDED_SOCIAL_SOURCE_IDS | DISABLED_SOURCES,
             "created_at": now,
             "updated_at": now,
         }
@@ -216,7 +221,7 @@ def seed_reference_data(session: Session) -> None:
                 "created_at",
             }
         }
-        if source.source_id in EXCLUDED_SOCIAL_SOURCE_IDS:
+        if source.source_id in EXCLUDED_SOCIAL_SOURCE_IDS | DISABLED_SOURCES:
             source_update["enabled"] = False
         session.execute(
             insert(SourceRegistry).values(**values).on_duplicate_key_update(**source_update)

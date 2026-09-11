@@ -76,7 +76,7 @@ class BokEcosAdapter(SourceAdapter):
                 reason="BOK_ECOS_API_KEY 환경 변수가 없습니다.",
                 reason_code=FetchReasonCode.CREDENTIAL_MISSING,
             )
-        months = min(max(int(scope.get("months", 48)), 2), 120)
+        months = min(max(int(scope.get("months", 24)), 2), 24)
         fx_days = min(max(int(scope.get("fx_days", 14)), 1), 90)
         now = datetime.now(UTC)
         end = _shift_month(now, -1)

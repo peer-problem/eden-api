@@ -17,6 +17,7 @@ class SourceMeta(StrictModel):
     status: SourceStatus
     data_as_of: datetime | None = None
     last_success_at: datetime | None = None
+    last_checked_at: datetime | None = None
     stale: bool = False
     reason: str | None = None
 

@@ -63,7 +63,7 @@ def test_projected_growth_counts_every_application_table() -> None:
     assert projected_daily_growth_bytes(previous, current) == 201
 
 
-def test_growth_budget_pauses_product_and_source_writes() -> None:
+def test_growth_budget_pauses_expansion_but_preserves_essential_writes() -> None:
     start = datetime(2026, 8, 29, tzinfo=UTC)
     previous = _sample(start, snapshot_bytes=100)
     current = _sample(start + timedelta(days=1), snapshot_bytes=201)
@@ -74,11 +74,12 @@ def test_growth_budget_pauses_product_and_source_writes() -> None:
         daily_growth_budget_bytes=100,
         warning_percent=70,
         product_pause_percent=80,
-        source_pause_percent=90,
+        source_pause_percent=75,
     )
 
-    assert decision.product_writes_allowed is False
-    assert decision.source_writes_allowed is False
+    assert decision.product_writes_allowed is True
+    assert decision.source_writes_allowed is True
+    assert decision.expansion_writes_allowed is False
     assert decision.reasons == ("daily_growth_budget_exceeded",)
 
 
@@ -105,7 +106,7 @@ def test_database_and_memory_limits_pause_all_writes(
         daily_growth_budget_bytes=100,
         warning_percent=70,
         product_pause_percent=80,
-        source_pause_percent=90,
+        source_pause_percent=75,
         database_max_bytes=database_max_bytes,
         memory_write_pause_percent=85,
     )
@@ -123,7 +124,7 @@ def test_production_capacity_gate_fails_closed_without_growth_reference() -> Non
         daily_growth_budget_bytes=100,
         warning_percent=70,
         product_pause_percent=80,
-        source_pause_percent=90,
+        source_pause_percent=75,
         require_growth_reference=True,
     )
 
@@ -145,7 +146,7 @@ def test_production_readiness_requires_retention_and_capacity_evidence() -> None
         daily_growth_budget_bytes=100,
         warning_percent=70,
         product_pause_percent=80,
-        source_pause_percent=90,
+        source_pause_percent=75,
         require_growth_reference=True,
     )
     assert production_readiness_reasons(
@@ -159,8 +160,8 @@ def test_production_readiness_requires_retention_and_capacity_evidence() -> None
     ("disk_percent", "product_allowed", "source_allowed", "reason"),
     [
         (70, True, True, "disk_warning"),
-        (80, False, True, "disk_product_pause"),
-        (90, False, False, "disk_source_pause"),
+        (75, True, False, "disk_source_pause"),
+        (80, False, False, "disk_product_pause"),
     ],
 )
 def test_disk_thresholds_apply_independent_write_pauses(
@@ -177,7 +178,7 @@ def test_disk_thresholds_apply_independent_write_pauses(
         daily_growth_budget_bytes=100,
         warning_percent=70,
         product_pause_percent=80,
-        source_pause_percent=90,
+        source_pause_percent=75,
     )
 
     assert decision.product_writes_allowed is product_allowed

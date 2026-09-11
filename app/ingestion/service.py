@@ -542,7 +542,6 @@ class IngestionService:
             select(RawRecord.raw_record_id).where(
                 RawRecord.source_id == source_id,
                 RawRecord.external_key == item.external_key,
-                RawRecord.source_updated_at == item.source_updated_at,
                 RawRecord.content_hash == content_hash,
             )
         )

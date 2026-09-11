@@ -57,6 +57,12 @@ class JsonFormatter(logging.Formatter):
             "pilot_id",
             "stale",
             "exception_type",
+            "candidate_count",
+            "dry_run",
+            "deleted_snapshots",
+            "deleted_provenance_rows",
+            "deleted_payloads",
+            "deleted_observations",
         ):
             if hasattr(record, key):
                 payload[key] = getattr(record, key)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections import OrderedDict
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from math import asin, cos, radians, sin, sqrt
 from threading import Lock
 from typing import Protocol
@@ -108,8 +108,8 @@ PAYLOAD_CACHE_MAX_BYTES = 16 * 1024 * 1024
 def _request_source_ids(endpoint: str, scope: dict[str, object]) -> tuple[str, ...]:
     if endpoint == "trends":
         requested = scope.get("social_sources")
-        names = requested if isinstance(requested, list) else list(TREND_SOCIAL_SOURCES)
-        source_ids = {"SRC_NAVER_TREND", "SRC_KTO_RESOURCE_DEMAND"}
+        names = requested if isinstance(requested, list) else ["youtube"]
+        source_ids: set[str] = set()
         source_ids.update(
             TREND_SOCIAL_SOURCES[name]
             for name in names
@@ -182,7 +182,7 @@ def _request_source_ids(endpoint: str, scope: dict[str, object]) -> tuple[str, .
         }
         if "social_interest" in blocks:
             requested = scope.get("social_sources")
-            names = requested if isinstance(requested, list) else list(INBOUND_SOCIAL_SOURCES)
+            names = requested if isinstance(requested, list) else ["youtube"]
             source_ids.update(
                 INBOUND_SOCIAL_SOURCES[name]
                 for name in names
@@ -215,28 +215,37 @@ def _selected_inbound_social_interest(
 ) -> tuple[dict[str, object] | None, bool]:
     if not isinstance(value, dict):
         return None, False
-    youtube_value = value.get("youtube")
-    youtube_contributed = isinstance(youtube_value, dict) and (
-        youtube_value.get("availability") != "unavailable" or youtube_value.get("score") is not None
-    )
-    excluded_contributed = (
-        any(source not in INBOUND_SOCIAL_SOURCES for source in value) or youtube_contributed
-    )
     selected = {
         source: source_value
         for source, source_value in value.items()
         if source in INBOUND_SOCIAL_SOURCES
         and (not requested_sources or source in requested_sources)
     }
-    if "youtube" in selected:
+    excluded_contributed = any(
+        source not in selected
+        and isinstance(item, dict)
+        and (item.get("availability") != "unavailable" or item.get("score") is not None)
+        for source, item in value.items()
+    )
+    youtube_value = selected.get("youtube")
+    if (
+        isinstance(youtube_value, dict)
+        and youtube_value.get("semantics") != "search_sample_interest"
+    ):
+        # Old snapshots did not distinguish query samples from audience data.
+        excluded_contributed = excluded_contributed or (
+            youtube_value.get("availability") != "unavailable"
+            or youtube_value.get("score") is not None
+        )
         selected["youtube"] = {
             "posts": None,
             "views": None,
             "reactions": None,
             "score": None,
             "availability": "unavailable",
-            "reason": "YouTube 지역 필터는 재생 가능 지역이며 시청자 거주 국가가 아닙니다.",
+            "reason": "검색 표본 의미가 확인된 최신 게시본을 기다리고 있습니다.",
         }
+
     return selected or None, excluded_contributed
 
 
@@ -479,6 +488,7 @@ class MariaDBReadRepository:
                 uncompressed_bytes=payload.uncompressed_bytes,
                 compressed_bytes=payload.compressed_bytes,
                 max_uncompressed_bytes=payload_size_limit(endpoint),
+                expected_hash=payload.payload_hash,
             )
         except SnapshotPayloadError:
             return None
@@ -613,6 +623,16 @@ class MariaDBReadRepository:
         scope = json.loads(key)
         product_key = lookup_key(area_code=scope["area_code"])
         snapshot = self._current_snapshot(session, "regional_product", product_key)
+        requested_area_code = None
+        if snapshot is None and not scope.get("attraction_name"):
+            requested_area = session.get(Area, scope["area_code"])
+            if requested_area is not None and requested_area.parent_area_id:
+                snapshot = self._current_snapshot(
+                    session, "regional_product", lookup_key(area_code=requested_area.parent_area_id)
+                )
+                requested_area_code = (
+                    requested_area.administrative_code or requested_area.eden_area_id
+                )
         source_ids = _request_source_ids(endpoint, scope)
         source_rows = self._source_metadata(
             session,
@@ -633,6 +653,10 @@ class MariaDBReadRepository:
             data, availability, reason = build_region_insight_view(snapshot.data, scope)
         else:
             data, availability, reason = build_visitor_timeseries_view(snapshot.data, scope)
+        if requested_area_code and data is not None:
+            data["requested_area_code"] = requested_area_code
+            reason = "요청 상세 지역의 관측이 없어 응답 area에 표시한 시도 자료를 제공합니다."
+            availability = Availability.PARTIAL
         metadata = snapshot.metadata_json or {}
         return ReadResult(
             data=data,
@@ -709,16 +733,7 @@ class MariaDBReadRepository:
                 None,
             )
         if selected is None:
-            return ReadResult(
-                data=None,
-                availability=Availability.UNAVAILABLE,
-                reason="요청 언어와 한국어 fallback 콘텐츠가 모두 없습니다.",
-                as_of=None,
-                calculated_at=None,
-                max_acceptable_age_seconds=None,
-                spatial_resolution=SpatialResolution.PLACE,
-                sources=source_rows,
-            )
+            selected = localizations[0]
         include = set(scope.get("include") or ["related", "shops", "hub"])
         source_status = {row["source_id"]: row["status"] for row in source_rows}
         partial_reasons: list[str] = []
@@ -923,7 +938,9 @@ class MariaDBReadRepository:
             "overview": selected.overview,
             "hub": hub_data,
             "related_places": related_data,
-            "nearby_shops": nearby_data,
+            "nearby_shops": nearby_data[: int(scope.get("shops_limit", 5))]
+            if nearby_data
+            else nearby_data,
             "sources": sorted(set(source_ids)),
         }
         return ReadResult(
@@ -950,34 +967,61 @@ class MariaDBReadRepository:
             session,
             source_ids,
         )
-        if snapshot is None or not isinstance(snapshot.data, dict):
+        regional = self._current_snapshot(session, "regional_product", product_key)
+        data_area = session.get(Area, scope["area_code"])
+        requested_area = data_area
+        if regional is None and data_area is not None and data_area.parent_area_id:
+            parent_key = lookup_key(area_code=data_area.parent_area_id)
+            regional = self._current_snapshot(session, "regional_product", parent_key)
+            if regional is not None:
+                data_area = session.get(Area, data_area.parent_area_id)
+        product = dict(snapshot.data) if snapshot and isinstance(snapshot.data, dict) else {}
+        if regional and isinstance(regional.data, dict):
+            product["visits"] = regional.data.get("visits", [])
+        basis_snapshot = snapshot or regional
+        if basis_snapshot is None:
             return ReadResult(
                 data=None,
                 availability=Availability.UNAVAILABLE,
-                reason="요청 지역에 게시된 방문 예측 입력 제품이 없습니다.",
+                reason="요청 지역에 게시된 전망 또는 방문 관측이 없습니다.",
                 as_of=None,
                 calculated_at=None,
                 max_acceptable_age_seconds=None,
                 spatial_resolution=SpatialResolution.NONE,
                 sources=source_rows,
             )
-        data, availability, reason = build_forecast_view(snapshot.data, scope)
-        metadata = snapshot.metadata_json or {}
+        product.setdefault(
+            "area_code",
+            (requested_area.administrative_code or requested_area.eden_area_id)
+            if requested_area
+            else scope["area_code"],
+        )
+        product.setdefault("eden_area_id", scope["area_code"])
+        data, availability, reason = build_forecast_view(product, scope)
+        uses_proxy = any(row["method"] == "historical_weekday_proxy" for row in data["daily"])
+        if uses_proxy:
+            data["requested_area_code"] = product["area_code"]
+            data["data_area_code"] = (
+                data_area.administrative_code or data_area.eden_area_id
+                if data_area
+                else product["area_code"]
+            )
+            data["spatial_resolution"] = data_area.level if data_area else "none"
+        source_ids = tuple(data["sources"])
+        source_rows = self._source_metadata(session, source_ids)
         return ReadResult(
             data=data,
             availability=availability,
             reason=reason,
-            as_of=_selected_snapshot_as_of((snapshot,), source_ids),
-            calculated_at=_as_aware_utc(snapshot.calculated_at),
-            max_acceptable_age_seconds=_selected_max_age(
-                session,
-                source_ids,
-                metadata.get("max_acceptable_age_seconds"),
+            as_of=_selected_snapshot_as_of(
+                tuple(row for row in (snapshot, regional) if row is not None), source_ids
             ),
-            spatial_resolution=SpatialResolution(
-                metadata.get("spatial_resolution", SpatialResolution.NONE)
-            ),
-            formula_versions=snapshot.formula_versions or {},
+            calculated_at=_as_aware_utc(basis_snapshot.calculated_at),
+            max_acceptable_age_seconds=60 * 86400 if uses_proxy else 18 * 3600,
+            spatial_resolution=SpatialResolution(data_area.level if data_area else "none"),
+            formula_versions={
+                "visitor_forecast": "historical_weekday_proxy" if uses_proxy else "official"
+            },
             sources=source_rows,
         )
 
@@ -988,7 +1032,7 @@ class MariaDBReadRepository:
         include = set(scope.get("include") or [])
         currency = scope.get("currency")
         forecast_days = int(scope.get("forecast_days", 7))
-        requested_social_sources = set(scope.get("social_sources") or []).intersection(
+        requested_social_sources = set(scope.get("social_sources") or ["youtube"]).intersection(
             INBOUND_SOCIAL_SOURCES
         )
         snapshots: list[ReadModelSnapshot] = []
@@ -1095,6 +1139,27 @@ class MariaDBReadRepository:
                 }
                 block_states.append(block_availability)
 
+            market_sources = []
+            now = datetime.now(UTC)
+            policies = dict(
+                session.execute(
+                    select(RefreshPolicy.source_id, RefreshPolicy.max_acceptable_age_seconds).where(
+                        RefreshPolicy.source_id.in_(source_ids)
+                    )
+                ).all()
+            )
+            for source in source_rows:
+                item = dict(source)
+                stamp = (
+                    (snapshot.input_watermarks or {}).get(source["source_id"]) if snapshot else None
+                )
+                if stamp:
+                    instant = _as_aware_utc(datetime.fromisoformat(str(stamp)))
+                    item["data_as_of"] = instant
+                    item["stale"] = (now - instant).total_seconds() > policies.get(
+                        source["source_id"], 86400
+                    )
+                market_sources.append(item)
             market: dict[str, object] = {
                 "country": country,
                 "visitors": visitor_data.get("visitors") if "visitors" in include else None,
@@ -1131,7 +1196,7 @@ class MariaDBReadRepository:
                         excluded_social_contributed=excluded_social_contributed,
                     )
                 ),
-                "sources": source_rows,
+                "sources": market_sources,
             }
             markets.append(market)
             if snapshot is not None:
@@ -1175,6 +1240,7 @@ class MariaDBReadRepository:
             spatial_resolution=SpatialResolution.COUNTRY,
             formula_versions={"inbound_score": "inbound_score_v1"},
             sources=source_rows,
+            stale=any(item["stale"] for market in markets for item in market["sources"]),
         )
 
     def _fetch_market_alerts(self, session: Session, key: str) -> ReadResult:
@@ -1212,6 +1278,31 @@ class MariaDBReadRepository:
                 sources=source_rows,
             )
 
+        latest_entry = (
+            select(AlertDocument.alert_id)
+            .where(
+                AlertDocument.country_id == country_id,
+                AlertDocument.active.is_(True),
+                AlertDocument.alert_type == "entry",
+            )
+            .order_by(AlertDocument.published_at.desc(), AlertDocument.alert_id)
+            .limit(1)
+        )
+        retained_notices = (
+            select(AlertDocument.alert_id)
+            .where(
+                AlertDocument.country_id == country_id,
+                AlertDocument.active.is_(True),
+                AlertDocument.alert_type != "entry",
+                AlertDocument.published_at
+                >= datetime.now(UTC).replace(tzinfo=None) - timedelta(days=90),
+            )
+            .order_by(AlertDocument.published_at.desc(), AlertDocument.alert_id)
+            .limit(20)
+        )
+        retained_ids = tuple(session.scalars(latest_entry)) + tuple(
+            session.scalars(retained_notices)
+        )
         statement = (
             select(AlertDocument, AlertRevision)
             .join(
@@ -1221,6 +1312,7 @@ class MariaDBReadRepository:
             )
             .where(
                 AlertDocument.country_id == country_id,
+                AlertDocument.alert_id.in_(retained_ids),
                 AlertDocument.active.is_(True),
             )
         )
@@ -1317,7 +1409,11 @@ class MariaDBReadRepository:
                 sources=source_rows,
             )
         as_of = min(
-            (row["data_as_of"] for row in relevant_sources if row["data_as_of"] is not None),
+            (
+                row["last_success_at"]
+                for row in relevant_sources
+                if row["last_success_at"] is not None
+            ),
             default=None,
         )
         calculated_at = max(
@@ -1376,10 +1472,16 @@ class MariaDBReadRepository:
             except ValueError:
                 status = SourceStatus.UNAVAILABLE
             data_as_of = _as_aware_utc(state.data_as_of) if state else None
+            freshness_basis = (
+                _as_aware_utc(state.last_success_at)
+                if state
+                and registry.source_id in {"SRC_EMBASSY_NOTICE", "SRC_KETA", "SRC_KTO_MARKET_TREND"}
+                else data_as_of
+            )
             stale_by_age = bool(
-                data_as_of is not None
+                freshness_basis is not None
                 and policy is not None
-                and (now - data_as_of).total_seconds() > policy.max_acceptable_age_seconds
+                and (now - freshness_basis).total_seconds() > policy.max_acceptable_age_seconds
             )
             if status == SourceStatus.AVAILABLE and stale_by_age:
                 status = SourceStatus.STALE
@@ -1392,6 +1494,7 @@ class MariaDBReadRepository:
                     "status": status,
                     "data_as_of": data_as_of,
                     "last_success_at": _as_aware_utc(state.last_success_at) if state else None,
+                    "last_checked_at": _as_aware_utc(state.last_attempt_at) if state else None,
                     "stale": status == SourceStatus.STALE or stale_by_age,
                     "reason": reason,
                 }

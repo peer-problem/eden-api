@@ -37,6 +37,7 @@ EXPECTED_PARAMETER_NAMES = {
         "lang",
         "radius_m",
         "related_limit",
+        "shops_limit",
         "include",
     },
     "/v1/forecasts/visitors": {
@@ -447,7 +448,7 @@ def test_openapi_query_defaults_and_bounds_match_phase_one(contract_client: Test
         "minimum": 1,
         "maximum": 30,
     }
-    assert forecasts["days"]["schema"]["default"] == 14
+    assert forecasts["days"]["schema"]["default"] == 7
     assert _enum(_array_items(forecasts["include"]["schema"])) == {
         "weather",
         "festivals",
@@ -530,21 +531,23 @@ def test_recommendation_body_defaults_and_bounds_match_phase_one(
         "food",
         "kpop",
     }
-    assert request["properties"]["party_size"]["minimum"] == 1
-    assert request["properties"]["party_size"]["default"] == 1
+    assert request["properties"]["party_size"]["anyOf"][0]["minimum"] == 1
+    assert request["properties"]["party_size"].get("default") is None
     assert {
         key: request["properties"]["limit"][key] for key in ("minimum", "maximum", "default")
     } == {"minimum": 1, "maximum": 20, "default": 5}
 
     travel_window = components["TravelWindow"]
-    assert set(travel_window["required"]) == {"season", "days"}
+    assert set(travel_window["required"]) == {"season"}
     assert _enum(travel_window["properties"]["season"]) == {
         "spring",
         "summer",
         "autumn",
         "winter",
     }
-    assert {key: travel_window["properties"]["days"][key] for key in ("minimum", "maximum")} == {
+    assert {
+        key: travel_window["properties"]["days"]["anyOf"][0][key] for key in ("minimum", "maximum")
+    } == {
         "minimum": 1,
         "maximum": 30,
     }
@@ -579,3 +582,19 @@ def test_openapi_contains_common_envelope_and_all_endpoint_output_fields(
         assert fields <= set(components[component]["properties"]), component
     for component, fields in EXPECTED_NESTED_OUTPUT_FIELDS.items():
         assert fields <= set(components[component]["properties"]), component
+
+
+def test_every_public_field_and_parameter_has_a_description(contract_client: TestClient):
+    schema = contract_client.get("/openapi.json").json()
+    for path, method in PUBLIC_OPERATIONS.items():
+        assert all(
+            parameter.get("description")
+            for parameter in schema["paths"][path][method].get("parameters", [])
+        )
+        examples = schema["paths"][path][method]["responses"]["200"]["content"]["application/json"][
+            "examples"
+        ]
+        assert examples["observed"]["value"]["data"]
+        assert examples["unavailable"]["value"]["data"] is None
+    for model in schema["components"]["schemas"].values():
+        assert all(field.get("description") for field in model.get("properties", {}).values())

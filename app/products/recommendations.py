@@ -23,14 +23,14 @@ from app.repositories.models import (
     PlaceLocalization,
     PlaceRelation,
     PlaceSourceMap,
-    ProvenanceEdge,
     RegionalDemandObservation,
     RegionalVisitObservation,
 )
+from app.sources.essential import essential_place_ids
 
 MAX_AGE_SECONDS = 3 * 24 * 3600
-MAX_RECOMMENDATION_FEATURES = 2_000
-MAX_RECOMMENDATION_FEATURES_PER_AREA = 50
+MAX_RECOMMENDATION_FEATURES = 510
+MAX_RECOMMENDATION_FEATURES_PER_AREA = 30
 RECOMMENDATION_CROWD_HISTORY_DAYS = 366
 
 
@@ -57,9 +57,7 @@ def _season(month: int) -> str:
 
 
 def _themes(category: str | None, localizations: list[PlaceLocalization]) -> list[str]:
-    text = " ".join(
-        [category or "", *(row.title for row in localizations)]
-    ).casefold()
+    text = " ".join([category or "", *(row.title for row in localizations)]).casefold()
     result: list[str] = []
     category_code = (category or "").upper()
     if category_code.startswith("A01") or any(
@@ -79,62 +77,20 @@ def _themes(category: str | None, localizations: list[PlaceLocalization]) -> lis
     return result
 
 
-def _raw_ids(session: Session, output_ids: dict[str, list[str]]) -> tuple[int, ...]:
-    result: set[int] = set()
-    for output_type, ids in output_ids.items():
-        if not ids:
-            continue
-        result.update(
-            session.scalars(
-                select(ProvenanceEdge.raw_record_id).where(
-                    ProvenanceEdge.output_type == output_type,
-                    ProvenanceEdge.output_id.in_(ids),
-                )
-            ).all()
-        )
-    return tuple(sorted(result))
-
-
 def build_recommendation_snapshot(
     session_factory: sessionmaker[Session],
 ) -> RecommendationProductResult:
     with session_factory() as session:
-        place_filter = (
-            (Place.merge_status == "active")
-            & Place.area_id.is_not(None)
-            & Place.lat.is_not(None)
-            & Place.lng.is_not(None)
-        )
-        eligible_place_count = int(
-            session.scalar(select(func.count()).select_from(Place).where(place_filter)) or 0
-        )
-        ranked_places = (
-            select(
-                Place.eden_place_id.label("place_id"),
-                func.row_number()
-                .over(
-                    partition_by=Place.area_id,
-                    order_by=Place.eden_place_id,
-                )
-                .label("area_rank"),
-            )
-            .where(place_filter)
-            .subquery()
-        )
+        selected_ids = essential_place_ids(session)
+        eligible_place_count = len(selected_ids)
         places = list(
             session.scalars(
                 select(Place)
-                .join(
-                    ranked_places,
-                    ranked_places.c.place_id == Place.eden_place_id,
-                )
                 .where(
-                    ranked_places.c.area_rank
-                    <= MAX_RECOMMENDATION_FEATURES_PER_AREA
+                    Place.eden_place_id.in_(selected_ids),
                 )
                 .order_by(Place.area_id, Place.eden_place_id)
-                .limit(MAX_RECOMMENDATION_FEATURES)
-            ).all()
+            )
         )
         if not places:
             return RecommendationProductResult(0, 0)
@@ -170,9 +126,7 @@ def build_recommendation_snapshot(
                 )
             ).all()
         )
-        localization_place_ids = sorted(
-            {*place_ids, *(row.to_place_id for row in relations)}
-        )
+        localization_place_ids = sorted({*place_ids, *(row.to_place_id for row in relations)})
         localizations = list(
             session.scalars(
                 select(PlaceLocalization)
@@ -187,28 +141,24 @@ def build_recommendation_snapshot(
                 .order_by(PlaceSourceMap.eden_place_id, PlaceSourceMap.source_id)
             ).all()
         )
-        ranked_demand = (
-            select(
-                RegionalDemandObservation.observation_id.label("observation_id"),
-                func.row_number()
-                .over(
-                    partition_by=RegionalDemandObservation.area_id,
-                    order_by=(
-                        RegionalDemandObservation.period_start.desc(),
-                        RegionalDemandObservation.observation_id.desc(),
-                    ),
-                )
-                .label("area_rank"),
+        ranked_demand = select(
+            RegionalDemandObservation.observation_id.label("observation_id"),
+            func.row_number()
+            .over(
+                partition_by=RegionalDemandObservation.area_id,
+                order_by=(
+                    RegionalDemandObservation.period_start.desc(),
+                    RegionalDemandObservation.observation_id.desc(),
+                ),
             )
-            .subquery()
-        )
+            .label("area_rank"),
+        ).subquery()
         demand_rows = list(
             session.scalars(
                 select(RegionalDemandObservation)
                 .join(
                     ranked_demand,
-                    ranked_demand.c.observation_id
-                    == RegionalDemandObservation.observation_id,
+                    ranked_demand.c.observation_id == RegionalDemandObservation.observation_id,
                 )
                 .where(ranked_demand.c.area_rank == 1)
                 .order_by(RegionalDemandObservation.area_id)
@@ -229,8 +179,7 @@ def build_recommendation_snapshot(
                     RegionalVisitObservation.visitor_count.is_not(None),
                     RegionalVisitObservation.period_start
                     >= (
-                        latest_visit_period
-                        - timedelta(days=RECOMMENDATION_CROWD_HISTORY_DAYS)
+                        latest_visit_period - timedelta(days=RECOMMENDATION_CROWD_HISTORY_DAYS)
                         if latest_visit_period is not None
                         else datetime.max
                     ),
@@ -245,23 +194,8 @@ def build_recommendation_snapshot(
             ).all()
         }
         country_languages = {
-            row.iso_alpha2: row.default_language
-            for row in session.scalars(select(Country)).all()
+            row.iso_alpha2: row.default_language for row in session.scalars(select(Country)).all()
         }
-
-        raw_record_ids = _raw_ids(
-            session,
-            {
-                "place": place_ids,
-                "place_relation": [str(row.relation_id) for row in relations],
-                "regional_demand_observation": [
-                    str(row.observation_id) for row in demand_rows
-                ],
-                "regional_visit_observation": [
-                    str(row.observation_id) for row in visit_rows
-                ],
-            },
-        )
 
     by_place_localizations: dict[str, list[PlaceLocalization]] = {}
     for row in localizations:
@@ -318,10 +252,11 @@ def build_recommendation_snapshot(
             )
             if value is not None
         ]
-        related = latest_relations.get(place.eden_place_id, [])[:10]
+        related = latest_relations.get(place.eden_place_id, [])[:5]
         features.append(
             {
                 "place_id": place.eden_place_id,
+                "parent_area_id": area.parent_area_id,
                 "area": {
                     "area_code": area.administrative_code or area.eden_area_id,
                     "eden_area_id": area.eden_area_id,
@@ -330,13 +265,12 @@ def build_recommendation_snapshot(
                 "category": place.category,
                 "lat": place.lat,
                 "lng": place.lng,
-                "localizations": {
-                    row.language: row.title for row in place_localizations
-                },
-                "themes": _themes(place.category, place_localizations),
-                "demand_score": (
-                    round(mean(demand_values), 4) if demand_values else None
+                "localizations": {row.language: row.title for row in place_localizations},
+                "korean_address": next(
+                    (row.address for row in place_localizations if row.language == "ko"), None
                 ),
+                "themes": _themes(place.category, place_localizations),
+                "demand_score": (round(mean(demand_values), 4) if demand_values else None),
                 "crowd_by_season": crowd_by_area.get(place.area_id, {}),
                 "related_places": [
                     {
@@ -347,8 +281,7 @@ def build_recommendation_snapshot(
                         "score_as_of": _aware(row.source_updated_at).isoformat(),
                     }
                     for row in related
-                    if title_by_place.get(row.to_place_id) is not None
-                    and row.score is not None
+                    if title_by_place.get(row.to_place_id) is not None and row.score is not None
                 ],
                 "sources": sorted(
                     {
@@ -404,6 +337,12 @@ def build_recommendation_snapshot(
             },
             metadata={
                 "max_acceptable_age_seconds": MAX_AGE_SECONDS,
+                "normalized_references": {
+                    "place": [row.eden_place_id for row in places],
+                    "place_relation": [str(row.relation_id) for row in relations],
+                    "regional_demand_observation": [str(row.observation_id) for row in demand_rows],
+                    "regional_visit_observation": [str(row.observation_id) for row in visit_rows],
+                },
                 "spatial_resolution": "place",
                 "reason": "예산 원천은 등록되어 있지 않아 값이 제공되지 않습니다.",
                 "candidate_pool": {
@@ -427,7 +366,7 @@ def build_recommendation_snapshot(
                 "budget_source_unavailable",
                 *(("candidate_pool_truncated",) if feature_pool_truncated else ()),
             ),
-            raw_record_ids=raw_record_ids,
+            raw_record_ids=(),
         )
     )
     return RecommendationProductResult(1, len(features))

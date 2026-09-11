@@ -137,6 +137,8 @@ def test_product_family_lock_skip_does_not_claim_or_build(monkeypatch) -> None:
 def test_snapshot_retention_is_report_only_without_explicit_enable(monkeypatch) -> None:
     factory = SimpleNamespace(kw={"bind": FakeEngine()})
     settings = SimpleNamespace(
+        DEAD_LETTER_API_P95_PAUSE_SECONDS=1.0,
+        DEAD_LETTER_MEMORY_PAUSE_PERCENT=85.0,
         SNAPSHOT_RETENTION_DAYS=7,
         SNAPSHOT_RETENTION_BATCH_SIZE=100,
         SNAPSHOT_PROVENANCE_BATCH_SIZE=500,

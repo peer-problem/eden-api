@@ -50,6 +50,7 @@ class CapacityDecision:
     reasons: tuple[str, ...]
     total_database_bytes: int = 0
     system_memory_used_percent: float | None = None
+    expansion_writes_allowed: bool = True
 
 
 def production_readiness_reasons(
@@ -84,7 +85,7 @@ def filesystem_used_percent(path: Path) -> float:
     usage = disk_usage(path)
     if usage.total <= 0:
         return 100.0
-    return round((usage.used / usage.total) * 100, 4)
+    return round((usage.used / (usage.used + usage.free)) * 100, 4)
 
 
 def collect_capacity_sample(
@@ -173,10 +174,7 @@ def _persist_capacity_sample(
     stale_ids = tuple(
         session.scalars(
             select(StorageCapacitySample.id)
-            .where(
-                StorageCapacitySample.sampled_at
-                < sampled_at - timedelta(days=retention_days)
-            )
+            .where(StorageCapacitySample.sampled_at < sampled_at - timedelta(days=retention_days))
             .order_by(StorageCapacitySample.sampled_at, StorageCapacitySample.id)
             .limit(cleanup_batch_size)
         )
@@ -253,7 +251,7 @@ def assess_capacity(
     database_max_bytes: int | None = None,
     memory_write_pause_percent: float = 100.0,
 ) -> CapacityDecision:
-    if not 0 < warning_percent < product_pause_percent < source_pause_percent <= 100:
+    if not 0 < warning_percent < source_pause_percent < product_pause_percent <= 100:
         raise ValueError("capacity thresholds must be strictly ordered")
     if daily_growth_budget_bytes < 1:
         raise ValueError("daily_growth_budget_bytes must be positive")
@@ -265,8 +263,7 @@ def assess_capacity(
     growth_exceeded = growth is not None and growth > daily_growth_budget_bytes
     reference_missing = require_growth_reference and previous is None
     database_limit_exceeded = (
-        database_max_bytes is not None
-        and sample.total_database_bytes >= database_max_bytes
+        database_max_bytes is not None and sample.total_database_bytes >= database_max_bytes
     )
     memory_limit_exceeded = (
         sample.system_memory_used_percent is not None
@@ -274,14 +271,16 @@ def assess_capacity(
     )
     product_writes_allowed = (
         sample.disk_used_percent < product_pause_percent
-        and not growth_exceeded
         and not reference_missing
         and not database_limit_exceeded
         and not memory_limit_exceeded
     )
+    source_database_limit = (
+        database_max_bytes is not None and sample.total_database_bytes >= database_max_bytes * 0.95
+    )
     source_writes_allowed = (
         sample.disk_used_percent < source_pause_percent
-        and not growth_exceeded
+        and not source_database_limit
         and not reference_missing
         and not database_limit_exceeded
         and not memory_limit_exceeded
@@ -295,6 +294,8 @@ def assess_capacity(
         reasons.append("disk_source_pause")
     if growth_exceeded:
         reasons.append("daily_growth_budget_exceeded")
+    if source_database_limit:
+        reasons.append("database_source_pause")
     if database_limit_exceeded:
         reasons.append("database_size_limit_exceeded")
     if memory_limit_exceeded:
@@ -308,6 +309,7 @@ def assess_capacity(
         product_writes_allowed=product_writes_allowed,
         source_writes_allowed=source_writes_allowed,
         reasons=tuple(reasons),
+        expansion_writes_allowed=source_writes_allowed and not growth_exceeded,
         total_database_bytes=sample.total_database_bytes,
         system_memory_used_percent=sample.system_memory_used_percent,
     )

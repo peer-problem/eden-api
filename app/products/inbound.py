@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from statistics import mean
 
 from sqlalchemy import and_, func, or_, select
@@ -16,7 +16,6 @@ from app.repositories.models import (
     FlightObservation,
     FxObservation,
     InboundVisitorObservation,
-    ProvenanceEdge,
     SocialObservation,
     TourismBalanceObservation,
 )
@@ -131,21 +130,18 @@ def build_inbound_snapshots(
                 .order_by(FlightObservation.period_start)
             ).all()
         )
-        ranked_fx = (
-            select(
-                FxObservation.observation_id.label("observation_id"),
-                func.row_number()
-                .over(
-                    partition_by=FxObservation.currency,
-                    order_by=(
-                        FxObservation.rate_date.desc(),
-                        FxObservation.observation_id.desc(),
-                    ),
-                )
-                .label("currency_rank"),
+        ranked_fx = select(
+            FxObservation.observation_id.label("observation_id"),
+            func.row_number()
+            .over(
+                partition_by=FxObservation.currency,
+                order_by=(
+                    FxObservation.rate_date.desc(),
+                    FxObservation.observation_id.desc(),
+                ),
             )
-            .subquery()
-        )
+            .label("currency_rank"),
+        ).subquery()
         all_fx_rows = list(
             session.scalars(
                 select(FxObservation)
@@ -166,10 +162,8 @@ def build_inbound_snapshots(
                 select(SocialObservation)
                 .where(
                     SocialObservation.source_id.in_(SOCIAL_SOURCE_NAMES),
-                    _history_windows(
-                        SocialObservation.bucket_start,
-                        end_ordinals,
-                        SOCIAL_HISTORY_MONTHS,
+                    SocialObservation.bucket_start >= (
+                        datetime.now(UTC).replace(tzinfo=None) - timedelta(days=190)
                     ),
                 )
                 .order_by(SocialObservation.bucket_start)
@@ -232,7 +226,9 @@ def build_inbound_snapshots(
             previous_rows = _window(rows, end_ordinal - month_count, month_count)
             current_flights = _window_flights(flight_rows, end_ordinal, month_count)
             previous_flights = _window_flights(flight_rows, end_ordinal - month_count, month_count)
-            social_population_rows = _window_social(all_social_rows, end_ordinal, month_count)
+            social_population_rows = _window_social(
+                all_social_rows, _month_ordinal(datetime.now(UTC)), min(month_count, 7)
+            )
             social_rows = [row for row in social_population_rows if row.country_id == country_id]
             current_total = _sum_optional([row.visitor_count for row in current_rows])
             previous_total = _sum_optional([row.visitor_count for row in previous_rows])
@@ -272,27 +268,24 @@ def build_inbound_snapshots(
                 *([balance] if balance else []),
                 *social_population_rows,
             ]
-            raw_record_ids = _raw_record_ids(
-                session_factory,
-                {
-                    "inbound_visitor_observation": [
-                        row.observation_id for row in [*current_rows, *previous_rows]
-                    ],
-                    "flight_observation": [
-                        row.observation_id
-                        for row in [
-                            *current_flights,
-                            *previous_flights,
-                            *([schedule] if schedule else []),
-                        ]
-                    ],
-                    "fx_observation": [
-                        row.observation_id for history in fx_history.values() for row in history
-                    ],
-                    "tourism_balance_observation": ([balance.observation_id] if balance else []),
-                    "social_observation": [row.observation_id for row in social_population_rows],
-                },
-            )
+            normalized_references = {
+                "inbound_visitor_observation": [
+                    row.observation_id for row in [*current_rows, *previous_rows]
+                ],
+                "flight_observation": [
+                    row.observation_id
+                    for row in [
+                        *current_flights,
+                        *previous_flights,
+                        *([schedule] if schedule else []),
+                    ]
+                ],
+                "fx_observation": [
+                    row.observation_id for history in fx_history.values() for row in history
+                ],
+                "tourism_balance_observation": ([balance.observation_id] if balance else []),
+                "social_observation": [row.observation_id for row in social_population_rows],
+            }
             visitor_population = _component_population(
                 all_visitor_rows, end_ordinal, month_count, "visitor_count"
             )
@@ -432,6 +425,10 @@ def build_inbound_snapshots(
                     },
                     metadata={
                         "max_acceptable_age_seconds": MAX_AGE_SECONDS,
+                        "normalized_references": {
+                            key: [str(value) for value in values]
+                            for key, values in normalized_references.items()
+                        },
                         "spatial_resolution": "country",
                         "reason": reason,
                     },
@@ -443,36 +440,14 @@ def build_inbound_snapshots(
                     calculated_at=calculated_at,
                     availability=availability,
                     quality_flags=quality_flags,
-                    raw_record_ids=raw_record_ids,
+                    raw_record_ids=(),
                 )
             )
             published_count += 1
     return InboundProductResult(published_count, tuple(published_countries))
 
 
-def _raw_record_ids(
-    session_factory: sessionmaker[Session],
-    output_ids: dict[str, list[int]],
-) -> tuple[int, ...]:
-    with session_factory() as session:
-        rows: set[int] = set()
-        for output_type, ids in output_ids.items():
-            if not ids:
-                continue
-            rows.update(
-                session.scalars(
-                    select(ProvenanceEdge.raw_record_id).where(
-                        ProvenanceEdge.output_type == output_type,
-                        ProvenanceEdge.output_id.in_([str(value) for value in ids]),
-                    )
-                ).all()
-            )
-    return tuple(sorted(rows))
-
-
-def _window_flights(
-    rows: list[FlightObservation], end_ordinal: int, months: int
-) -> list[FlightObservation]:
+def _window_flights(rows: list[FlightObservation], end_ordinal: int, months: int):
     start_ordinal = end_ordinal - months + 1
     return [row for row in rows if start_ordinal <= _month_ordinal(row.period_start) <= end_ordinal]
 
@@ -502,7 +477,11 @@ def _social_interest(
     result: dict[str, dict[str, object]] = {}
     source_scores: list[float] = []
     for source_name, source_rows in sorted(grouped.items()):
-        country_rows = [row for row in source_rows if _is_country_social_signal(row)]
+        country_rows = (
+            source_rows
+            if source_rows[0].source_id == "SRC_YOUTUBE"
+            else [row for row in source_rows if _is_country_social_signal(row)]
+        )
         if not country_rows:
             result[source_name] = {
                 "posts": None,
@@ -533,7 +512,14 @@ def _social_interest(
             "reactions": _sum_optional([row.reaction_count for row in country_rows]),
             "score": score,
             "availability": "available",
-            "reason": None,
+            "reason": (
+                "한국 여행 검색 표본의 참고 관심도. 실제 국적별 시청자 수가 아닙니다."
+                if source_rows[0].source_id == "SRC_YOUTUBE"
+                else None
+            ),
+            "semantics": "search_sample_interest"
+            if source_rows[0].source_id == "SRC_YOUTUBE"
+            else "country_observation",
         }
     return result, round(mean(source_scores), 4) if source_scores else None
 

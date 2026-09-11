@@ -137,6 +137,9 @@ def build_trend_snapshot(
             },
             metadata={
                 "max_acceptable_age_seconds": MAX_AGE_SECONDS,
+                "normalized_references": {
+                    "social_observation": [str(row.observation_id) for row in latest_observations]
+                },
                 "spatial_resolution": "none",
                 "reason": None,
             },
@@ -151,7 +154,7 @@ def build_trend_snapshot(
             calculated_at=calculated_at,
             availability=(Availability.AVAILABLE if observations else Availability.UNAVAILABLE),
             quality_flags=("all_latest_observations_tombstoned",) if not observations else (),
-            raw_record_ids=tuple(sorted({row.raw_record_id for row in latest_observations})),
+            raw_record_ids=(),
         )
     )
     return TrendProductResult(1, len(observations))

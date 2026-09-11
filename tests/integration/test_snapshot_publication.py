@@ -258,13 +258,14 @@ def test_reader_requires_a_current_head_and_content_addressed_payload(
         assert loaded is None
 
 
-def test_retention_preserves_current_and_one_rollback_snapshot(
+def test_retention_preserves_current_and_two_rollback_snapshots(
     session_factory: sessionmaker[Session],
 ) -> None:
     publisher = SnapshotPublisher(session_factory)
     first = publisher.publish(_candidate(1, datetime(2026, 8, 29, 1, tzinfo=UTC)))
     second = publisher.publish(_candidate(2, datetime(2026, 8, 29, 2, tzinfo=UTC)))
-    current = publisher.publish(_candidate(3, datetime(2026, 8, 29, 3, tzinfo=UTC)))
+    publisher.publish(_candidate(3, datetime(2026, 8, 29, 3, tzinfo=UTC)))
+    current = publisher.publish(_candidate(4, datetime(2026, 8, 29, 4, tzinfo=UTC)))
     cutoff = datetime(2026, 8, 30, tzinfo=UTC)
     with session_factory.begin() as session:
         session.add(
@@ -308,7 +309,8 @@ def test_retention_bounds_total_provenance_deletes_per_invocation(
     publisher = SnapshotPublisher(session_factory)
     retired = publisher.publish(_candidate(1, datetime(2026, 8, 29, 1, tzinfo=UTC)))
     rollback = publisher.publish(_candidate(2, datetime(2026, 8, 29, 2, tzinfo=UTC)))
-    current = publisher.publish(_candidate(3, datetime(2026, 8, 29, 3, tzinfo=UTC)))
+    publisher.publish(_candidate(3, datetime(2026, 8, 29, 3, tzinfo=UTC)))
+    current = publisher.publish(_candidate(4, datetime(2026, 8, 29, 4, tzinfo=UTC)))
     with session_factory.begin() as session:
         session.add_all(
             [
@@ -443,3 +445,33 @@ def test_snapshot_restore_keeps_head_when_no_valid_rollback_exists(
         )
         assert head is not None
         assert head.snapshot_id == current.snapshot_id
+
+
+def test_republishing_current_head_skips_staging_and_provenance(session_factory, monkeypatch):
+    publisher = SnapshotPublisher(session_factory)
+    candidate = _candidate(1, datetime(2026, 8, 29, 1, tzinfo=UTC))
+    first = publisher.publish(candidate)
+
+    def unexpected(*args):
+        raise AssertionError("identical head must not write payload or provenance")
+
+    monkeypatch.setattr(publisher, "_stage_payload", unexpected)
+    monkeypatch.setattr(publisher, "_insert_provenance", unexpected)
+    assert publisher.publish(candidate).snapshot_id == first.snapshot_id
+
+
+def test_retention_cleans_abandoned_ready_and_respects_pause(session_factory):
+    publisher = SnapshotPublisher(session_factory)
+    first = publisher.publish(_candidate(1, datetime(2026, 8, 29, 1, tzinfo=UTC)))
+    current = publisher.publish(_candidate(2, datetime(2026, 8, 29, 2, tzinfo=UTC)))
+    with session_factory.begin() as session:
+        session.get(ReadModelSnapshot, first.snapshot_id).state = "ready"
+    cutoff = datetime(2026, 8, 30, tzinfo=UTC)
+    paused = retain_snapshots(
+        session_factory, older_than=cutoff, dry_run=False, pause_reason=lambda: "api_p95"
+    )
+    assert paused.deleted_snapshots == 0
+    done = retain_snapshots(session_factory, older_than=cutoff, dry_run=False)
+    assert done.deleted_snapshots == 1
+    with session_factory() as session:
+        assert session.get(ReadModelSnapshot, current.snapshot_id) is not None

@@ -11,9 +11,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.normalization.registry import reprocess_normalization_run
 from app.products.refresh_requests import mark_products_dirty
 from app.repositories.models import DeadLetter, RawRecord
+from app.sources.essential import DISABLED_SOURCES
 
 DEAD_LETTER_BATCH_LIMIT = 100
-DEAD_LETTER_MAX_ATTEMPTS = 5
+DEAD_LETTER_MAX_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -198,6 +199,8 @@ def _claim_batch(
             .join(RawRecord, RawRecord.raw_record_id == DeadLetter.raw_record_id)
             .where(
                 DeadLetter.reprocess_status == "pending",
+                RawRecord.source_id.not_in(DISABLED_SOURCES),
+                RawRecord.observed_at >= now - timedelta(days=30),
                 or_(
                     DeadLetter.next_attempt_at.is_(None),
                     DeadLetter.next_attempt_at <= now,
@@ -216,6 +219,8 @@ def _claim_batch(
             .join(RawRecord, RawRecord.raw_record_id == DeadLetter.raw_record_id)
             .where(
                 DeadLetter.reprocess_status == "pending",
+                RawRecord.source_id.not_in(DISABLED_SOURCES),
+                RawRecord.observed_at >= now - timedelta(days=30),
                 or_(
                     DeadLetter.next_attempt_at.is_(None),
                     DeadLetter.next_attempt_at <= now,

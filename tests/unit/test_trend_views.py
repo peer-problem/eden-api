@@ -9,7 +9,7 @@ def test_optional_sum_preserves_all_missing_but_not_numeric_zero() -> None:
     assert _sum_optional([None, 0]) == 0
 
 
-def test_trend_view_renormalizes_equal_weights_across_available_sources() -> None:
+def test_trend_uses_only_explicitly_selected_youtube_source() -> None:
     product = {
         "observations": [
             {
@@ -54,13 +54,13 @@ def test_trend_view_renormalizes_equal_weights_across_available_sources() -> Non
     data, availability, reason = build_trend_view(product, scope)
 
     assert data is not None
-    assert data["interest_index"] == 40.0
-    assert [point["interest_index"] for point in data["series"]] == [10.0, 70.0]
-    assert data["source_availability"]["SRC_KTO_RESOURCE_DEMAND"]["availability"] == "unavailable"
+    assert data["interest_index"] == 50.0
+    assert [point["interest_index"] for point in data["series"]] == [0.0, 100.0]
+    assert set(data["source_availability"]) == {"SRC_YOUTUBE"}
     youtube = next(row for row in data["source_metrics"] if row["source_id"] == "SRC_YOUTUBE")
     assert youtube["reason"] and "시청자 거주 국가" in youtube["reason"]
-    assert availability == Availability.PARTIAL
-    assert reason is not None
+    assert availability == Availability.AVAILABLE
+    assert reason is None
 
 
 def test_rising_keywords_use_equal_windows_and_minimum_observations() -> None:

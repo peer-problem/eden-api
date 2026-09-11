@@ -100,6 +100,29 @@ def test_recommendation_does_not_ignore_an_unverifiable_travel_time_constraint()
         scope,
     )
 
-    assert data is None
+    assert data["recommendations"] == []
+    assert data["unapplied_inputs"][-1]["field"] == "constraints.max_travel_minutes"
     assert availability == Availability.UNAVAILABLE
-    assert reason == "이동시간 조건을 검증할 등록 원천이 없습니다."
+    assert reason
+
+
+def test_deprecated_inputs_and_budget_are_disclosed_without_changing_rank():
+    product = {"country_languages": {"US": "en"}, "features": [_feature("place_a")]}
+    scope = _scope()
+    before, _, _ = build_recommendation_view(product, scope)
+    scope.update(party_size=10, budget_krw=1000)
+    scope["travel_window"]["days"] = 30
+    after, availability, _ = build_recommendation_view(product, scope)
+    assert before["recommendations"] == after["recommendations"]
+    assert availability == Availability.PARTIAL
+    fields = {item["field"] for item in after["unapplied_inputs"]}
+    assert {"travel_window.days", "party_size", "budget_krw"} <= fields
+
+
+def test_extra_constraint_names_are_returned_and_never_ignored():
+    scope = _scope()
+    scope["constraints"] = {"extra": {"wheelchair_width_cm": 90}}
+    data, status, _ = build_recommendation_view({}, scope)
+    assert status == Availability.UNAVAILABLE
+    assert data["recommendations"] == []
+    assert data["unapplied_inputs"][-1]["field"] == "constraints.extra.wheelchair_width_cm"
