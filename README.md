@@ -1,136 +1,163 @@
-# EDEN API
+<h1 align="center">EDEN API</h1>
 
-EDEN은 한국 관광과 방한시장 데이터를 수집하고 정규화해 제공하는 API 전용 서비스입니다.
+<p align="center">
+  <strong>Korean tourism data, in one API.</strong>
+</p>
 
-- [공식 API 문서](https://api.edenapi.org/docs): 요청 파라미터와 응답 스키마 및 실제 호출
-- [OpenAPI JSON](https://api.edenapi.org/openapi.json): 클라이언트 타입 생성에 사용할 명세
-- 공개 API 기본 경로: `https://api.edenapi.org/v1`
+<p align="center">
+  한국 관광지와 지역 방문 지표를 조회하고,<br>
+  방한시장을 비교해 여행 목적지를 추천합니다.
+</p>
 
-대시보드 소스와 정적 호스팅은 제거했습니다. 별도 프론트는 Vercel 등에서 독립적으로
-개발하고 배포할 수 있습니다. 현재 API는 인증 없이 공개하며 쿠키를 사용하지 않는
-cross-origin GET과 POST를 허용합니다. `fetch`에 `credentials: 'include'`를 설정하지 마세요.
+<p align="center">
+  <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white">
+  <img alt="MariaDB" src="https://img.shields.io/badge/MariaDB-003545?style=flat-square&logo=mariadb&logoColor=white">
+  <img alt="API v0.2.0" src="https://img.shields.io/badge/API-v0.2.0-516B56?style=flat-square">
+</p>
 
-## 구성
+<p align="center">
+  <a href="https://api.edenapi.org/docs"><strong>API 문서</strong></a> |
+  <a href="https://api.edenapi.org/openapi.json">OpenAPI</a> |
+  <a href="#바로-사용하기">빠른 시작</a> |
+  <a href="CHANGELOG.md">변경 기록</a>
+</p>
 
-- FastAPI는 MariaDB에 게시된 현재 snapshot만 조회합니다. 공개 요청 중 외부 원천이나
-  LLM을 호출하지 않습니다.
-- scheduler는 원천 수집과 정규화 및 snapshot 게시를 담당합니다.
-- Nginx는 `/`, `/docs`, `/v1/*`, `/openapi.json`을 공개합니다. `/`는 문서로 이동합니다.
-  `/internal/*`는 loopback 요청만 허용합니다. 기존 `/dashboard/`와 `/assets/`는 410입니다.
-- 문서는 FastAPI의 Swagger UI를 사용합니다. 별도 Node 서버나 프론트 빌드가 없으며
-  문서용 Swagger UI 자산만 브라우저가 CDN에서 로드합니다.
-- API 읽기와 ingestion 쓰기 및 migration은 서로 다른 MariaDB 계정을 사용합니다.
+---
 
-## 공개 API
+## 어떤 정보를 제공하나요?
 
-다음 계약이 구현되어 있습니다.
+EDEN은 서로 다른 관광 데이터의 지역 코드와 관광지 ID를 연결해 일관된 JSON으로 제공합니다. 관광지 상세를 열고, 지역 방문 흐름을 살펴보고, 국가별 방한시장을 비교하는 기능을 앱에 붙일 수 있습니다.
 
-- `GET /v1/trends`
-- `GET /v1/regions/{area_code}/insights`
-- `GET /v1/places/{content_id}`
-- `GET /v1/forecasts/visitors`
-- `GET /v1/visitors/timeseries`
-- `GET /v1/markets/inbound`
-- `GET /v1/markets/{country}/alerts`
-- `POST /v1/recommendations/destinations`
+| 기능 | 제공 정보 |
+| --- | --- |
+| 여행 트렌드 | 수집한 여행 키워드의 YouTube 영상 수와 조회 수 |
+| 지역 인사이트 | 지역별 방문 지표와 이전 기간 비교 |
+| 관광지 상세 | 이름과 위치, 보유 번역, 주변 상점 및 연관 관광지 |
+| 방문 전망 | 과거 관측을 바탕으로 계산한 참고 수요 지수와 가용한 날씨 정보 |
+| 방문 시계열 | 일별, 주별 또는 월별 방문 지표 |
+| 방한시장 비교 | 일본, 중국, 대만, 미국, 필리핀의 방한 지표와 항공 및 환율 |
+| 공식 공지 | 시장별 입국 및 안전 공지와 원문 링크 |
+| 목적지 추천 | 지역과 테마에 맞는 관광지와 추천 근거 |
 
-운영 설정의 public origin은 `https://api.edenapi.org`입니다. OpenAPI 계약과 트렌드
-응답은 다음과 같이 조회할 수 있습니다. 이 주소의 현재 운영 상태는 배포와 smoke test로
-별도 확인해야 합니다.
+> **현재 운영 상태:** 공개 API는 기존 게시 데이터를 조회합니다. 자동 수집과 갱신은 중지돼 있습니다. 응답의 관측일과 최신성 정보를 확인하세요.
 
-```bash
-curl -fsS https://api.edenapi.org/openapi.json
-curl -fsS --get https://api.edenapi.org/v1/trends \
-  --data-urlencode 'keyword=Korea travel' \
-  --data 'country=US' \
-  --data 'social_sources=youtube' \
-  --data 'period=7d' \
-  --data 'time_unit=day' \
-  --data 'limit=10'
+## 바로 사용하기
+
+공개 API는 인증 키 없이 호출할 수 있습니다.
+
+```text
+https://api.edenapi.org/v1
 ```
 
-정상 조회 응답은 `data`와 `meta` envelope를 사용합니다. snapshot이 없거나 원천 접근이
-승인되지 않은 경우에도 임의의 0을 만들지 않습니다. `data`는 `null`일 수 있고
-`meta.availability`는 `unavailable`과 구체적인 `meta.reason`을 반환합니다. 일부 원천만
-사용할 수 있으면 각 block과 `meta.sources`에서 가용성과 freshness를 확인할 수 있습니다.
+서울의 지역 인사이트를 조회합니다.
 
-API endpoint 구현 여부와 실제 데이터 가용성은 서로 다릅니다.
+```bash
+curl -fsS 'https://api.edenapi.org/v1/regions/1100000000/insights?period=30d'
+```
 
-- 트렌드는 미리 수집한 키워드만 조회합니다. 지원 키워드와 국가 조합은 공식 문서를 따릅니다.
-- YouTube는 검색 결과 영상의 공개 지표를 집계합니다. 검색 국가 조건은 시청자 국적을
-  나타내지 않으므로 국가별 실제 관심도로 사용하지 않습니다.
-- NAVER 검색 추세 adapter가 구현되어 있습니다. 저장 및 재게시 권리가 확인되기 전에는
-  영구 저장을 활성화하지 않습니다.
-- Instagram, Facebook, Reddit은 플랫폼 승인을 확보하기 전까지 명시적으로
-  `unavailable`을 반환합니다.
-- X와 TikTok은 사용 범위에서 제외합니다. Weibo와 Douyin 및 Xiaohongshu와 LINE도
-  수집과 공개 지표에서 제외합니다.
-- 공공데이터와 날씨 및 환율과 ECOS 원천도 각 서비스의 승인과 자격 증명 및 게시된
-  snapshot 상태에 따라 가용성이 달라집니다.
-- 공지 번역과 요약은 Upstage Solar를 사용합니다. `LLM_API_KEY`에는 Upstage 키를,
-  `LLM_MODEL`에는 `solar-pro4`를 설정합니다. 설정이 없으면 해당 block만
-  `unavailable`로 표시합니다.
-  원문 공지의 가용성과는 별도로 처리합니다.
-- 한국은행 ECOS의 일반여행 수지는 한국 전체의 월간 수입에서 지출을 뺀 값입니다.
-  국가별 양자 수지가 아니며 방한시장 응답에서 발표월과 함께 제공합니다.
+일본 시장을 대상으로 문화 관광지 5곳을 추천받습니다.
 
-따라서 HTTP 200이나 endpoint 목록만으로 모든 원천 연동이 끝났다고 판단하지 않습니다.
-응답의 `meta.availability`, `meta.reason`, `meta.sources`를 함께 확인해야 합니다.
+```bash
+curl -fsS 'https://api.edenapi.org/v1/recommendations/destinations' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "target_country": "JP",
+    "travel_window": {"season": "autumn"},
+    "themes": ["culture"],
+    "limit": 5
+  }'
+```
 
-## 로컬 실행
+브라우저에서도 바로 사용할 수 있습니다.
 
-Python 3.12와 lock file에 맞춰 의존성을 준비합니다.
+```javascript
+const response = await fetch(
+  'https://api.edenapi.org/v1/markets/inbound?countries=JP&countries=US'
+);
+if (!response.ok) throw new Error(`EDEN API: ${response.status}`);
+
+const { data, meta } = await response.json();
+console.log(data, meta.availability, meta.as_of);
+```
+
+쿠키 없는 cross-origin GET과 POST를 허용합니다. `credentials: 'include'`는 사용하지 않습니다. 파라미터와 응답 예시는 [Swagger UI](https://api.edenapi.org/docs)에서 확인할 수 있습니다.
+
+## API 목록
+
+| 메서드 | 경로 | 용도 |
+| --- | --- | --- |
+| `GET` | `/v1/trends` | 여행 키워드 트렌드 |
+| `GET` | `/v1/regions/{area_code}/insights` | 지역 인사이트 |
+| `GET` | `/v1/places/{content_id}` | 관광지 상세 |
+| `GET` | `/v1/forecasts/visitors` | 방문 전망 |
+| `GET` | `/v1/visitors/timeseries` | 방문 시계열 |
+| `GET` | `/v1/markets/inbound` | 방한시장 비교 |
+| `GET` | `/v1/markets/{country}/alerts` | 공식 공지 |
+| `POST` | `/v1/recommendations/destinations` | 목적지 추천 |
+
+추천 응답의 `place.content_id`로 관광지 상세를 조회할 수 있습니다. 국가 코드는 `JP`, `CN`, `TW`, `US`, `PH`를 지원합니다. 방문 전망은 기본 7일이며 최대 30일까지 요청할 수 있습니다.
+
+## 응답 읽기
+
+정상 조회 응답은 `data`와 `meta`로 구성됩니다. 데이터가 없는 경우에도 임의의 0이나 추정 사실을 채우지 않습니다.
+
+| 필드 | 의미 |
+| --- | --- |
+| `data` | 조회 결과. 자료가 없으면 `null`이거나 빈 결과일 수 있음 |
+| `meta.availability` | 전체 결과의 가용성 |
+| `meta.reason` | 제공 범위가 제한되거나 결과가 없는 이유 |
+| `meta.as_of` | 데이터 기준 시점 |
+| `meta.freshness` | 최신성 상태와 허용 지연 기준 |
+| `meta.sources` | 원천별 관측 시점과 수집 상태 |
+
+원천의 발표 주기가 다르므로 보조 정보가 오래됐는지도 개별 필드에서 확인해야 합니다. 잘못된 입력은 `422`, 존재하지 않는 ID는 `404`, 호출 제한 초과는 `429`를 반환합니다.
+
+### 숫자의 의미
+
+- **YouTube 지표**는 검색 결과 영상 표본의 공개 수치입니다. 검색 국가 조건이 실제 시청자 국적을 뜻하지 않습니다.
+- **방문 전망**의 `historical_weekday_proxy`는 과거 같은 요일의 관측을 활용한 참고 지수입니다. 실제 예상 인원과 구분합니다.
+- **추천 조건** 중 계산에 반영하지 못한 항목은 `unapplied_inputs`에 이유와 함께 표시합니다. 계절도 근거가 있는 혼잡도 계산에만 반영합니다.
+- **공지 번역과 요약**은 준비된 경우에 제공합니다. 번역이 없어도 보유한 원문은 확인할 수 있습니다.
+
+원천별 이용 권한과 수집 범위에 따라 데이터 가용성이 달라집니다. NAVER 영구 저장은 비활성화돼 있으며, 승인되지 않은 SNS의 지표를 만들어 제공하지 않습니다.
+
+## 동작 구조
+
+```text
+외부 원천 → 수집 및 정규화 → MariaDB 게시 데이터 → FastAPI → 클라이언트
+```
+
+공개 요청은 게시된 DB 데이터만 읽습니다. 요청 중 외부 데이터 수집이나 LLM 호출이 발생하지 않으며, 추천 POST도 조회 작업입니다.
+
+수집 코드에는 요청량과 보관 범위 제한이 있습니다. 운영에서는 `SCHEDULER_ENABLED=false`로 수집기와 자동 정리를 중지했습니다. API 요청 통계도 DB에 저장하지 않으며 재배포가 관찰 타이머를 다시 켜지 않습니다.
+
+| 구성 | 역할 |
+| --- | --- |
+| FastAPI + Pydantic | 입력 검증과 응답 계약 및 OpenAPI 문서 |
+| MariaDB + SQLAlchemy | 원천 데이터와 정규화 데이터 및 게시본 저장 |
+| Alembic | DB 마이그레이션 |
+| Nginx + systemd | HTTPS 진입점과 요청 제한 및 프로세스 관리 |
+
+## 개발
+
+Python 3.12와 `uv`를 사용합니다. MariaDB Connector/C 3.4 이상이 필요하며, DB 연결은 인증서 검증 TLS를 사용합니다.
 
 ```bash
 uv sync --frozen
+```
+
+개발용 `.env`와 기기별 `.ops/` 런처는 관리자로부터 별도로 받아야 합니다. 비밀값과 서버 접속 설정은 저장소에 포함하지 않습니다.
+
+```bash
 ./.ops/run.sh check
 ./.ops/run.sh db-check
 ./.ops/run.sh
 ```
 
-`.ops/run.sh`는 루트 `.env`의 `DEVELOPER_DB_USER`와 `DEVELOPER_DB_PASSWORD`를 개발
-프로세스의 유효 DB 계정으로 사용합니다. 운영 VPS를 거치는 인증된 SSH tunnel을
-유지하고 scheduler를 끈 상태로 API를 `127.0.0.1:8000`에서 실행합니다. 루트 `.env`의
-운영용 `DB_HOST`와 `DB_PORT`는 변경하지 않습니다. tunnel이 끊기면 하위 명령도
-종료됩니다.
+개발 런처는 기존 원격 MariaDB에 SSH 터널로 연결합니다. 별도 로컬 DB를 만들지 않으며, API는 `127.0.0.1:8000`에서 스케줄러 없이 실행됩니다. 로컬 문서는 `http://127.0.0.1:8000/docs`에서 확인합니다.
 
-개발 연결도 MariaDB의 서버 인증서와 비밀번호를 검증합니다. CA 파일이나 TLS 검증 해제
-설정은 사용하지 않습니다. Mac에는 MariaDB Connector/C 3.4 이상이 필요합니다.
-
-로컬 문서는 `http://127.0.0.1:8000/docs`에서 확인합니다. Node와 npm은 필요하지 않습니다.
-
-같은 개발 DB 연결이 필요한 도구는 launcher를 통해 실행합니다.
-
-```bash
-./.ops/run.sh exec COMMAND...
-```
-
-## 환경과 DB 보안
-
-`.env`는 유일하게 수동 관리하는 환경 설정 원본이며 권한을 `600`으로 유지합니다.
-dotenv를 shell에서 `source`하지 않습니다. 주요 DB 역할은 다음과 같습니다.
-
-- `DB_USER`, `DB_PASSWORD`: 공개 API 읽기 전용 계정
-- `INGESTION_DB_USER`, `INGESTION_DB_PASSWORD`: scheduler 쓰기 계정
-- `DEVELOPER_DB_USER`, `DEVELOPER_DB_PASSWORD`: 로컬 개발과 도구 계정
-- `MIGRATION_DB_USER`, `MIGRATION_DB_PASSWORD`: schema 변경 전용 계정
-
-모든 역할은 운영 VPS에 있는 같은 MariaDB의 host와 port 및 database를 사용합니다.
-운영 앱은 loopback으로 연결하고 개발 연결은 SSH tunnel을 사용합니다. DB의 3306 포트는
-외부에 공개하지 않습니다. API와 migration 및 MariaDB CLI는 별도 CA 파일 없이
-인증서를 검증합니다.
-공개 배포의 `ENVIRONMENT`는 `production`이어야 합니다. scheduler가 활성화된 production은
-snapshot retention도 활성화해야 합니다. migration 비밀값은 API runtime 설정에서
-제외합니다.
-
-`SCHEDULER_ENABLED=false`이면 기존 게시 데이터만 조회합니다. 수집과 자동 정리 및
-요청 통계의 DB 저장을 실행하지 않습니다. 배포 시 관찰용 systemd 타이머도 중지하고
-비활성화하며 자동으로 다시 켜지 않습니다. 데이터 최신성은 갱신 없이 시간이 지나면
-낮아지므로 응답의 관측일과 가용성을 확인해야 합니다.
-
-## 검증
-
-백엔드 기본 검증은 lock과 lint 및 전체 계약과 회귀 테스트를 확인합니다.
+검증:
 
 ```bash
 uv lock --check
@@ -138,105 +165,41 @@ uv run ruff check app scripts migrations tests
 uv run pytest -q
 ```
 
-## DB migration
+### 저장소 구성
 
-`migrations/`는 Alembic이 관리합니다. 수동 점검도 launcher가 migration 계정을 선택하도록
-실행합니다.
+```text
+app/
+  api/             # 엔드포인트, 스키마, 문서
+  sources/         # 외부 데이터 원천
+  ingestion/       # 수집과 보관 정책
+  normalization/   # 지역과 관광지 식별 및 정규화
+  products/        # 집계와 전망 및 추천 게시본
+  readmodels/      # 공개 API 조회
+  scheduler/       # 수집 실행 코드, 운영에서는 비활성화
+migrations/        # Alembic 마이그레이션
+scripts/           # 공통 운영 도구
+tests/            # 계약, 통합, 단위 및 운영 검증
+```
+
+<details>
+<summary><strong>관리자 실행과 배포</strong></summary>
+
+`.env`는 유일하게 수동 관리하는 설정 원본이며 권한은 `600`입니다. 셸에서 `source`하지 않습니다. API 읽기 계정과 수집 쓰기 계정 및 마이그레이션 계정은 분리합니다.
 
 ```bash
+# 읽기 전용 DB 마이그레이션 상태 확인
 ./.ops/run.sh migrate current
-./.ops/run.sh migrate heads
-```
 
-`upgrade`나 `downgrade`는 실제 schema 변경 요청이 있을 때만 실행합니다. 배포는 DB backup
-파일을 만들지 않으며 expand migration을 적용합니다. snapshot contract 변경은 운영 soak
-증거가 통과한 뒤 별도 gate로 적용합니다.
-
-## 파일럿 계측
-
-고객과 합의한 `X-EDEN-Pilot` 값 또는 `EDEN-Pilot` User-Agent는 수신 즉시 해시됩니다.
-원문 식별자는 DB와 구조화 로그에 저장하지 않습니다. 핵심 5개 API의 일별 호출 수와 성공
-수 및 stale 응답 수를 집계합니다.
-
-파일럿 시작과 운영 이벤트를 기록하고 28일 보고서를 생성할 수 있습니다. 로컬에서 실행할
-때는 개발 DB launcher를 사용합니다.
-
-```bash
-./.ops/run.sh exec python scripts/phase2_pilot.py start customer-agreed-id
-./.ops/run.sh exec python scripts/phase2_pilot.py correction customer-agreed-id --note 'approved correction'
-./.ops/run.sh exec python scripts/phase2_pilot.py incident customer-agreed-id --note 'service incident'
-./.ops/run.sh exec python scripts/phase2_pilot.py recovered customer-agreed-id
-./.ops/run.sh exec python scripts/phase2_pilot.py report
-```
-
-보고서는 고정된 핵심 5개 endpoint 모두의 반복 사용을 검사합니다. 수작업 보정이 한 번이라도
-기록되면 4주 gate는 통과하지 않습니다.
-
-## 운영과 배포
-
-기기별 운영 파일은 `.ops/deploy.sh`와 `.ops/run.sh`만 유지합니다. 공통 함수와 VPS 배포
-본문은 `scripts/deploy_support.sh`와 `scripts/deploy_remote.sh`에 있습니다. 루트 `.env`에서
-운영 `/opt/eden/shared/.env`와 별도 `/opt/eden/shared/migration.env`를 생성합니다. 생성된
-운영 env 파일은 직접 편집하지 않습니다.
-
-```bash
+# 설정과 연결 확인
 ./.ops/deploy.sh env-check
 ./.ops/deploy.sh preflight
+
+# 운영 배포
 ./.ops/deploy.sh deploy
-./.ops/deploy.sh finalize-phase1-contract
-./.ops/deploy.sh soak-7d
 ```
 
-`env-check`는 환경값 생성만 검사합니다. `preflight`는 설정 생성과 백엔드 검증 및 개발 DB 연결을
-검사하며 운영 배포를 수행하지 않습니다. `deploy`가 운영 설정과 release를 함께 반영합니다.
-VPS host fingerprint와 DB TLS 및 계정 분리도 배포 gate에 포함됩니다.
+배포는 루트 `.env`에서 운영 설정을 생성합니다. SSH 호스트 fingerprint와 DB TLS 및 계정 분리를 검사하고, readiness 실패 시 이전 release와 설정을 복구합니다. `preflight`는 운영 배포를 수행하지 않습니다.
 
-release에는 `.agents/`, `.env`, cache와 로컬 테스트 산출물을 포함하지 않습니다. TLS
-인증서가 없으면 Nginx는 공개 API를 fail-closed 상태로 유지합니다. readiness나 smoke
-test가 실패하면 이전 API release와 운영 설정을 복구합니다. 성공한 배포는 기존 대시보드 정적
-파일과 과거 release의 dashboard 디렉터리 및 전용 Nginx 로그를 제거합니다.
-삭제된 구형 스크립트를 호출하던 중복 soak timer와 maintenance timer도 제거합니다.
+스키마 변경은 별도 요청이 있을 때만 진행합니다. DB 백업과 복원 명령은 비활성화돼 있습니다. 공개 API 문서는 `/docs`, 내부 상태 확인은 loopback의 `/internal/readiness`에서 제공합니다.
 
-이 프로젝트는 DB backup 파일을 생성하거나 보관하지 않습니다. `backup`과 `restore`
-하위 명령은 정책상 비활성화되어 있습니다. Phase 2 soak는 24시간 Phase 1 증거와 분리된
-`/opt/eden/phase2-evidence/soak.jsonl`에 기록합니다. 7일 soak와 실제 파일럿 28일 증거는
-배포 직후 생성할 수 없으므로 운영 기간이 지난 뒤 gate 결과를 확인해야 합니다.
-
-`.ops/`는 Git에서 제외하는 기기별 실행 파일이며 Mac의 runtime 경로를 사용합니다.
-루트 `AGENTS.md`, `.env`, `.agents/`도 Git에서 제외해 로컬에서 관리합니다.
-
-
-## 소형 서버 수집 및 저장 제한
-
-운영 기본값은 CPU 1개와 메모리 약 1.6GiB인 서버를 기준으로 한다. `.env`에서 설정을
-관리하며 배포가 운영 설정에 반영한다. API는 저장된 게시본만 읽고 요청 중 수집하지 않는다.
-
-| 항목 | 적용 기준 |
-| --- | --- |
-| 원천 HTTP | 실행당 실제 요청 20회, 월간 전국 비교 통계만 최대 60회. 누적 8MiB, 응답 하나 2MiB, 실행 120초 |
-| 공공데이터 레코드 | 실행당 최대 10,000건. 초과 시 부분 수집으로 기록 |
-| 수집 주기 | 원천당 최소 1시간. 원래 일간 또는 월간 주기가 더 느리면 유지 |
-| 저장 및 재처리 | raw 저장 묶음 20개. 오류 재처리는 1시간 간격으로 최대 5개 |
-| 집계 게시 | 제품군별 15분 간격. 수집과 집계의 무거운 DB 작업은 동시 1개 |
-| 공지 번역 | 1시간 간격으로 최대 2건. 건당 최초 호출과 필요 시 언어 복구 1회 |
-| 새 게시본 | 압축 전 payload 최대 8MiB. 읽기 캐시는 직렬화 크기 합계 16MiB |
-| DB 보호 | 전체 테이블 및 인덱스 추정 합계 20GiB 또는 하루 증가량 100MiB 초과 시 새 수집과 게시 중지 |
-| 서버 보호 | 메모리 사용률 85%에서 쓰기 중지. 디스크 70% 경고, 75% 게시 중지, 80% 수집 중지 |
-| 보관 정리 | 7일 지난 정리 가능 게시본 대상. 실행당 후보 20개와 연결 기록 1,000행까지만 정리 |
-| 용량 계측 | 15분 간격 저장. 7일 지난 계측은 실행당 최대 500행씩 정리 |
-| 공개 API | IP당 초당 5회, 서버 전체 초당 20회. 일시 초과 허용량은 각각 20회와 40회이며 초과 요청은 HTTP 429 |
-| API 프로세스 | 동시 처리 32개, CPU 최대 80%, 메모리 512MiB부터 압박 조절 및 768MiB 상한 |
-
-용량과 증가량 기준은 계측에 따른 다음 작업의 진입 제한이며 DB 파일의 엄격한 바이트
-할당량은 아니다. 이미 진행 중인 한 작업은 경계를 넘을 수 있다. 메모리와 디스크 보호로
-갱신이 멈추어도 기존 게시본 조회는 유지되며 내부 readiness에 경고를 남긴다.
-
-현재 게시본과 직전 복구용 게시본은 보관 기간이 지나도 삭제하지 않는다. 참조 중인 raw와
-원천 출처도 임의 삭제하지 않는다. 오래된 정리 대상이 많이 쌓여 있으면 여러 실행에 걸쳐
-처리한다. 배포는 과거 데이터 전체 적재나 강제 집계 재생성을 자동 실행하지 않는다.
-
-지역 방문 데이터는 약 30일의 발표 지연을 반영해 30~39일 전의 10일 구간을 갱신한다.
-신선도 기준은 예상 발표 지연 31일에 3일의 여유를 더한 34일이다. 월간 전국 비교 통계는 한 달의 모든 지역과 지표를
-묶어 순환 수집한다. 중간에 제한에 걸리면 일부 지역으로 전국 지수를 다시 계산하지 않고
-기존 값을 유지한다. 집계 조회 범위는 방한 비교 48개월, 지역 방문 731일로 제한하며 기존
-역사 데이터 자체를 삭제하지는 않는다.
+</details>
