@@ -23,6 +23,10 @@
   <a href="CHANGELOG.md">변경 기록</a>
 </p>
 
+<p align="center">
+  <img src="assets/eden-api-overview.png" alt="EDEN API의 8개 엔드포인트를 탐색, 분석, 의사결정으로 구분하고 공통 응답 구조를 연결한 도식" width="100%">
+</p>
+
 ---
 
 ## 어떤 정보를 제공하나요?
