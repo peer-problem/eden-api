@@ -550,6 +550,15 @@ def test_public_data_monthly_watermark_uses_source_period_not_fetch_time() -> No
     ) == datetime(2026, 5, 1, tzinfo=UTC)
 
 
+def test_visitor_forecast_horizon_is_not_a_publication_watermark() -> None:
+    assert public_data_watermark(
+        {"watermark": {"response_field": "baseYmd", "format": "%Y%m%d"}},
+        {},
+        {"items": [{"baseYmd": "20991009"}]},
+        source_id="SRC_KTO_VISITOR_FORECAST",
+    ) is None
+
+
 def test_public_data_watermark_uses_latest_response_period() -> None:
     document = {
         "response": {

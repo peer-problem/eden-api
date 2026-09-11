@@ -115,6 +115,13 @@ def public_data_watermark(
         "solMonth",
     ]:
         return None
+    # baseYmd identifies the day being predicted, not when the forecast was
+    # issued. Keep publication freshness unknown instead of dating it ahead.
+    if source_id == "SRC_KTO_VISITOR_FORECAST" and (
+        descriptor.get("response_field") == "baseYmd"
+        or descriptor.get("param") in {"baseYmd", "startYmd", "endYmd"}
+    ):
+        return None
     date_format = descriptor.get("format")
     if not isinstance(date_format, str) or not date_format:
         raise ValueError("Public-data watermark format is missing")
@@ -417,7 +424,8 @@ class PublicDataAdapter(SourceAdapter):
                     params.setdefault(rows_param, 500)
                 page = int(params[page_param]) if pagination_params else 1
                 rows = int(params[rows_param]) if pagination_params else 500
-                if page < 1 or rows < 1 or rows > 1000:
+                max_rows = 2000 if self.source_id == "SRC_KMA_FORECAST" else 1000
+                if page < 1 or rows < 1 or rows > max_rows:
                     raise ValueError("Invalid public-data pagination bounds")
             except (TypeError, ValueError) as exc:
                 errors.append(f"{operation_key}:invalid_pagination:{type(exc).__name__}")

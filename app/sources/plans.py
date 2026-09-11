@@ -360,7 +360,8 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "paginate": False,
                 "pagination_params": False,
             }
-            for months in range(1, 49)
+            # Retain existing history, but refresh only the two latest source months.
+            for months in range(1, 3)
         ],
     },
     "SRC_AIRPORT_WEEKLY": {
@@ -485,10 +486,10 @@ def public_data_refresh_scope(
                     "base_time": "$kma_base_time",
                     "nx": grid[0],
                     "ny": grid[1],
-                    # A current village forecast contains about 980 rows.
-                    # Fetch it in one complete response so every selected
-                    # province has the full published forecast horizon.
-                    "numOfRows": 1000,
+                    # The published horizon can exceed 1,000 rows (1,052
+                    # observed). Keep one request per province while leaving
+                    # room for the complete horizon within the run budget.
+                    "numOfRows": 2000,
                 },
                 "watermark": {
                     "params": ["base_date", "base_time"],

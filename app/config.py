@@ -156,8 +156,8 @@ class Settings(BaseSettings):
             raise ValueError("Per-response byte limit must not exceed the run byte limit")
         if not 1 <= self.MEMORY_WRITE_PAUSE_PERCENT <= 100:
             raise ValueError("MEMORY_WRITE_PAUSE_PERCENT must be between 1 and 100")
-        if not 1 <= self.ALERT_ENRICHMENT_BATCH_SIZE <= 2:
-            raise ValueError("ALERT_ENRICHMENT_BATCH_SIZE must be between 1 and 2")
+        if not 0 <= self.ALERT_ENRICHMENT_BATCH_SIZE <= 2:
+            raise ValueError("ALERT_ENRICHMENT_BATCH_SIZE must be between 0 and 2")
         if self.DB_MAX_OVERFLOW < 0:
             raise ValueError("DB_MAX_OVERFLOW must not be negative")
         if self.SOURCE_WORKERS != 1:

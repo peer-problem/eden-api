@@ -69,6 +69,27 @@ def test_request_cap_preserves_useful_pages_and_marks_partial() -> None:
     assert any("SourceRunBudgetExceeded" in error for error in result.partial_errors)
 
 
+def test_kma_complete_horizon_above_one_thousand_rows_uses_one_request() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["numOfRows"] == "2000"
+        return httpx.Response(200, content=_response(1, total=1052, count=1052), request=request)
+
+    adapter = _adapter(handler, max_requests=1)
+    adapter.source_id = "SRC_KMA_FORECAST"
+    result = adapter.fetch({"operations": [{
+        "operation": "getVilageFcst",
+        "params": {"numOfRows": 2000, "base_date": "20260911", "base_time": "1700"},
+        "watermark": {"params": ["base_date", "base_time"], "format": "%Y%m%d%H%M"},
+        "max_pages": 1,
+    }]})
+    adapter.client.close()
+
+    assert result.status is SourceStatus.AVAILABLE
+    assert len(result.items) == 1
+    assert adapter.client.request_count == 1
+    assert result.partial_errors == ()
+
+
 def test_record_cap_stops_before_requesting_an_incomplete_next_page() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         page = int(request.url.params.get("pageNo", "1"))

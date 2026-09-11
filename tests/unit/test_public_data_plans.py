@@ -45,7 +45,7 @@ def test_kma_scope_rotates_complete_province_forecasts_within_record_budget() ->
     assert len(scope["operations"]) == len(KTO_ADMINISTRATIVE_AREA_CODES)
     assert scope["max_operations_per_run"] == KMA_OPERATIONS_PER_RUN == 5
     assert all(
-        operation["params"]["numOfRows"] == 1000
+        1052 <= operation["params"]["numOfRows"] <= 10_000 // KMA_OPERATIONS_PER_RUN
         and operation["max_pages"] == 1
         for operation in scope["operations"]
     )

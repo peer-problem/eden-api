@@ -1024,6 +1024,8 @@ def run_alert_enrichment(
     factory: sessionmaker[Session],
     capacity_gate: SchedulerCapacityGate | None = None,
 ) -> AlertEnrichmentBatchResult | None:
+    if settings.ALERT_ENRICHMENT_BATCH_SIZE == 0:
+        return None
     if capacity_gate is not None and capacity_gate.source_pause_reason():
         return None
     engine: Engine = factory.kw["bind"]
@@ -1070,6 +1072,7 @@ def start_scheduler(settings: Settings, factory: sessionmaker[Session]) -> Sched
         logger.warning("scheduler_not_leader")
         leader_connection.close()
         return None
+    IngestionService(factory).recover_abandoned_runs()
     scheduler = BackgroundScheduler(
         timezone=settings.EDEN_TIMEZONE,
         executors={

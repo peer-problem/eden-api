@@ -26,7 +26,7 @@ def test_kma_plan_uses_sido_coordinate_conversion() -> None:
         "params": ["base_date", "base_time"],
         "format": "%Y%m%d%H%M",
     }
-    assert operations[0]["params"]["numOfRows"] == 1000
+    assert operations[0]["params"]["numOfRows"] == 2000
 
 
 def test_kma_plan_skips_sigungu_grids_because_children_inherit_sido_weather() -> None:

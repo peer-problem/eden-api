@@ -46,7 +46,7 @@ EDEN connects regional codes and place identifiers across tourism data sources a
 | Official alerts | Entry and safety notices with links to their sources |
 | Destination recommendations | Places matching a region and theme, with scoring reasons |
 
-> **Current deployment:** The public API serves previously published data. Automatic collection and refresh are disabled. Check observation dates and freshness metadata before using the results.
+> **Current deployment:** The public API reads published data while a bounded background worker collects and refreshes selected sources. Coverage varies by source. Check observation dates and freshness metadata before using the results.
 
 ## Quick Start
 
@@ -136,7 +136,9 @@ External sources -> Collection and normalization -> Published MariaDB data -> Fa
 
 Public requests only read published database snapshots. They do not trigger external collection or LLM calls. The recommendation POST is also a read operation.
 
-Collection code includes request budgets and retention limits. The current deployment uses `SCHEDULER_ENABLED=false`, which disables collection and automatic cleanup. API usage statistics are not written to the database, and deployments do not reactivate observation timers while this setting is false.
+Collection uses one source worker, request budgets and resource limits. Monthly regional demand and diversity sources are checked weekly. Monthly flight refreshes cover the two most recent months while existing history remains stored. Cleanup keeps the current snapshot and two recent retired versions, preserving their referenced facts and source evidence. Superseded catalog errors and sources outside the maintained scope are quarantined without deleting their raw evidence. API usage statistics are not written to the database.
+
+`SCHEDULER_ENABLED=false` pauses collection, refresh and automatic cleanup. `ALERT_ENRICHMENT_BATCH_SIZE=0` independently disables paid translation jobs; original official notices remain available. The deployment currently uses this zero translation budget.
 
 | Component | Responsibility |
 | --- | --- |
@@ -181,7 +183,7 @@ app/
   normalization/   # Regional and place identity resolution
   products/        # Published aggregates, outlooks, and recommendations
   readmodels/      # Public API queries
-  scheduler/       # Collection jobs; disabled in the current deployment
+  scheduler/       # Bounded collection, refresh and cleanup jobs
 migrations/        # Alembic migrations
 scripts/           # Shared operational tools
 tests/             # Contract, integration, unit, and operations checks

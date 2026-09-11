@@ -34,6 +34,12 @@ class AcquiredLock:
         pass
 
 
+def test_zero_enrichment_budget_does_not_open_database_or_call_provider() -> None:
+    assert runtime.run_alert_enrichment(
+        SimpleNamespace(ALERT_ENRICHMENT_BATCH_SIZE=0), None,
+    ) is None
+
+
 def test_raw_stage_retry_refetches_but_normalization_retry_does_not() -> None:
     assert runtime._resume_pipeline_without_fetch(
         "pipeline:normalize:OperationalError: connection invalidated"
@@ -201,6 +207,7 @@ def test_scheduler_registers_single_source_and_product_workstreams(monkeypatch) 
     monkeypatch.setattr(runtime, "BackgroundScheduler", FakeScheduler)
     monkeypatch.setattr(runtime, "MariaDBAdvisoryLock", AcquiredLock)
     monkeypatch.setattr(runtime.SchedulerCapacityGate, "refresh", lambda *_args: None)
+    monkeypatch.setattr(runtime.IngestionService, "recover_abandoned_runs", lambda *_args: 0)
 
     scheduler_runtime = runtime.start_scheduler(settings, FakeFactory())
 
@@ -342,7 +349,9 @@ def test_alert_enrichment_skips_paid_calls_when_another_worker_holds_lock(monkey
         lambda *_args: (_ for _ in ()).throw(AssertionError("paid call must not run")),
     )
     factory = SimpleNamespace(kw={"bind": FakeEngine()})
-    assert runtime.run_alert_enrichment(SimpleNamespace(), factory) is None
+    assert runtime.run_alert_enrichment(
+        SimpleNamespace(ALERT_ENRICHMENT_BATCH_SIZE=2), factory,
+    ) is None
 
 
 def test_pipeline_retry_waits_an_hour_instead_of_refetching_each_minute() -> None:
