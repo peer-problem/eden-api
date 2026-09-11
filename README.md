@@ -208,4 +208,6 @@ Deployment generates production configuration from the root `.env`. It verifies 
 
 Schema changes require a separate request. Database backup and restore commands are disabled. Public API documentation is served at `/docs`; internal readiness is available on loopback at `/internal/readiness`.
 
+The alert enrichment worker requires migration `20260911_0009`, which persists retry counts and deadlines. Each revision gets at most three attempts with exponential backoff, allowing later notices to proceed while failed notices wait. Normal deployment applies this additive migration without running the separately gated Phase 1 contract migration. Databases that have already completed that contract advance to the merge revision `20260911_0010`.
+
 </details>

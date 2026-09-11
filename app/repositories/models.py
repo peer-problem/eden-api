@@ -780,3 +780,7 @@ class AlertRevision(Base):
     llm_model: Mapped[str | None] = mapped_column(String(200))
     prompt_version: Mapped[str | None] = mapped_column(String(100))
     generated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    enrichment_attempt_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    enrichment_next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)

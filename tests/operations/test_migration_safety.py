@@ -179,3 +179,50 @@ def test_snapshot_dag_keeps_0006_to_0008_to_0007_order() -> None:
     assert backfill.down_revision == "20260829_0005"
     assert instrumentation.down_revision == backfill.revision
     assert contract.down_revision == instrumentation.revision
+
+
+def test_alert_retry_migration_preserves_existing_revisions_and_round_trips():
+    from sqlalchemy import select
+
+    migration = _load_migration("0009_alert_enrichment_retry")
+    engine = create_engine("sqlite://")
+    metadata = MetaData()
+    revisions = Table(
+        "alert_revision", metadata,
+        Column("revision_id", String(64), primary_key=True),
+        Column("summary_en", String(100)),
+    )
+    with engine.begin() as connection:
+        metadata.create_all(connection)
+        connection.execute(revisions.insert().values(revision_id="old", summary_en="existing"))
+        migration.op = _operations(connection)
+        migration.upgrade()
+        expanded = Table("alert_revision", MetaData(), autoload_with=connection)
+        row = connection.execute(select(expanded)).one()
+        assert row.summary_en == "existing"
+        assert row.enrichment_attempt_count == 0
+        assert row.enrichment_next_attempt_at is None
+        migration.downgrade()
+        assert {column["name"] for column in inspect(connection).get_columns("alert_revision")} == {
+            "revision_id", "summary_en"
+        }
+        assert connection.execute(select(revisions.c.summary_en)).scalar_one() == "existing"
+
+
+def test_alert_retry_upgrade_and_contract_rollback_do_not_cross_the_soak_gate():
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATION_ROOT.parent))
+    scripts = ScriptDirectory.from_config(config)
+    assert scripts.get_heads() == ["20260911_0010"]
+    assert [step.revision.revision for step in scripts._upgrade_revs(
+        "20260911_0009", ("20260829_0008",)
+    )] == ["20260911_0009"]
+    assert [step.revision.revision for step in scripts._upgrade_revs(
+        "20260911_0010", ("20260829_0007",)
+    )] == ["20260911_0009", "20260911_0010"]
+    assert [step.revision.revision for step in scripts._downgrade_revs(
+        "20260829_0007@20260829_0008", ("20260829_0007", "20260911_0009")
+    )] == ["20260829_0007"]

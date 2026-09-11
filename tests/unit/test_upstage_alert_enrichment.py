@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import httpx
@@ -485,3 +485,64 @@ def test_batch_closes_owned_upstage_client(monkeypatch) -> None:
     assert result.pending_count == 0
     assert result.processed_count == 0
     assert closed == [True]
+
+
+def test_poison_notices_retry_boundedly_across_restarts_without_blocking_queue(monkeypatch):
+    engine = create_engine("sqlite://")
+    AlertDocument.__table__.create(engine)
+    AlertRevision.__table__.create(engine)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    now = datetime(2026, 9, 11, tzinfo=UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+
+    monkeypatch.setattr(alerts, "datetime", Clock)
+    with factory.begin() as session:
+        for number, title in enumerate(["bad-1", "bad-2", "good-3"], 1):
+            session.add(AlertDocument(
+                alert_id=title, source_id="SRC_KETA", country_id="jp", alert_type="entry",
+                canonical_url=f"https://example.invalid/{title}", canonical_url_hash=title,
+                source_name="KETA", source_type="immigration", published_at=now,
+                current_revision=1, active=True, created_at=now, updated_at=now,
+            ))
+            session.add(AlertRevision(
+                revision_id=number, alert_id=title, revision_number=1, title_original=title,
+                body_original=title, language_original="en", content_hash=title,
+                source_updated_at=now, ingested_at=now,
+            ))
+    calls = []
+
+    class Enricher:
+        model = "test-model"
+
+        def enrich(self, title, body):
+            calls.append(title)
+            if title.startswith("bad"):
+                raise ValueError("invalid structured output")
+            return alerts.AlertEnrichmentPayload.model_validate(PAYLOAD)
+
+    def run():
+        # New factories and clients share only the persisted retry fields.
+        return alerts.enrich_pending_alert_revisions(
+            SimpleNamespace(), sessionmaker(engine), limit=2, enricher=Enricher()
+        )
+
+    assert run().failed_count == 2
+    assert run().processed_count == 1
+    assert calls == ["bad-1", "bad-2", "good-3"]
+    for hours in [1, 2]:
+        now += timedelta(hours=hours)
+        assert run().failed_count == 2
+    now += timedelta(days=10)
+    assert run().failed_count == 0
+    assert calls.count("bad-1") == calls.count("bad-2") == 3
+    with factory() as session:
+        for number in (1, 2):
+            row = session.get(AlertRevision, number)
+            assert row.enrichment_attempt_count == 3
+            assert row.generated_at is None and row.summary_en is None
+        assert session.get(AlertRevision, 3).generated_at is not None
+    engine.dispose()

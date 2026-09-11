@@ -4,7 +4,7 @@ import logging
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from openai import OpenAI
@@ -16,7 +16,7 @@ from pydantic import (
     ValidationError,
     model_validator,
 )
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
@@ -26,6 +26,7 @@ PROMPT_VERSION = "upstage_official_alert_translation_summary_v4"
 MAX_LLM_BODY_CHARS = 12_000
 MAX_ENRICHMENT_BATCH_SIZE = 20
 LLM_REQUEST_TIMEOUT_SECONDS = 60.0
+MAX_ENRICHMENT_ATTEMPTS = 3
 logger = logging.getLogger("eden.llm.alerts")
 
 
@@ -283,6 +284,7 @@ def enrich_pending_alert_revisions(
         (AlertRevision.alert_id == AlertDocument.alert_id)
         & (AlertRevision.revision_number == AlertDocument.current_revision)
     )
+    now = datetime.now(UTC).replace(tzinfo=None)
     with session_factory() as session:
         pending_count = int(
             session.scalar(
@@ -301,11 +303,17 @@ def enrich_pending_alert_revisions(
                 AlertRevision.revision_id,
                 AlertRevision.title_original,
                 AlertRevision.body_original,
+                AlertRevision.enrichment_attempt_count,
             )
             .join(AlertDocument, current_revision)
             .where(
                 AlertDocument.active.is_(True),
                 AlertRevision.generated_at.is_(None),
+                AlertRevision.enrichment_attempt_count < MAX_ENRICHMENT_ATTEMPTS,
+                or_(
+                    AlertRevision.enrichment_next_attempt_at.is_(None),
+                    AlertRevision.enrichment_next_attempt_at <= now,
+                ),
             )
             .order_by(AlertRevision.revision_id)
             .limit(limit)
@@ -327,7 +335,24 @@ def enrich_pending_alert_revisions(
     payloads: dict[tuple[str, str], AlertEnrichmentPayload] = {}
     failed_inputs: dict[tuple[str, str], str] = {}
     try:
-        for revision_id, title, body in rows:
+        for revision_id, title, body, attempts in rows:
+            # Reserve before the paid call. A process exit still consumes a bounded
+            # attempt and leaves a durable retry deadline for the next worker.
+            with session_factory.begin() as session:
+                claimed = session.execute(
+                    update(AlertRevision)
+                    .where(
+                        AlertRevision.revision_id == revision_id,
+                        AlertRevision.generated_at.is_(None),
+                        AlertRevision.enrichment_attempt_count == attempts,
+                    )
+                    .values(
+                        enrichment_attempt_count=attempts + 1,
+                        enrichment_next_attempt_at=now + timedelta(hours=2 ** attempts),
+                    )
+                )
+            if not claimed.rowcount:
+                continue
             input_key = (title, body)
             if input_key in failed_inputs:
                 failed += 1
@@ -373,6 +398,7 @@ def enrich_pending_alert_revisions(
                             llm_model=client.model,
                             prompt_version=PROMPT_VERSION,
                             generated_at=generated_at,
+                            enrichment_next_attempt_at=None,
                         )
                     )
                 processed += int(result.rowcount or 0)

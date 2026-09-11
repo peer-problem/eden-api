@@ -407,17 +407,20 @@ runtime_password="$DB_PASSWORD"
 export DB_USER="$MIGRATION_DB_USER"
 export DB_PASSWORD="$MIGRATION_DB_PASSWORD"
 alembic_heads="$(uv run alembic heads | awk 'NF {print $1}')"
-[[ "$alembic_heads" == "20260829_0007" ]] || {
-  echo "Migration preflight failed: expected one 0007 head." >&2
+[[ "$alembic_heads" == "20260911_0010" ]] || {
+  echo "Migration preflight failed: expected one 0010 head." >&2
   exit 1
 }
-migration_current="$(uv run alembic current | awk 'NF {print $1; exit}')"
+migration_current="$(uv run alembic current | awk 'NF {print $1}' | sort)"
 case "$migration_current" in
-  20260829_0007|20260829_0008)
-    echo "Database already includes the Phase 2 expand migration."
+  20260829_0007|$'20260829_0007\n20260911_0009'|20260911_0010)
+    uv run alembic upgrade 20260911_0010
     ;;
-  ""|20260829_0006|20260829_0005|20260829_0004|20260811_0003|20260811_0002|20260811_0001)
-    uv run alembic upgrade 20260829_0008
+  20260911_0009)
+    echo "Database already includes alert retry tracking; contract remains gated."
+    ;;
+  ""|20260829_0008|20260829_0006|20260829_0005|20260829_0004|20260811_0003|20260811_0002|20260811_0001)
+    uv run alembic upgrade 20260911_0009
     ;;
   *)
     echo "Migration preflight failed: unsupported current revision ${migration_current}." >&2
