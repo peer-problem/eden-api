@@ -126,3 +126,24 @@ def test_extra_constraint_names_are_returned_and_never_ignored():
     assert status == Availability.UNAVAILABLE
     assert data["recommendations"] == []
     assert data["unapplied_inputs"][-1]["field"] == "constraints.extra.wheelchair_width_cm"
+
+
+def test_empty_recommendations_preserve_unapplied_inputs_and_supported_themes():
+    feature = _feature("place_a")
+    feature["themes"] = ["culture"]
+    scope = {**_scope(), "themes": ["kpop"], "party_size": 2, "budget_krw": 5000}
+    data, availability, reason = build_recommendation_view(
+        {"country_languages": {"US": "en"}, "features": [feature]},
+        scope,
+    )
+    assert availability == Availability.UNAVAILABLE
+    assert data["recommendations"] == []
+    assert data["applied_constraints"]["themes"] == ["kpop"]
+    assert {item["field"] for item in data["unapplied_inputs"]} >= {
+        "travel_window.days",
+        "party_size",
+        "budget_krw",
+        "travel_window.season",
+    }
+    assert "culture" in reason
+    RecommendationsData.model_validate(data)

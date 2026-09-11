@@ -79,6 +79,7 @@ def build_recommendation_view(
         tuple[float, str, dict[str, Any], dict[str, Any], str, bool, float | None, bool]
     ] = []
 
+    available_themes: set[str] = set()
     seen_ids: set[str] = set()
     seen_identity: set[tuple] = set()
     for feature in features:
@@ -94,6 +95,7 @@ def build_recommendation_view(
         }:
             continue
         place_themes = set(feature.get("themes") or [])
+        available_themes.update(place_themes)
         if requested_themes and not requested_themes.intersection(place_themes):
             continue
         theme_match = (
@@ -212,16 +214,10 @@ def build_recommendation_view(
                 "formula_version": RECOMMENDATION_FORMULA_VERSION,
             }
         )
-    if not selected:
-        return (
-            None,
-            Availability.UNAVAILABLE,
-            "요청 조건에서 재현 가능한 점수를 만들 입력이 부족합니다.",
-        )
     applied = {"target_country": target_country, "themes": sorted(requested_themes)}
     if requested_area:
         applied["area_code"] = requested_area
-    if avoid_crowds and all(item["crowd_index"] is not None for item in selected):
+    if selected and avoid_crowds and all(item["crowd_index"] is not None for item in selected):
         applied["avoid_crowds"] = True
         applied["season"] = season
     else:
@@ -240,6 +236,13 @@ def build_recommendation_view(
                     "reason": "일부 관광지의 계절별 혼잡도 관측이 없습니다.",
                 }
             )
+    if not selected:
+        themes = ", ".join(sorted(available_themes)) or "없음"
+        return (
+            {"recommendations": [], "applied_constraints": applied, "unapplied_inputs": unapplied},
+            Availability.UNAVAILABLE,
+            f"요청 지역과 테마에 맞는 추천 입력이 없습니다. 해당 범위의 보유 테마: {themes}.",
+        )
     return (
         {
             "recommendations": selected,

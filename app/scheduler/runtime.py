@@ -387,6 +387,8 @@ def _runtime_scope(
     if source_id != "SRC_SEMAS_SHOPS":
         return configured_scope
     with factory() as session:
+        registry = session.get(SourceRegistry, source_id)
+        cursor = int((registry.evidence or {}).get("collection_cursor", 0)) if registry else 0
         selected_ids = essential_place_ids(session)
         rows = session.execute(
             select(Place.eden_place_id, Place.lat, Place.lng)
@@ -415,11 +417,12 @@ def _runtime_scope(
     if not candidates:
         return {"operations": []}
     batch_count = max(1, math.ceil(len(candidates) / SEMAS_PLACES_PER_RUN))
-    batch_index = int(datetime.now(UTC).timestamp() // (6 * 3600)) % batch_count
+    batch_index = cursor % batch_count
     start = batch_index * SEMAS_PLACES_PER_RUN
     places = candidates[start : start + SEMAS_PLACES_PER_RUN]
     return {
         "operations": semas_place_operations(places),
+        "next_cursor": (batch_index + 1) % batch_count,
         "batch_index": batch_index,
         "batch_count": batch_count,
     }
@@ -464,6 +467,10 @@ def run_source_if_due(
         SOURCE_INTERVALS.get(source_id, policy.interval_seconds),
         settings.SOURCE_MIN_INTERVAL_SECONDS,
     )
+    if source_id == "SRC_KMA_FORECAST":
+        # Polling happens every five minutes. Leave an extra minute for
+        # bookkeeping so four weather batches fit within the 12-hour target.
+        interval_seconds = max(settings.SOURCE_MIN_INTERVAL_SECONDS, interval_seconds - 360)
     if state and state.consecutive_failures:
         interval_seconds = min(
             interval_seconds * 2 ** min(state.consecutive_failures, 4), 7 * 86400

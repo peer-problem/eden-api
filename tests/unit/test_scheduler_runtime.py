@@ -226,13 +226,15 @@ def test_inbound_result_object_marks_products_dirty_from_persisted_count(monkeyp
     run_id = "inbound-refresh"
     registry = SimpleNamespace(source_id=source_id, evidence={})
     policy = SimpleNamespace(interval_seconds=3600, jitter_seconds=0, retry_limit=3)
-    results = iter([
-        (registry, policy, None),
-        SimpleNamespace(raw_count=0, error_summary=None),
-        SimpleNamespace(status="succeeded", raw_count=1, error_summary=None),
-        ("succeeded", None, 12),
-        ("succeeded", 1),
-    ])
+    results = iter(
+        [
+            (registry, policy, None),
+            SimpleNamespace(raw_count=0, error_summary=None),
+            SimpleNamespace(status="succeeded", raw_count=1, error_summary=None),
+            ("succeeded", None, 12),
+            ("succeeded", 1),
+        ]
+    )
     completed = []
     dirty = []
 
@@ -289,7 +291,8 @@ def test_inbound_result_object_marks_products_dirty_from_persisted_count(monkeyp
     )
     runtime.run_source_if_due(
         SimpleNamespace(RAW_PERSIST_BATCH_SIZE=100, SOURCE_MIN_INTERVAL_SECONDS=3600),
-        Factory(), source_id,
+        Factory(),
+        source_id,
     )
 
     assert completed == [run_id]
@@ -343,6 +346,74 @@ def test_pipeline_retry_waits_an_hour_instead_of_refetching_each_minute() -> Non
     now = datetime(2026, 9, 10, 12, tzinfo=UTC)
     assert not runtime._is_due(now - timedelta(minutes=59), now, 86400, pipeline_retry=True)
     assert runtime._is_due(now - timedelta(seconds=3601), now, 86400, pipeline_retry=True)
-    assert runtime._source_due_lag_seconds(
-        now - timedelta(minutes=30), now, 86400, pipeline_retry=True,
-    ) == 0
+    assert (
+        runtime._source_due_lag_seconds(
+            now - timedelta(minutes=30),
+            now,
+            86400,
+            pipeline_retry=True,
+        )
+        == 0
+    )
+
+
+def test_shop_rotation_resumes_from_persisted_cursor(monkeypatch):
+    registry = SimpleNamespace(evidence={"collection_cursor": 1})
+    rows = [(f"place-{i}", 37.5, 127.0) for i in range(12)]
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def get(self, *_args):
+            return registry
+
+        def execute(self, _statement):
+            return SimpleNamespace(all=lambda: rows)
+
+    monkeypatch.setattr(runtime, "essential_place_ids", lambda _session: [row[0] for row in rows])
+    monkeypatch.setattr(runtime, "semas_place_operations", lambda places: places)
+    first = runtime._runtime_scope("SRC_SEMAS_SHOPS", {}, Session)
+    assert first["operations"] == rows[5:10]
+    assert runtime._runtime_scope("SRC_SEMAS_SHOPS", {}, Session) == first
+    registry.evidence["collection_cursor"] = first["next_cursor"]
+    assert runtime._runtime_scope("SRC_SEMAS_SHOPS", {}, Session)["operations"] == rows[10:]
+
+
+def test_weather_cadence_reserves_polling_time_for_four_batches(monkeypatch):
+    now = datetime.now(UTC).replace(tzinfo=None)
+    registry = SimpleNamespace(source_id="SRC_KMA_FORECAST")
+    policy = SimpleNamespace(interval_seconds=10800, jitter_seconds=30, retry_limit=3)
+    state = SimpleNamespace(
+        last_attempt_at=now,
+        last_success_at=now,
+        data_as_of=now,
+        reason=None,
+        consecutive_failures=0,
+    )
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def execute(self, _statement):
+            return SimpleNamespace(one_or_none=lambda: (registry, policy, state))
+
+    intervals = []
+
+    def capture_due(_attempt, _now, interval, **kwargs):
+        intervals.append(interval + kwargs["jitter_seconds"])
+        return False
+
+    monkeypatch.setattr(runtime, "_is_due", capture_due)
+    runtime.run_source_if_due(
+        SimpleNamespace(SOURCE_MIN_INTERVAL_SECONDS=3600), Session, "SRC_KMA_FORECAST"
+    )
+    assert len(intervals) == 1
+    assert 4 * (intervals[0] + 300) <= 12 * 3600
