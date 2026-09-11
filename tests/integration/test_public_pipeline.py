@@ -765,6 +765,14 @@ def test_scheduled_lock_skip_is_audited_without_degrading_source_state(
         assert state is not None
         assert (state.status, state.reason, state.consecutive_failures) == original_state
 
+    assert service.schedule_run(
+        FORECAST_SOURCE, {"area_code": "11", "days": 2}, "phase1-e2e-scheduled-lock-skip"
+    ) == (False, run_id)
+    with pipeline.session_factory() as session:
+        retried = session.get(IngestionRun, run_id)
+        assert retried.status == RunStatus.SCHEDULED
+        assert retried.finished_at is None
+
 
 def test_expected_unavailable_source_is_a_successful_noop_run(
     pipeline: Pipeline,
@@ -825,6 +833,10 @@ def test_failed_pipeline_run_is_rescheduled_without_refetching_raw(
         )
 
     service = IngestionService(pipeline.session_factory)
+    original_scope, original_key = service.pending_pipeline_run(FORECAST_SOURCE)
+    assert original_key == idempotency_key
+    assert original_scope["area_code"] == "11"
+    assert "_fetch_result" in original_scope
     existing, resumed_run_id = service.schedule_run(
         FORECAST_SOURCE,
         {"area_code": "11"},
@@ -833,6 +845,9 @@ def test_failed_pipeline_run_is_rescheduled_without_refetching_raw(
 
     assert existing is False
     assert resumed_run_id == run_id
+    service.skip_scheduled_run(run_id, "heavy_write_lock_unavailable")
+    assert service.pending_pipeline_run(FORECAST_SOURCE) == (original_scope, original_key)
+    assert service.schedule_run(FORECAST_SOURCE, original_scope, original_key) == (False, run_id)
     service.start_scheduled_pipeline_retry(run_id, FORECAST_SOURCE)
     with pipeline.session_factory() as session:
         running = session.get(IngestionRun, run_id)
@@ -846,6 +861,74 @@ def test_failed_pipeline_run_is_rescheduled_without_refetching_raw(
         assert completed is not None
         assert completed.status == RunStatus.SUCCEEDED
         assert completed.raw_count == 1
+
+
+@pytest.mark.parametrize("failure_stage", ["normalize", "dirty"])
+def test_scheduler_resumes_original_raw_after_backoff_and_scope_changes(
+    pipeline: Pipeline, monkeypatch, failure_stage,
+):
+    from types import SimpleNamespace
+
+    from app.repositories.models import ProductRefreshRequest
+    from app.scheduler import runtime
+
+    factory = pipeline.session_factory
+    with factory.begin() as session:
+        run = session.get(IngestionRun, pipeline.forecast_run_id)
+        original_key = run.idempotency_key
+        original_scope = run.request_scope
+        run.status = RunStatus.FAILED
+        if failure_stage == "normalize":
+            run.normalized_count = 0
+        run.error_summary = f"pipeline:normalize:OperationalError: {failure_stage} failed"
+        state = session.scalar(select(SourceState).where(
+            SourceState.source_id == FORECAST_SOURCE, SourceState.scope_key == "global"
+        ))
+        state.reason = run.error_summary
+        state.consecutive_failures = 1
+        state.last_attempt_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=2)
+        before = session.scalar(select(func.count()).select_from(IngestionRun))
+
+    class AcquiredLock:
+        acquired = True
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+    def forbidden(*_args):
+        raise AssertionError("retry must use the saved scope and raw, without refetching")
+
+    monkeypatch.setattr(runtime, "MariaDBAdvisoryLock", AcquiredLock)
+    monkeypatch.setattr(
+        runtime, "_open_job_lock_connection", lambda _engine: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(runtime, "_runtime_scope", forbidden)
+    monkeypatch.setattr(runtime, "build_adapter", forbidden)
+    normalized_runs = []
+    real_normalize = runtime.normalize_run
+
+    def normalize(source, factory, run_id):
+        normalized_runs.append(run_id)
+        return real_normalize(source, factory, run_id)
+
+    monkeypatch.setattr(runtime, "normalize_run", normalize)
+    runtime.run_source_if_due(_settings(), factory, FORECAST_SOURCE)
+
+    assert normalized_runs == [pipeline.forecast_run_id]
+    with factory() as session:
+        run = session.get(IngestionRun, pipeline.forecast_run_id)
+        assert run.status == RunStatus.SUCCEEDED
+        assert run.idempotency_key == original_key
+        assert run.request_scope == original_scope
+        assert run.raw_count > 0 and run.normalized_count > 0
+        assert session.scalar(select(func.count()).select_from(IngestionRun)) == before
+        assert session.get(ProductRefreshRequest, "forecast").status == "pending"
 
 
 def test_all_eight_public_routes_read_built_or_normalized_database_products(

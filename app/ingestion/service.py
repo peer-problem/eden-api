@@ -309,6 +309,25 @@ class IngestionService:
             )
             return self._source_state_metric_values(session, source_id)
 
+    def pending_pipeline_run(self, source_id: str) -> tuple[dict[str, Any], str] | None:
+        """Recover the original input even after the clock, backoff or cursor changes."""
+        with self.session_factory() as session:
+            run = session.scalar(
+                select(IngestionRun)
+                .where(
+                    IngestionRun.source_id == source_id,
+                    IngestionRun.status.in_(
+                        (RunStatus.FAILED, RunStatus.SCHEDULED, RunStatus.SKIPPED_LOCKED)
+                    ),
+                    IngestionRun.error_summary.startswith("pipeline:"),
+                )
+                .order_by(IngestionRun.started_at.desc(), IngestionRun.run_id.desc())
+                .limit(1)
+            )
+            if run is None:
+                return None
+            return dict(run.request_scope or {}), run.idempotency_key
+
     def schedule_run(
         self,
         source_id: str,
@@ -332,7 +351,8 @@ class IngestionService:
                 return
             run.status = RunStatus.SKIPPED_LOCKED
             run.finished_at = datetime.now(UTC)
-            run.error_summary = reason[:1000]
+            if not (run.error_summary or "").startswith("pipeline:"):
+                run.error_summary = reason[:1000]
             source_id = run.source_id
         record_source_run(source_id, RunStatus.SKIPPED_LOCKED)
 
@@ -477,6 +497,10 @@ class IngestionService:
             if existing:
                 if initial_status == RunStatus.SCHEDULED:
                     if existing.status == RunStatus.SCHEDULED:
+                        return False, existing.run_id
+                    if existing.status == RunStatus.SKIPPED_LOCKED:
+                        existing.status = RunStatus.SCHEDULED
+                        existing.finished_at = None
                         return False, existing.run_id
                     if (
                         existing.status == RunStatus.FAILED

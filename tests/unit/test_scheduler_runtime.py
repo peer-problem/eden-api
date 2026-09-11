@@ -271,6 +271,9 @@ def test_inbound_result_object_marks_products_dirty_from_persisted_count(monkeyp
         def schedule_run(self, *_args):
             return False, run_id
 
+        def pending_pipeline_run(self, _source_id):
+            raise AssertionError("healthy sources must not revive historical failed runs")
+
         def run(self, *_args, **_kwargs):
             return run_id
 

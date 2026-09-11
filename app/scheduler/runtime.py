@@ -513,8 +513,17 @@ def run_source_if_due(
     run_id: str | None = None
     run_raw_count: int | None = None
     try:
-        configured_scope = (registry.evidence or {}).get("refresh_scope", {})
-        scope = _runtime_scope(registry.source_id, configured_scope, factory)
+        retry = ingestion.pending_pipeline_run(registry.source_id) if pipeline_retry else None
+        if retry is not None:
+            scope, idempotency_key = retry
+        else:
+            configured_scope = (registry.evidence or {}).get("refresh_scope", {})
+            scope = _runtime_scope(registry.source_id, configured_scope, factory)
+            idempotency_key = _idempotency_key(
+                registry.source_id,
+                scope,
+                interval_seconds,
+            )
         if registry.source_id in {"SRC_SEMAS_SHOPS", "SRC_KTO_PLACE_RELATED"} and not scope.get(
             "operations"
         ):
@@ -527,11 +536,6 @@ def run_source_if_due(
                 },
             )
             return
-        idempotency_key = _idempotency_key(
-            registry.source_id,
-            scope,
-            interval_seconds,
-        )
         existing, run_id = ingestion.schedule_run(
             registry.source_id,
             scope,
