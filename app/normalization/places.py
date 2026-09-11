@@ -448,6 +448,7 @@ def normalize_tour_catalog_run(
                         content_id
                         for row in rows
                         if (content_id := _text(row, "contentid")) is not None
+                        and content_id not in successfully_provenanced_ids
                     }
                     - successfully_provenanced_ids,
                     getattr(raw, "source_updated_at", None),
@@ -458,34 +459,35 @@ def normalize_tour_catalog_run(
             replay_provenance: set[tuple[str, str]] = set()
             for row in rows:
                 try:
-                    with session.begin_nested():
-                        external_id = _text(row, "contentid", required=True) or ""
-                        title = _text(row, "title", required=True) or ""
-                        lat, lng = _coordinates(row, "mapx", "mapy")
-                        address = (
-                            " ".join(
-                                value
-                                for value in (_text(row, "addr1"), _text(row, "addr2"))
-                                if value
-                            )
-                            or None
+                    external_id = _text(row, "contentid", required=True) or ""
+                    title = _text(row, "title", required=True) or ""
+                    lat, lng = _coordinates(row, "mapx", "mapy")
+                    address = (
+                        " ".join(
+                            value
+                            for value in (_text(row, "addr1"), _text(row, "addr2"))
+                            if value
                         )
-                        area_id = _resolve_area_id(session, source_id, row)
-                        category = _text(row, "lclsSystm1", "cat1")
-                        overview = _text(row, "overview")
-                        if external_id in successfully_provenanced_ids:
-                            normalized += 1
-                            continue
-                        if stale_outputs := stale_replay_outputs.get(external_id):
-                            place_id, localization_id = stale_outputs
-                            replay_provenance.update(
-                                {
-                                    ("place", place_id),
-                                    ("place_localization", localization_id),
-                                }
-                            )
-                            normalized += 1
-                            continue
+                        or None
+                    )
+                    area_id = _resolve_area_id(session, source_id, row)
+                    category = _text(row, "lclsSystm1", "cat1")
+                    overview = _text(row, "overview")
+                    # Validate every row, but reserve savepoints for actual writes.
+                    if external_id in successfully_provenanced_ids:
+                        normalized += 1
+                        continue
+                    if stale_outputs := stale_replay_outputs.get(external_id):
+                        place_id, localization_id = stale_outputs
+                        replay_provenance.update(
+                            {
+                                ("place", place_id),
+                                ("place_localization", localization_id),
+                            }
+                        )
+                        normalized += 1
+                        continue
+                    with session.begin_nested():
                         _upsert_place(
                             session,
                             raw,

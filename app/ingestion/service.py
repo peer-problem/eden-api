@@ -4,7 +4,7 @@ import hashlib
 import json
 import uuid
 import zlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Any
 
@@ -91,6 +91,24 @@ class IngestionService:
             raise ValueError("raw_batch_size must be between 1 and 100")
         self.session_factory = session_factory
         self.raw_batch_size = raw_batch_size
+
+    def recover_abandoned_runs(self, *, now: datetime | None = None) -> int:
+        """Called by the new scheduler leader before starting any bounded jobs."""
+        now = now or datetime.now(UTC).replace(tzinfo=None)
+        with self.session_factory.begin() as session:
+            runs = list(session.scalars(
+                select(IngestionRun).where(
+                    IngestionRun.status == RunStatus.RUNNING,
+                    IngestionRun.started_at < now - timedelta(hours=2),
+                ).order_by(IngestionRun.started_at).limit(100).with_for_update(skip_locked=True)
+            ))
+            for run in runs:
+                run.status = RunStatus.FAILED
+                run.finished_at = now
+                run.error_summary = (
+                    "interrupted: abandoned execution exceeded the bounded run window"
+                )
+            return len(runs)
 
     def run(
         self,
@@ -222,8 +240,8 @@ class IngestionService:
                 SourceStatus.AVAILABLE: RunStatus.SUCCEEDED,
                 SourceStatus.DEGRADED: RunStatus.PARTIAL if raw_count else RunStatus.FAILED,
                 SourceStatus.STALE: RunStatus.PARTIAL,
-                SourceStatus.UNAVAILABLE: RunStatus.SUCCEEDED,
-                SourceStatus.DISABLED: RunStatus.SUCCEEDED,
+                SourceStatus.UNAVAILABLE: RunStatus.FAILED,
+                SourceStatus.DISABLED: RunStatus.FAILED,
             }[result.status]
             session.query(IngestionRun).filter_by(run_id=run_id).update(
                 {
@@ -661,6 +679,16 @@ class IngestionService:
                 SourceState.scope_key == scope_key,
             )
         )
+        if scope_key == "global" and previous is not None and data_as_of is not None:
+            old_as_of = previous.data_as_of
+            if old_as_of is not None:
+                old_utc = old_as_of.replace(tzinfo=UTC) if old_as_of.tzinfo is None else old_as_of
+                new_utc = (
+                    data_as_of.replace(tzinfo=UTC) if data_as_of.tzinfo is None else data_as_of
+                )
+                if new_utc < old_utc <= now:
+                    # Historical backfill cannot make the newest known data older.
+                    data_as_of = old_as_of
         effective_status = effective_source_status(
             status,
             has_new_data,

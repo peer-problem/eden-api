@@ -774,7 +774,7 @@ def test_scheduled_lock_skip_is_audited_without_degrading_source_state(
         assert retried.finished_at is None
 
 
-def test_expected_unavailable_source_is_a_successful_noop_run(
+def test_unavailable_source_does_not_count_as_successful_collection(
     pipeline: Pipeline,
 ) -> None:
     reason = "Approved source access is not configured."
@@ -793,7 +793,7 @@ def test_expected_unavailable_source_is_a_successful_noop_run(
             )
         )
         assert run is not None
-        assert run.status == RunStatus.SUCCEEDED
+        assert run.status == RunStatus.FAILED
         assert run.raw_count == 0
         assert run.error_summary == f"adapter_missing: {reason}"
         assert state is not None

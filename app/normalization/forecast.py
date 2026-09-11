@@ -44,9 +44,13 @@ def _upsert_forecast_input(
     festivals: list[dict[str, Any]] | None = None,
     holiday: dict[str, Any] | None = None,
     quality_flags: list[str] | None = None,
+    publication_time_known: bool = True,
 ) -> int:
     observed_at = _database_time(raw.observed_at)
     source_updated_at = _database_time(raw.source_updated_at)
+    if not publication_time_known:
+        source_updated_at = observed_at
+        quality_flags = [*(quality_flags or []), "source_publication_time_unknown"]
     ingested_at = _database_time(raw.ingested_at)
     calculated_at = datetime.now(UTC).replace(tzinfo=None)
     if calculated_at < max(observed_at, source_updated_at, ingested_at):
@@ -174,6 +178,7 @@ def normalize_visitor_forecast_run(session_factory: sessionmaker[Session], run_i
                                 "expected_visitors": None,
                             },
                             quality_flags=["authoritative_source_horizon"],
+                            publication_time_known=False,
                         )
                     normalized += 1
                 except Exception as exc:
@@ -197,7 +202,10 @@ def _contains_area_name(text: str, name: str) -> bool:
 def _match_area(session: Session, *text_values: str | None) -> str:
     haystack = " ".join(value for value in text_values if value)
     areas = session.execute(
-        select(Area.eden_area_id, Area.name_ko, Area.level, Area.parent_area_id)
+        select(
+            Area.eden_area_id, Area.name_ko, Area.level,
+            Area.parent_area_id, Area.administrative_code,
+        )
         .where(Area.active.is_(True))
         .order_by((Area.level == "sigungu").desc(), Area.name_ko)
     ).all()

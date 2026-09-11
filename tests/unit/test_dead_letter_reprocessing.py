@@ -150,6 +150,63 @@ def test_reprocessor_claims_only_one_run_per_batch_and_is_resumable(
     assert statuses == [(1, "resolved"), (2, "resolved"), (3, "pending")]
 
 
+def test_disabled_source_is_quarantined_without_replaying_or_deleting_evidence(
+    dead_letter_factory,
+):
+    with dead_letter_factory.begin() as session:
+        session.get(RawRecord, 1).source_id = "SRC_INSTAGRAM"
+    result = reprocess_dead_letters(
+        dead_letter_factory, batch_size=1,
+        normalizer=lambda *_args: pytest.fail("excluded source must not be replayed"),
+        clock=lambda: datetime(2026, 8, 29, 1),
+    )
+    assert result.claimed_count == result.quarantined_count == 1
+    with dead_letter_factory() as session:
+        row = session.get(DeadLetter, 1)
+        assert row.reprocess_status == "quarantined"
+        assert row.attempt_count == 0
+        assert session.get(RawRecord, 1) is not None
+        assert session.get(DeadLetter, 2).reprocess_status == "pending"
+
+
+def test_scheduler_reconciles_only_abandoned_runs(dead_letter_factory):
+    from app.ingestion.service import IngestionService
+
+    now = datetime(2026, 8, 29, 4)
+    with dead_letter_factory.begin() as session:
+        row = session.get(IngestionRun, "run-1")
+        row.status = "running"
+        row.finished_at = None
+    service = IngestionService(dead_letter_factory)
+    assert service.recover_abandoned_runs(now=now) == 1
+    assert service.recover_abandoned_runs(now=now) == 0
+    with dead_letter_factory() as session:
+        row = session.get(IngestionRun, "run-1")
+        assert row.status == "failed"
+        assert row.finished_at == now
+        assert row.raw_count == 2
+
+
+def test_superseded_catalog_errors_are_retired_but_statistical_history_is_not(
+    dead_letter_factory,
+):
+    with dead_letter_factory.begin() as session:
+        old = session.get(RawRecord, 1)
+        newer = session.get(RawRecord, 2)
+        old.source_id = newer.source_id = "SRC_TOUR_KO"
+        newer.external_key = old.external_key
+        newer.observed_at = old.observed_at + timedelta(hours=1)
+    result = reprocess_dead_letters(
+        dead_letter_factory, batch_size=1,
+        normalizer=lambda *_args: pytest.fail("superseded catalog must not be replayed"),
+        clock=lambda: datetime(2026, 8, 29, 2),
+    )
+    assert result.quarantined_count == 1
+    with dead_letter_factory() as session:
+        assert session.get(DeadLetter, 2).reprocess_status == "pending"
+        assert session.get(RawRecord, 1) is not None
+
+
 def test_reprocessor_claims_up_to_batch_size_from_the_selected_run(
     dead_letter_factory,
 ) -> None:
@@ -451,8 +508,10 @@ def test_registry_targets_only_row_identity_normalizers(
         "run-aggregate",
         (9,),
     )
+    registry.reprocess_normalization_run("SRC_KTO_VISITOR_FORECAST", object(), "forecast", (12,))
 
     assert observed == [
         ("SRC_SEMAS_SHOPS", frozenset({4, 7})),
         ("SRC_KTO_REGIONAL_VISITORS", None),
+        ("SRC_KTO_VISITOR_FORECAST", frozenset({12})),
     ]

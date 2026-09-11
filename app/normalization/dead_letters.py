@@ -5,8 +5,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import exists, or_, select
+from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from app.normalization.registry import reprocess_normalization_run
 from app.products.refresh_requests import mark_products_dirty
@@ -71,19 +71,20 @@ def reprocess_dead_letters(
     if reason:
         return DeadLetterBatchResult(0, 0, 0, 0, True, reason)
 
+    retired_count = _quarantine_out_of_scope(session_factory, batch_size, clock())
     claims = _claim_batch(
         session_factory,
-        batch_size=batch_size,
+        batch_size=batch_size - retired_count,
         now=clock(),
         claim_timeout=claim_timeout,
-    )
+    ) if retired_count < batch_size else ()
     grouped: dict[tuple[str, str], list[DeadLetterClaim]] = defaultdict(list)
     for claim in claims:
         grouped[(claim.source_id, claim.run_id)].append(claim)
 
     resolved = 0
     retries = 0
-    quarantined = 0
+    quarantined = retired_count
     processed_ids: set[int] = set()
     for (source_id, run_id), group in grouped.items():
         reason = pause_reason() if pause_reason is not None else None
@@ -95,7 +96,7 @@ def reprocess_dead_letters(
             ]
             _release_unprocessed(session_factory, remaining_ids, now=clock())
             return DeadLetterBatchResult(
-                claimed_count=len(claims),
+                claimed_count=len(claims) + retired_count,
                 resolved_count=resolved,
                 retry_count=retries,
                 quarantined_count=quarantined,
@@ -140,13 +141,47 @@ def reprocess_dead_letters(
         processed_ids.update(group_ids)
 
     return DeadLetterBatchResult(
-        claimed_count=len(claims),
+        claimed_count=len(claims) + retired_count,
         resolved_count=resolved,
         retry_count=retries,
         quarantined_count=quarantined,
         paused=False,
         pause_reason=None,
     )
+
+
+def _quarantine_out_of_scope(factory, batch_size: int, now: datetime) -> int:
+    """Keep evidence, but stop advertising excluded inputs as runnable work."""
+    newer = aliased(RawRecord)
+    superseded_catalog = RawRecord.source_id.in_({"SRC_TOUR_KO", "SRC_FESTIVAL"}) & exists(
+        select(newer.raw_record_id).where(
+            newer.source_id == RawRecord.source_id,
+            newer.external_key == RawRecord.external_key,
+            newer.observed_at > RawRecord.observed_at,
+        )
+    )
+    with factory.begin() as session:
+        rows = list(session.scalars(
+            select(DeadLetter)
+            .join(RawRecord, RawRecord.raw_record_id == DeadLetter.raw_record_id)
+            .where(
+                DeadLetter.reprocess_status == "pending",
+                or_(
+                    RawRecord.source_id.in_(DISABLED_SOURCES),
+                    RawRecord.observed_at < now - timedelta(days=30),
+                    superseded_catalog,
+                ),
+            )
+            .order_by(DeadLetter.dead_letter_id)
+            .limit(batch_size)
+            .with_for_update(skip_locked=True)
+        ))
+        for row in rows:
+            row.reprocess_status = "quarantined"
+            row.reprocessed_at = now
+            row.next_attempt_at = None
+            row.error_detail += " | outside replay scope: disabled, expired or superseded catalog"
+        return len(rows)
 
 
 def _resolved_candidate_count(

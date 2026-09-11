@@ -11,7 +11,7 @@ from sqlalchemy import BigInteger, Integer, create_engine, select
 from sqlalchemy.orm import Session
 
 from app.normalization import forecast
-from app.repositories.models import ForecastInput
+from app.repositories.models import Area, ForecastInput
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "normalization" / "forecast" / "cases.json"
 
@@ -178,10 +178,17 @@ def test_address_mapping_prefers_nested_district_administrative_code() -> None:
             administrative_code="4113100000",
         ),
     ]
-    result = SimpleNamespace(all=lambda: rows)
-    session = SimpleNamespace(execute=lambda _statement: result)
-
-    assert forecast._match_area(session, "경기도 성남시 수정구") == "sujeong"
+    engine = create_engine("sqlite://")
+    Area.__table__.create(engine)
+    with Session(engine) as session:
+        for row in rows:
+            session.add(Area(
+                **vars(row), active=True,
+                created_at=datetime(2026, 9, 11), updated_at=datetime(2026, 9, 11),
+            ))
+        session.flush()
+        assert forecast._match_area(session, "경기도 성남시 수정구") == "sujeong"
+    engine.dispose()
 
 
 def test_address_mapping_keeps_true_sibling_districts_ambiguous() -> None:
@@ -478,3 +485,24 @@ def test_forecast_fact_rejects_future_audit_timestamp(
             forecast_date=datetime(2126, 9, 5),
             weather={"temperature_c": 20.0},
         )
+
+
+def test_replay_uses_observation_time_when_legacy_raw_mistook_horizon_for_publication(
+    forecast_session,
+) -> None:
+    observed = datetime.now(UTC) - timedelta(minutes=1)
+    raw = SimpleNamespace(
+        raw_record_id=54, observed_at=observed, ingested_at=observed,
+        source_updated_at=observed + timedelta(days=30),
+    )
+    forecast._upsert_forecast_input(
+        forecast_session, raw, source_id=forecast.VISITOR_FORECAST_SOURCE,
+        area_id="area-11", place_id=None, forecast_date=datetime(2026, 10, 9),
+        source_forecast={"place_name": "관광지", "concentration_rate": 30},
+        publication_time_known=False,
+    )
+    row = forecast_session.scalar(select(ForecastInput))
+    assert row.source_updated_at == observed.replace(tzinfo=None)
+    assert row.forecast_date == datetime(2026, 10, 9)
+    assert "source_publication_time_unknown" in row.quality_flags
+    assert raw.source_updated_at > observed  # Original source evidence stays intact.

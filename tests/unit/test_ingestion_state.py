@@ -1,9 +1,27 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
 import pytest
+from sqlalchemy.dialects.mysql import dialect
 
 from app.domain.enums import SourceStatus
-from app.ingestion.service import effective_source_status, source_scope_key
+from app.ingestion.service import IngestionService, effective_source_status, source_scope_key
+
+
+@pytest.mark.parametrize("scope", ["global", "historical-month"])
+def test_backfill_preserves_latest_global_date_and_keeps_scope_date(scope):
+    latest = datetime.now(UTC) - timedelta(days=1)
+    historical = latest - timedelta(days=365)
+    statements = []
+    previous = SimpleNamespace(data_as_of=latest.replace(tzinfo=None), last_success_at=latest)
+    session = SimpleNamespace(scalar=lambda _: previous, execute=statements.append)
+    IngestionService._upsert_state(
+        session, "SRC_AIRPORT_COUNTRY", scope, SourceStatus.AVAILABLE, historical, None, True,
+    )
+    stored = statements[0].compile(dialect=dialect()).params["data_as_of"]
+    assert stored.replace(tzinfo=UTC) == (latest if scope == "global" else historical)
 
 
 @pytest.mark.parametrize(
