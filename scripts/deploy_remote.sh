@@ -523,7 +523,7 @@ cat >/etc/systemd/system/eden-phase2-soak.timer <<'UNIT'
 Description=Collect EDEN independent Phase 2 soak evidence every five minutes
 
 [Timer]
-OnBootSec=2min
+OnActiveSec=2min
 OnUnitActiveSec=5min
 AccuracySec=15s
 Persistent=true
@@ -586,7 +586,7 @@ cat >/etc/systemd/system/eden-phase1-soak.timer <<'UNIT'
 Description=Collect EDEN Phase 1 soak evidence every five minutes
 
 [Timer]
-OnBootSec=2min
+OnActiveSec=2min
 OnUnitActiveSec=5min
 AccuracySec=15s
 Persistent=true
