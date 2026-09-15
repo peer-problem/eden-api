@@ -35,16 +35,16 @@
 
 EDEN connects regional codes and place identifiers across tourism data sources and exposes the results as consistent JSON. Use it to add place details, regional visitor analysis, and inbound market comparisons to your application.
 
-| Feature | Available information |
-| --- | --- |
-| Travel trends | Video counts and views for collected YouTube travel keywords |
-| Regional insights | Regional visitor indicators and comparisons with earlier periods |
-| Place details | Names, locations, available translations, nearby shops, and related places |
-| Visitor outlook | Reference demand indices based on past observations, with available weather context |
-| Visitor history | Daily, weekly, or monthly visitor indicators |
-| Inbound markets | Visitor, flight, and exchange-rate indicators for Japan, China, Taiwan, the US, and the Philippines |
-| Official alerts | Entry and safety notices with links to their sources |
-| Destination recommendations | Places matching a region and theme, with scoring reasons |
+| Feature                     | Available information                                                                               |
+| --------------------------- | --------------------------------------------------------------------------------------------------- |
+| Travel trends               | Video counts and views for collected YouTube travel keywords                                        |
+| Regional insights           | Regional visitor indicators and comparisons with earlier periods                                    |
+| Place details               | Names, locations, available translations, nearby shops, and related places                          |
+| Visitor outlook             | Reference demand indices based on past observations, with available weather context                 |
+| Visitor history             | Daily, weekly, or monthly visitor indicators                                                        |
+| Inbound markets             | Visitor, flight, and exchange-rate indicators for Japan, China, Taiwan, the US, and the Philippines |
+| Official alerts             | Entry and safety notices with links to their sources                                                |
+| Destination recommendations | Places matching a region and theme, with scoring reasons                                            |
 
 > **Current deployment:** The public API reads published data while a bounded background worker collects and refreshes selected sources. Coverage varies by source. Check observation dates and freshness metadata before using the results.
 
@@ -79,7 +79,7 @@ Call the API from a browser:
 
 ```javascript
 const response = await fetch(
-  'https://api.edenapi.org/v1/markets/inbound?countries=JP&countries=US'
+  "https://api.edenapi.org/v1/markets/inbound?countries=JP&countries=US",
 );
 if (!response.ok) throw new Error(`EDEN API: ${response.status}`);
 
@@ -91,15 +91,15 @@ Cross-origin GET and POST requests are supported without cookies. Do not set `cr
 
 ## Endpoints
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/v1/trends` | Travel keyword trends |
-| `GET` | `/v1/regions/{area_code}/insights` | Regional insights |
-| `GET` | `/v1/places/{content_id}` | Place details |
-| `GET` | `/v1/forecasts/visitors` | Visitor outlook |
-| `GET` | `/v1/visitors/timeseries` | Visitor history |
-| `GET` | `/v1/markets/inbound` | Inbound market comparisons |
-| `GET` | `/v1/markets/{country}/alerts` | Official notices |
+| Method | Path                               | Purpose                     |
+| ------ | ---------------------------------- | --------------------------- |
+| `GET`  | `/v1/trends`                       | Travel keyword trends       |
+| `GET`  | `/v1/regions/{area_code}/insights` | Regional insights           |
+| `GET`  | `/v1/places/{content_id}`          | Place details               |
+| `GET`  | `/v1/forecasts/visitors`           | Visitor outlook             |
+| `GET`  | `/v1/visitors/timeseries`          | Visitor history             |
+| `GET`  | `/v1/markets/inbound`              | Inbound market comparisons  |
+| `GET`  | `/v1/markets/{country}/alerts`     | Official notices            |
 | `POST` | `/v1/recommendations/destinations` | Destination recommendations |
 
 Use `place.content_id` from a recommendation to fetch its place details. Supported country codes are `JP`, `CN`, `TW`, `US`, and `PH`. Visitor outlook requests default to 7 days and support up to 30 days.
@@ -108,14 +108,14 @@ Use `place.content_id` from a recommendation to fetch its place details. Support
 
 Successful queries return a `data` and `meta` envelope. Missing information is not replaced with invented values or zeros.
 
-| Field | Meaning |
-| --- | --- |
-| `data` | Query result; may be `null` or empty when data is unavailable |
-| `meta.availability` | Availability of the overall result |
-| `meta.reason` | Why a result is limited or unavailable |
-| `meta.as_of` | Data reference timestamp |
-| `meta.freshness` | Freshness status and acceptable age |
-| `meta.sources` | Observation timestamps and collection status for each source |
+| Field               | Meaning                                                       |
+| ------------------- | ------------------------------------------------------------- |
+| `data`              | Query result; may be `null` or empty when data is unavailable |
+| `meta.availability` | Availability of the overall result                            |
+| `meta.reason`       | Why a result is limited or unavailable                        |
+| `meta.as_of`        | Data reference timestamp                                      |
+| `meta.freshness`    | Freshness status and acceptable age                           |
+| `meta.sources`      | Observation timestamps and collection status for each source  |
 
 Sources publish on different schedules. Check individual data blocks as well as the overall metadata. Invalid inputs return `422`, unknown IDs return `404`, and requests exceeding rate limits return `429`.
 
@@ -140,14 +140,16 @@ Collection uses one source worker, request budgets and resource limits. Monthly 
 
 `SCHEDULER_ENABLED=false` pauses collection, refresh and automatic cleanup. `ALERT_ENRICHMENT_BATCH_SIZE=0` independently disables paid translation jobs; original official notices remain available. The deployment currently uses this zero translation budget.
 
-| Component | Responsibility |
-| --- | --- |
-| FastAPI + Pydantic | Input validation, response contracts, and OpenAPI documentation |
-| MariaDB + SQLAlchemy | Raw records, normalized data, and published snapshots |
-| Alembic | Database migrations |
-| Nginx + systemd | HTTPS entry point, rate limits, and process management |
+| Component            | Responsibility                                                  |
+| -------------------- | --------------------------------------------------------------- |
+| FastAPI + Pydantic   | Input validation, response contracts, and OpenAPI documentation |
+| MariaDB + SQLAlchemy | Raw records, normalized data, and published snapshots           |
+| Alembic              | Database migrations                                             |
+| Nginx + systemd      | HTTPS entry point, rate limits, and process management          |
 
 ## Development
+
+The optional [EDEN Explorer frontend](frontend/README.md) is in `frontend/`. It uses React to browse the public API, with regional insights, market comparisons, keyword trends, and destination recommendations. Run it separately with `npm ci` and `npm run dev` from that directory. Public views do not require database credentials. The optional authenticated DB workspace browses tables, source runs and recorded lineage; see [connection instructions](frontend/CONNECTION.md).
 
 Use Python 3.12 and `uv`. MariaDB Connector/C 3.4 or newer is required. Database connections use TLS with server certificate verification.
 

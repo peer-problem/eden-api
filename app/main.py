@@ -15,6 +15,7 @@ from starlette.responses import Response
 
 from app import __version__
 from app.api.documentation import DESCRIPTION, TAGS
+from app.api.explorer import router as explorer_router
 from app.api.v1.common import ErrorDetail, ErrorResponse
 from app.api.v1.routes import router as v1_router
 from app.config import Settings, get_settings
@@ -115,6 +116,7 @@ def create_app(
         expose_headers=["X-Request-ID"],
     )
     app.include_router(v1_router)
+    app.include_router(explorer_router)
 
     @app.get("/", include_in_schema=False)
     def documentation_home() -> RedirectResponse:

@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     EDEN_TIMEZONE: str = "Asia/Seoul"
     SCHEDULER_ENABLED: bool = False
+    EXPLORER_ENABLED: bool = False
+    EXPLORER_TOKEN: SecretStr | None = None
     MAX_REQUEST_BODY_BYTES: int = 64 * 1024
     MAX_RESPONSE_BODY_BYTES: int = 2 * 1024 * 1024
 
