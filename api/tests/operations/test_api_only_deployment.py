@@ -1,53 +1,176 @@
+"""Exercise release switching and recovery without contacting the VPS."""
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-DEPLOY_SCRIPT = REPOSITORY_ROOT / ".ops" / "deploy.sh"
-if not DEPLOY_SCRIPT.is_file():
-    pytest.skip("Private .ops launchers are not installed", allow_module_level=True)
-REMOTE_DEPLOY = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+DEPLOY_SCRIPT = Path(__file__).resolve().parents[3] / ".ops/deploy.sh"
+pytestmark = pytest.mark.skipif(not DEPLOY_SCRIPT.is_file(), reason="Private .ops not installed")
 
 
-def test_nginx_exposes_only_api_and_documentation_routes() -> None:
-    assert "location ~ ^/(?:docs|openapi[.]json)?$" in REMOTE_DEPLOY
-    assert "location ^~ /v1/" in REMOTE_DEPLOY
-    assert "location /internal/" in REMOTE_DEPLOY
-    assert "location = /dashboard { return 410; }" in REMOTE_DEPLOY
-    assert "location ^~ /dashboard/ { return 410; }" in REMOTE_DEPLOY
-    assert "location = /assets { return 410; }" in REMOTE_DEPLOY
-    assert "location ^~ /assets/ { return 410; }" in REMOTE_DEPLOY
-    assert "location / { return 404; }" in REMOTE_DEPLOY
-    assert "alias /var/www/eden-dashboard" not in REMOTE_DEPLOY
-    assert "try_files $uri $uri/ /dashboard/index.html" not in REMOTE_DEPLOY
+@pytest.mark.parametrize("failure", ["none", "build", "install", "readiness", "public"])
+def test_deploy_switches_only_after_preparation_and_restores_on_failure(tmp_path, failure):
+    root = tmp_path / "eden"
+    shared = root / "shared"
+    shared.mkdir(parents=True)
+    previous = root / "releases/20260915T100000Z"
+    release = root / "releases/20260915T110000Z"
+    for directory in (previous, release):
+        (directory / "api").mkdir(parents=True)
+    (root / "current").symlink_to(previous)
+    for name in ("runtime.env", "migration.env"):
+        (release / name).write_text(f"new {name}")
+        target = shared / (".env" if name == "runtime.env" else name)
+        target.write_text(f"old {name}")
+        target.chmod(0o640 if name == "runtime.env" else 0o600)
+    script = tmp_path / "deploy.sh"
+    script.write_text(DEPLOY_SCRIPT.read_text().replace("/opt/eden", str(root)))
+    harness = r'''
+EDEN_OPS_LIBRARY_ONLY=true source "$1"
+validate_migration_environment() { :; }
+load_dotenv_file() { :; }
+uv() {
+  if [[ "$1" == sync ]]; then
+    [[ "$FAILURE" != build ]]
+  else
+    cat >/dev/null
+  fi
+}
+runuser() { :; }
+chown() { :; }
+chmod() { :; }
+systemctl() {
+  if [[ "$1" == show ]]; then
+    printf '%s/current/api\n' "$ROOT"
+  else
+    printf '%s\n' "$*" >>"$ROOT/actions"
+  fi
+}
+install() {
+  [[ "$FAILURE" != install || "$*" != *migration.env* ]] || return 1
+  cp "${@: -2:1}" "${@: -1}"
+}
+wait_for_api() {
+  [[ "$FAILURE" != readiness || "$(readlink "$ROOT/current")" == "$PREVIOUS" ]]
+}
+curl() { [[ "$FAILURE" != public ]]; }
+remote_deploy "$2"
+'''
+    result = subprocess.run(  # noqa: S603 - local fixtures and stubbed system commands
+        ["/bin/bash", "-c", harness, "deploy-test", str(script), str(release)],
+        env={**os.environ, "ROOT": str(root), "PREVIOUS": str(previous), "FAILURE": failure},
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    success = failure == "none"
+    assert (result.returncode == 0) == success, result.stderr
+    assert (root / "current").resolve() == (release if success else previous)
+    for name in ("runtime.env", "migration.env"):
+        target = shared / (".env" if name == "runtime.env" else name)
+        assert target.read_text() == f"{'new' if success else 'old'} {name}"
+        if not success:
+            assert target.stat().st_mode & 0o777 == (0o640 if name == "runtime.env" else 0o600)
+        assert not (release / name).exists()
+    actions = (root / "actions").read_text() if (root / "actions").exists() else ""
+    if failure == "build":
+        assert actions == ""
+    else:
+        assert "restart eden-api" in actions
+    assert "nginx" not in actions and "daemon-reload" not in actions
 
 
-def test_documentation_and_api_keep_the_public_rate_limits() -> None:
-    assert "zone=eden_api_per_ip:1m rate=5r/s" in REMOTE_DEPLOY
-    assert "zone=eden_api_total:1m rate=20r/s" in REMOTE_DEPLOY
-    assert REMOTE_DEPLOY.count("zone=eden_api_per_ip burst=20 nodelay") == 2
-    assert REMOTE_DEPLOY.count("zone=eden_api_total burst=40 nodelay") == 2
-    assert "limit_conn eden_per_ip 20" in REMOTE_DEPLOY
+@pytest.mark.parametrize("architecture", ["apple-silicon", "intel"])
+def test_mac_tool_discovery_uses_current_home_and_brew_prefix(tmp_path, architecture):
+    home = tmp_path / "another developer"
+    prefix = tmp_path / architecture
+    commands = {
+        home / ".local/bin/uv": "exit 0",
+        prefix / "opt/node@24/bin/node": "exit 0",
+        prefix / "opt/mariadb-connector-c/bin/mariadb_config": "exit 0",
+        prefix / "bin/brew": 'printf "%s\\n" "$TEST_BREW_PREFIX"',
+    }
+    for path, body in commands.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/bin/sh\n" + body + "\n")
+        path.chmod(0o755)
+    result = subprocess.run(  # noqa: S603 - synthetic HOME and Homebrew tools
+        ["/bin/bash", "-c", 'EDEN_OPS_LIBRARY_ONLY=true source "$1"; '
+         'uname() { echo Darwin; }; configure_tools; command -v uv node mariadb_config',
+         "tools-test", str(DEPLOY_SCRIPT)],
+        env={"HOME": str(home), "PATH": f"{prefix}/bin:/usr/bin:/bin",
+             "TEST_BREW_PREFIX": str(prefix)},
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [str(path) for path in list(commands)[:3]]
 
 
-def test_api_resource_limits_and_nginx_reload_are_preserved() -> None:
-    assert "CPUQuota=80%" in REMOTE_DEPLOY
-    assert "MemoryMax=1280M" in REMOTE_DEPLOY
-    assert "systemctl reload nginx" in REMOTE_DEPLOY
-    assert "curl -fsS --max-time 10 https://api.edenapi.org/openapi.json" in REMOTE_DEPLOY
+@pytest.mark.parametrize(
+    "command,failure", [("deploy", False), ("deploy", True), ("dashboard", False)],
+)
+def test_local_deployment_commands_use_only_the_requested_destination(tmp_path, command, failure):
+    import sys
 
+    from app.operations.environment import render_environment
 
-def test_successful_deploy_removes_only_known_dashboard_artifacts() -> None:
-    cleanup_start = REMOTE_DEPLOY.index("cleanup_legacy_dashboard_artifacts()")
-    cleanup_call = REMOTE_DEPLOY.index("if ! cleanup_legacy_dashboard_artifacts")
-    completed = REMOTE_DEPLOY.index("deployment_complete=1")
-
-    assert completed < cleanup_start < cleanup_call
-    assert "rm -rf -- /var/www/eden-dashboard" in REMOTE_DEPLOY
-    assert "for deployed_release in /opt/eden/releases/*" in REMOTE_DEPLOY
-    assert 'legacy_dashboard="$deployed_release/dashboard"' in REMOTE_DEPLOY
-    assert 'rm -rf -- "$legacy_dashboard"' in REMOTE_DEPLOY
-    assert "/var/log/nginx/eden-dashboard.access.log" in REMOTE_DEPLOY
-    assert "/var/log/nginx/eden-dashboard.error.log" in REMOTE_DEPLOY
+    root = tmp_path / "checkout with spaces"
+    for directory in (".ops", "api", "dashboard", "tools/bin"):
+        (root / directory).mkdir(parents=True)
+    script = root / ".ops/deploy.sh"
+    script.write_text(DEPLOY_SCRIPT.read_text())
+    (root / ".ops/run.sh").write_text("unused")
+    values = {
+        "ENVIRONMENT": "production", "DB_HOST": "db.example.test", "DB_PORT": "3306",
+        "DB_NAME": "eden", "DB_USER": "reader", "DB_PASSWORD": "reader-secret",
+        "INGESTION_DB_USER": "writer", "INGESTION_DB_PASSWORD": "writer-secret",
+        "MIGRATION_DB_USER": "migrator", "MIGRATION_DB_PASSWORD": "migrator-secret",
+        "SCHEDULER_ENABLED": "false", "DB_NETWORK_MODE": "allowlist",
+        "DB_ALLOWED_CIDRS": "192.0.2.1/32", "VPS_IP_ADDRESS": "192.0.2.2",
+        "VPS_USERNAME": "deployer", "VPS_PASSWORD": "ssh-secret",
+        "VPS_HOST_FINGERPRINT": "SHA256:expected", "VERCEL_DEPLOY_KEY": "vercel-secret",
+    }
+    (root / ".env").write_text(render_environment(values))
+    bodies = {
+        "brew": 'printf "%s\\n" "$TEST_TOOLS"',
+        "uv": 'shift; while [ "$1" != python ]; do shift; done; shift; '
+              'exec "$TEST_PYTHON" "$@"',
+        "ssh-keyscan": 'echo "host key-material"',
+        "ssh-keygen": 'echo "256 SHA256:expected host (ED25519)"',
+        "sshpass": 'shift; exec "$@"',
+        "ssh": 'printf "ssh %s\\n" "$*" >> "$TRACE"; '
+               'case "$*" in *remote-deploy*) [ "$FAILURE" != true ];; esac',
+        "scp": 'printf "scp %s\\n" "$*" >> "$TRACE"',
+        "rsync": 'printf "rsync %s\\n" "$*" >> "$TRACE"; '
+                 'printf "transport %s\\n" "$RSYNC_RSH" >> "$TRACE"',
+        "vercel": '[ "$VERCEL_TOKEN" = vercel-secret ] && [ -z "${DB_PASSWORD:-}" ] || exit 1; '
+                  'printf "vercel %s\\n" "$*" >> "$TRACE"',
+    }
+    for name, body in bodies.items():
+        path = root / "tools/bin" / name
+        path.write_text("#!/bin/sh\n" + body + "\n")
+        path.chmod(0o755)
+    trace = root / "trace"
+    temp = root / "temporary files"
+    temp.mkdir()
+    result = subprocess.run(  # noqa: S603 - all network commands are local fixtures
+        ["/bin/bash", str(script), command],
+        env={"HOME": str(root / "another home"), "PATH": f"{root}/tools/bin:/usr/bin:/bin",
+             "TEST_TOOLS": str(root / "tools"), "TEST_PYTHON": sys.executable,
+             "PYTHONPATH": str(DEPLOY_SCRIPT.parents[1] / "api"), "TRACE": str(trace),
+             "TMPDIR": str(temp), "FAILURE": str(failure).lower()},
+        capture_output=True, text=True, timeout=20, check=False,
+    )
+    assert (result.returncode == 0) == (not failure), result.stderr
+    actions = trace.read_text()
+    assert "secret" not in actions
+    if command == "deploy":
+        assert actions.count("scp ") == 2
+        assert "remote-deploy" in actions and "vercel" not in actions
+        assert f"{root}/api/" in actions
+        assert 'UserKnownHostsFile="' in actions
+        assert not list(temp.iterdir()), "Private temporary environment was not cleaned up"
+    else:
+        assert actions.startswith("vercel deploy --prod --yes --project eden-frontend")
+        assert "ssh " not in actions
