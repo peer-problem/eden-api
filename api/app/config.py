@@ -126,7 +126,7 @@ class Settings(BaseSettings):
         if is_local:
             raise ValueError(
                 "Local databases are forbidden. Development and tests must use the shared "
-                "Vultr MariaDB or a non-database fake repository."
+                "Contabo MariaDB or a non-database fake repository."
             )
         return self
 
