@@ -1,5 +1,6 @@
 import { Button, HTMLSelect, Tab, Tabs } from '@blueprintjs/core';
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { request, useResource, type Resource } from './api';
 import { date, number, regionName, regions } from './data';
 import { RegionMap } from './RegionMap';
@@ -8,7 +9,6 @@ import {
   DataTable,
   MetaLine,
   MultiLineChart,
-  Picker,
   Section,
   State,
   Status,
@@ -18,11 +18,17 @@ export interface ViewProps {
   params: URLSearchParams;
   update: (values: Record<string, string>) => void;
   showSources: (meta: Meta) => void;
+  workspaceActionsTarget?: HTMLElement | null;
 }
 
 type RegionSeriesStore = Record<string, Envelope<Timeseries>>;
 
-export default function RegionView({ params, update, showSources }: ViewProps) {
+export default function RegionView({
+  params,
+  update,
+  showSources,
+  workspaceActionsTarget,
+}: ViewProps) {
   const area = params.get('area') || regions[0].code;
   const period = ['7d', '30d', '90d'].includes(params.get('period') || '')
     ? params.get('period')!
@@ -52,17 +58,40 @@ export default function RegionView({ params, update, showSources }: ViewProps) {
 
   return (
     <>
+      {workspaceActionsTarget &&
+        createPortal(
+          <div className="region-workspace-actions">
+            <MetaLine meta={meta} onSources={() => meta && showSources(meta)} />
+            <Button
+              variant="minimal"
+              icon="refresh"
+              loading={insightsResource.loading || seriesStore.loading}
+              onClick={refresh}
+            >
+              새로고침
+            </Button>
+          </div>,
+          workspaceActionsTarget,
+        )}
       <div className="toolbar region-toolbar">
-        <div className="filter">
-          <span>지역</span>
-          <Picker
-            label="지역 선택"
-            value={area}
-            options={regions}
-            onChange={(area) => update({ area })}
-          />
+        <div className="region-picker" role="group" aria-label="지역 선택">
+          <span className="region-picker-label">지역</span>
+          <div className="region-buttons">
+            {regions.map((region) => (
+              <Button
+                key={region.code}
+                variant="minimal"
+                small
+                active={region.code === area}
+                aria-pressed={region.code === area}
+                onClick={() => update({ area: region.code })}
+              >
+                {region.name}
+              </Button>
+            ))}
+          </div>
         </div>
-        <label className="filter">
+        <label className="filter region-period-filter">
           <span>기간</span>
           <HTMLSelect
             aria-label="조회 기간"
@@ -75,18 +104,6 @@ export default function RegionView({ params, update, showSources }: ViewProps) {
             ]}
           />
         </label>
-        <div className="toolbar-spacer" />
-        <div className="region-toolbar-actions">
-          <MetaLine meta={meta} onSources={() => meta && showSources(meta)} />
-          <Button
-            variant="minimal"
-            icon="refresh"
-            loading={insightsResource.loading || seriesStore.loading}
-            onClick={refresh}
-          >
-            새로고침
-          </Button>
-        </div>
       </div>
 
       <div className="region-overview">

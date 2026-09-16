@@ -1620,6 +1620,20 @@
           "references": []
         },
         {
+          "name": "lookup_key",
+          "type": "VARCHAR(1000)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "lookup_key_hash",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
           "name": "snapshot_version",
           "type": "VARCHAR(64)",
           "nullable": false,
@@ -1637,6 +1651,27 @@
               "column": "payload_id"
             }
           ]
+        },
+        {
+          "name": "metadata",
+          "type": "JSON",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "input_watermarks",
+          "type": "JSON",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "formula_versions",
+          "type": "JSON",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
         },
         {
           "name": "observed_at",
@@ -1676,6 +1711,13 @@
         {
           "name": "availability",
           "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "quality_flags",
+          "type": "JSON",
           "nullable": false,
           "primary_key": false,
           "references": []
@@ -1749,8 +1791,22 @@
           "references": []
         },
         {
+          "name": "payload_hash",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
           "name": "encoding",
           "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "payload_blob",
+          "type": "BLOB",
           "nullable": false,
           "primary_key": false,
           "references": []
@@ -2338,7 +2394,10 @@
       ],
       "keys": "외부 지역 코드 → eden_area_id · period_start · visitor_type",
       "detail": "지역 코드를 EDEN 지역으로 대응시키고 방문 수와 집중도를 기간 단위로 집계합니다.",
-      "code_ref": "app.normalization.public_data.normalize_regional_visitors_run"
+      "code_ref": "app.normalization.public_data.normalize_regional_visitors_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_tourism_admission",
@@ -2356,7 +2415,10 @@
       ],
       "keys": "시도·시군구 이름 → area_id · 관광지명 · 월 · 내국인/외국인",
       "detail": "내·외국인 입장객과 합계를 관광지·월별 지역 방문 관측으로 저장합니다.",
-      "code_ref": "app.normalization.inbound_sources.normalize_tourism_admission_run"
+      "code_ref": "app.normalization.inbound_sources.normalize_tourism_admission_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_regional_demand",
@@ -2374,7 +2436,10 @@
       ],
       "keys": "외부 지역 코드 → eden_area_id · baseYm → period_start",
       "detail": "체류·소비·숙박 지수를 지역과 월 기준 관측값으로 변환합니다.",
-      "code_ref": "app.normalization.public_data.normalize_regional_demand_run"
+      "code_ref": "app.normalization.public_data.normalize_regional_demand_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_regional_diversity",
@@ -2392,7 +2457,10 @@
       ],
       "keys": "외부 지역 코드 → eden_area_id · baseYm → period_start",
       "detail": "연령·국적 다양성 지수를 지역과 월 기준 관측값으로 변환합니다.",
-      "code_ref": "app.normalization.public_data.normalize_regional_diversity_run"
+      "code_ref": "app.normalization.public_data.normalize_regional_diversity_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_social",
@@ -2414,7 +2482,10 @@
       ],
       "keys": "source_id · keyword · country_id · bucket_start · bucket_grain",
       "detail": "출처 집계를 키워드·국가·기간 버킷으로 맞추되 출처별 값은 유지합니다.",
-      "code_ref": "app.normalization.social.normalize_social_run"
+      "code_ref": "app.normalization.social.normalize_social_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_resource_demand",
@@ -2432,7 +2503,10 @@
       ],
       "keys": "외부 지역 코드 → area_id · 자원명 · baseYm",
       "detail": "지역 관광 자원별 검색·관심 수요를 월 단위 관심도 관측으로 저장합니다.",
-      "code_ref": "app.normalization.public_data.normalize_resource_demand_run"
+      "code_ref": "app.normalization.public_data.normalize_resource_demand_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_places",
@@ -2455,7 +2529,10 @@
       ],
       "keys": "source_id + external_content_id → eden_place_id · language",
       "detail": "언어별 TourAPI 콘텐츠를 같은 EDEN 장소로 연결하고 번역은 별도 저장합니다.",
-      "code_ref": "app.normalization.places.normalize_tour_catalog_run"
+      "code_ref": "app.normalization.places.normalize_tour_catalog_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_place_relations",
@@ -2476,7 +2553,10 @@
       ],
       "keys": "외부 관광지 코드 → eden_place_id · 기준 월 · 관계 유형 · 순위",
       "detail": "관광지 허브와 연관 관광지를 EDEN 장소로 맞추고 순위를 관계 점수로 변환합니다.",
-      "code_ref": "app.normalization.places"
+      "code_ref": "app.normalization.places",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_inbound",
@@ -2494,7 +2574,10 @@
       ],
       "keys": "ISO 국가 코드 → country_id · 월 → period_start",
       "detail": "국가별 월 방문자 행을 합산해 방한 방문 관측으로 저장합니다.",
-      "code_ref": "app.normalization.inbound.normalize_kto_inbound_run"
+      "code_ref": "app.normalization.inbound.normalize_kto_inbound_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_airport_country",
@@ -2512,7 +2595,10 @@
       ],
       "keys": "국가 코드 → country_id · 월 · month grain",
       "detail": "국가별 월간 도착 항공편과 여객 수를 항공 관측으로 저장합니다.",
-      "code_ref": "app.normalization.inbound_sources.normalize_airport_country_run"
+      "code_ref": "app.normalization.inbound_sources.normalize_airport_country_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_airport_weekly",
@@ -2530,7 +2616,10 @@
       ],
       "keys": "국가 코드 → country_id · 주간 기준일 · 7d_schedule grain",
       "detail": "향후 7일 도착 일정을 국가별 항공편 수로 확장해 저장합니다.",
-      "code_ref": "app.normalization.inbound_sources.normalize_airport_weekly_run"
+      "code_ref": "app.normalization.inbound_sources.normalize_airport_weekly_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_kexim_fx",
@@ -2547,7 +2636,10 @@
       ],
       "keys": "통화 코드 · rate_date",
       "detail": "한국수출입은행 환율을 통화와 고시 일자별 관측으로 저장합니다.",
-      "code_ref": "app.normalization.inbound_sources.normalize_fx_run"
+      "code_ref": "app.normalization.inbound_sources.normalize_fx_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_bok",
@@ -2565,7 +2657,10 @@
       ],
       "keys": "통화·일자 / 월별 일반여행 수입 − 지출",
       "detail": "ECOS 환율은 일별로 저장하고 일반여행 수입과 지출은 월별 관광수지로 계산합니다.",
-      "code_ref": "app.normalization.inbound_sources.normalize_bok_run"
+      "code_ref": "app.normalization.inbound_sources.normalize_bok_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_visitor_forecast",
@@ -2584,7 +2679,10 @@
       ],
       "keys": "외부 지역 코드 → area_id · 관광지명 → place_id · forecast_date",
       "detail": "관광공사 방문 예측과 혼잡도를 지역·관광지·예측일 기준 입력으로 저장합니다.",
-      "code_ref": "app.normalization.forecast.normalize_visitor_forecast_run"
+      "code_ref": "app.normalization.forecast.normalize_visitor_forecast_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_weather",
@@ -2602,7 +2700,10 @@
       ],
       "keys": "기상 격자 → area_id · forecast_date",
       "detail": "기상청 격자 예보를 지역과 날짜별 날씨 입력으로 저장합니다.",
-      "code_ref": "app.normalization.forecast.normalize_weather_run"
+      "code_ref": "app.normalization.forecast.normalize_weather_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_festival",
@@ -2620,7 +2721,10 @@
       ],
       "keys": "공식 주소 → area_id · 행사 시작일~종료일",
       "detail": "행사 기간의 각 날짜에 해당 축제를 지역 예측 입력으로 연결합니다.",
-      "code_ref": "app.normalization.forecast.normalize_festival_run"
+      "code_ref": "app.normalization.forecast.normalize_festival_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "normalize_holiday",
@@ -2638,7 +2742,10 @@
       ],
       "keys": "locdate → forecast_date · 전국 지역",
       "detail": "공휴일을 날짜별로 전체 활성 지역의 예측 입력에 연결합니다.",
-      "code_ref": "app.normalization.forecast.normalize_holiday_run"
+      "code_ref": "app.normalization.forecast.normalize_holiday_run",
+      "graph": {
+        "fields": []
+      }
     },
     {
       "id": "build_regional_product",
@@ -2657,7 +2764,49 @@
       ],
       "keys": "area_id · 관측 종류별 최신 period_start와 조회 기간",
       "detail": "지역별 방문·수요·다양성의 최신 가용 기간을 각각 조회해 한 regional_product 스냅샷으로 게시합니다.",
-      "code_ref": "app.products.regional.build_regional_snapshots"
+      "code_ref": "app.products.regional.build_regional_snapshots",
+      "graph": {
+        "fields": [
+          {
+            "id": "lookup_key",
+            "label": "지역별 게시 조회 키",
+            "name": "area_id → area_code",
+            "inputs": [
+              {
+                "table": "area",
+                "column": "eden_area_id"
+              }
+            ],
+            "target_table": "read_model_snapshot",
+            "target_column": "lookup_key"
+          },
+          {
+            "id": "payload",
+            "label": "지역 인사이트 응답 데이터",
+            "name": "방문 · 수요 · 다양성",
+            "inputs": [
+              {
+                "table": "regional_visit_observation",
+                "column": "visitor_count"
+              },
+              {
+                "table": "regional_demand_observation",
+                "column": "stay_index"
+              },
+              {
+                "table": "regional_demand_observation",
+                "column": "spend_index"
+              },
+              {
+                "table": "regional_diversity_observation",
+                "column": "nationality_index"
+              }
+            ],
+            "target_table": "read_model_payload",
+            "target_column": "payload_blob"
+          }
+        ]
+      }
     },
     {
       "id": "build_trend_product",
@@ -2674,7 +2823,56 @@
       ],
       "keys": "source_id · keyword · country_id · area_id · bucket_start 중 최신 버전",
       "detail": "출처별 최신 관심도 관측을 유지한 채 social_signal 스냅샷으로 게시합니다.",
-      "code_ref": "app.products.trends.build_trend_snapshot"
+      "code_ref": "app.products.trends.build_trend_snapshot",
+      "graph": {
+        "fields": [
+          {
+            "id": "lookup_key",
+            "label": "전역 게시 조회 키",
+            "name": "scope=global",
+            "inputs": [],
+            "target_table": "read_model_snapshot",
+            "target_column": "lookup_key"
+          },
+          {
+            "id": "payload",
+            "label": "관광 트렌드 응답 데이터",
+            "name": "출처 · 키워드 · 지역 · 관측값",
+            "inputs": [
+              {
+                "table": "social_observation",
+                "column": "source_id"
+              },
+              {
+                "table": "social_observation",
+                "column": "keyword"
+              },
+              {
+                "table": "social_observation",
+                "column": "country_id"
+              },
+              {
+                "table": "social_observation",
+                "column": "area_id"
+              },
+              {
+                "table": "social_observation",
+                "column": "bucket_start"
+              },
+              {
+                "table": "social_observation",
+                "column": "post_count"
+              },
+              {
+                "table": "social_observation",
+                "column": "view_count"
+              }
+            ],
+            "target_table": "read_model_payload",
+            "target_column": "payload_blob"
+          }
+        ]
+      }
     },
     {
       "id": "build_inbound_product",
@@ -2694,7 +2892,61 @@
       ],
       "keys": "country_id · 국가별 방문 최신월 · 기간 창 · 최신 환율",
       "detail": "방문자·항공·환율·관심도를 국가와 기간 창 기준으로 묶어 inbound_market_country로 게시합니다.",
-      "code_ref": "app.products.inbound.build_inbound_snapshots"
+      "code_ref": "app.products.inbound.build_inbound_snapshots",
+      "graph": {
+        "fields": [
+          {
+            "id": "lookup_key",
+            "label": "국가별 게시 조회 키",
+            "name": "country_id → country · period",
+            "inputs": [
+              {
+                "table": "country",
+                "column": "eden_country_id"
+              },
+              {
+                "table": "country",
+                "column": "iso_alpha2"
+              }
+            ],
+            "target_table": "read_model_snapshot",
+            "target_column": "lookup_key"
+          },
+          {
+            "id": "payload",
+            "label": "해외 시장 응답 데이터",
+            "name": "방문 · 항공 · 환율 · 관심도",
+            "inputs": [
+              {
+                "table": "inbound_visitor_observation",
+                "column": "visitor_count"
+              },
+              {
+                "table": "flight_observation",
+                "column": "arriving_flights"
+              },
+              {
+                "table": "fx_observation",
+                "column": "krw_rate"
+              },
+              {
+                "table": "tourism_balance_observation",
+                "column": "balance_usd"
+              },
+              {
+                "table": "social_observation",
+                "column": "post_count"
+              },
+              {
+                "table": "social_observation",
+                "column": "view_count"
+              }
+            ],
+            "target_table": "read_model_payload",
+            "target_column": "payload_blob"
+          }
+        ]
+      }
     },
     {
       "id": "build_forecast_product",
@@ -2710,7 +2962,53 @@
       ],
       "keys": "area_id · 서울 달력 기준 30일 forecast_date",
       "detail": "forecast_input의 방문 예측·날씨·축제·공휴일을 지역별 30일 범위 forecast_product로 묶습니다. 시군구 날씨가 없으면 상위 시도 입력을 사용합니다.",
-      "code_ref": "app.products.forecast.build_forecast_snapshots"
+      "code_ref": "app.products.forecast.build_forecast_snapshots",
+      "graph": {
+        "fields": [
+          {
+            "id": "lookup_key",
+            "label": "지역별 게시 조회 키",
+            "name": "area_id → area_code",
+            "inputs": [
+              {
+                "table": "area",
+                "column": "eden_area_id"
+              }
+            ],
+            "target_table": "read_model_snapshot",
+            "target_column": "lookup_key"
+          },
+          {
+            "id": "payload",
+            "label": "방문 예측 응답 데이터",
+            "name": "예측 · 날씨 · 축제 · 공휴일",
+            "inputs": [
+              {
+                "table": "forecast_input",
+                "column": "forecast_date"
+              },
+              {
+                "table": "forecast_input",
+                "column": "source_forecast"
+              },
+              {
+                "table": "forecast_input",
+                "column": "weather"
+              },
+              {
+                "table": "forecast_input",
+                "column": "festivals"
+              },
+              {
+                "table": "forecast_input",
+                "column": "holiday"
+              }
+            ],
+            "target_table": "read_model_payload",
+            "target_column": "payload_blob"
+          }
+        ]
+      }
     },
     {
       "id": "build_recommendation_product",
@@ -2732,7 +3030,52 @@
       ],
       "keys": "eden_place_id · area_id · 최신 방문/수요 관측",
       "detail": "장소·관계·지역 방문·수요로 recommendation_feature를 만듭니다.",
-      "code_ref": "app.products.recommendations.build_recommendation_snapshot"
+      "code_ref": "app.products.recommendations.build_recommendation_snapshot",
+      "graph": {
+        "fields": [
+          {
+            "id": "lookup_key",
+            "label": "전역 게시 조회 키",
+            "name": "scope=global",
+            "inputs": [],
+            "target_table": "read_model_snapshot",
+            "target_column": "lookup_key"
+          },
+          {
+            "id": "payload",
+            "label": "여행지 추천 응답 데이터",
+            "name": "장소 · 관계 · 방문 · 수요",
+            "inputs": [
+              {
+                "table": "place",
+                "column": "eden_place_id"
+              },
+              {
+                "table": "place",
+                "column": "area_id"
+              },
+              {
+                "table": "place_relation",
+                "column": "score"
+              },
+              {
+                "table": "regional_visit_observation",
+                "column": "visitor_count"
+              },
+              {
+                "table": "regional_demand_observation",
+                "column": "stay_index"
+              },
+              {
+                "table": "regional_demand_observation",
+                "column": "spend_index"
+              }
+            ],
+            "target_table": "read_model_payload",
+            "target_column": "payload_blob"
+          }
+        ]
+      }
     }
   ],
   "pipelines": [

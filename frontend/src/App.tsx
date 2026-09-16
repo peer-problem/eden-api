@@ -69,6 +69,8 @@ export default function App() {
   const [inspector, setInspector] = useState<Inspector>(null);
   const [detailOpen, setDetailOpen] = useState(() => Boolean(placeId));
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [workspaceActionsTarget, setWorkspaceActionsTarget] =
+    useState<HTMLDivElement | null>(null);
   const [isNarrow, setNarrow] = useState(
     () => matchMedia("(max-width: 1100px)").matches,
   );
@@ -155,8 +157,7 @@ export default function App() {
                 aria-current={r.code === area ? "true" : undefined}
                 onClick={() => update({ area: r.code })}
               >
-                <span>{r.name}</span>
-                <span className="region-code">{r.code.slice(0, 2)}</span>
+                {r.name}
               </Button>
             ))}
           </nav>
@@ -224,9 +225,6 @@ export default function App() {
     <>
       <div className="inspector-heading">
         <div>
-          <span className="eyebrow">
-            {inspector?.kind === "sources" ? "데이터 근거" : "선택 객체"}
-          </span>
           <h2>{detailTitle}</h2>
         </div>
         <Button
@@ -245,14 +243,6 @@ export default function App() {
           <Properties
             rows={[
               ["자료 기준일", date(inspector.meta.as_of)],
-              [
-                "가용성",
-                <Status
-                  value={inspector.meta.availability}
-                  stale={inspector.meta.stale}
-                />,
-              ],
-              ["지역 범위", inspector.meta.spatial_resolution],
             ]}
           />
           {inspector.meta.reason && (
@@ -272,7 +262,6 @@ export default function App() {
               <Properties
                 rows={[
                   ["이름", regionName(area)],
-                  ["행정 코드", <span className="mono">{area}</span>],
                   ["유형", "시도"],
                 ]}
               />
@@ -300,7 +289,7 @@ export default function App() {
       )}
     </>
   );
-  const viewProps = { params, update, showSources };
+  const viewProps = { params, update, showSources, workspaceActionsTarget };
   return (
     <div className="app">
       <a className="skip-link" href="#main">
@@ -340,16 +329,26 @@ export default function App() {
                 ...(view.id === "regions" ? [{ text: regionName(area) }] : []),
               ]}
             />
-            {hasInspectorContent && (
-              <Button
-                variant="minimal"
-                icon="panel-stats"
-                active={detailOpen}
-                onClick={() => (detailOpen ? closeDetail() : setDetailOpen(true))}
-                aria-label="상세 패널 전환"
-                aria-expanded={detailOpen}
-              />
-            )}
+            <div className="workspace-bar-actions">
+              {view.id === "regions" && (
+                <div
+                  className="workspace-bar-region-slot"
+                  ref={setWorkspaceActionsTarget}
+                />
+              )}
+              {hasInspectorContent && (
+                <Button
+                  variant="minimal"
+                  icon="panel-stats"
+                  active={detailOpen}
+                  onClick={() =>
+                    detailOpen ? closeDetail() : setDetailOpen(true)
+                  }
+                  aria-label="상세 패널 전환"
+                  aria-expanded={detailOpen}
+                />
+              )}
+            </div>
           </div>
           <main
             id="main"

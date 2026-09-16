@@ -55,6 +55,14 @@ interface SourceGraphField {
   target_column?: string;
   raw_only?: boolean;
 }
+interface ProductGraphField {
+  id: string;
+  label: string;
+  name: string;
+  inputs: { table: string; column: string }[];
+  target_table: string;
+  target_column: string;
+}
 interface FlowStep {
   id: string;
   label: string;
@@ -65,6 +73,7 @@ interface FlowStep {
   keys: string;
   detail: string;
   code_ref: string;
+  graph?: { fields: ProductGraphField[] };
 }
 interface Pipeline {
   id: string;
@@ -388,6 +397,10 @@ function PipelineGraph({
     steps.forEach((step) => {
       step.inputs.forEach((name) => tableNames.add(name));
       step.outputs.forEach((name) => tableNames.add(name));
+      step.graph?.fields.forEach((field) => {
+        field.inputs.forEach((input) => tableNames.add(input.table));
+        tableNames.add(field.target_table);
+      });
     });
     const graphTables = catalog.tables.filter((item) => tableNames.has(item.name));
     const sourceState = new Map(
@@ -404,6 +417,18 @@ function PipelineGraph({
     const providerBySource = new Map(
       sources.map((source) => [source.source_id, providerNodeId(source.owner_name)]),
     );
+    const tableByName = new Map(catalog.tables.map((table) => [table.name, table]));
+    const sourcesWithServiceHandles = new Set(
+      steps
+        .filter((step) => step.kind === "transform")
+        .flatMap((step) =>
+          step.outputs.some((output) =>
+            tableByName.get(output)?.columns.some((column) => column.name === "source_id"),
+          )
+            ? step.sources
+            : [],
+        ),
+    );
     let providerY = 72;
     const providerNodes: Node[] = [...providerGroups.entries()].map(
       ([ownerName, providerSources]) => {
@@ -417,6 +442,7 @@ function PipelineGraph({
                 sources={providerSources}
                 sourceState={sourceState}
                 onSource={onSource}
+                sourcesWithServiceHandles={sourcesWithServiceHandles}
               />
             ),
           },
@@ -469,7 +495,7 @@ function PipelineGraph({
       ...products.map((step, index) => ({
         id: `step:${step.id}`,
         position: { x: 1930, y: index * 230 + 320 },
-        data: { label: <ProductNode step={step} /> },
+        data: { label: <ProductNode step={step} fields={step.graph?.fields ?? []} /> },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
         className: "pipeline-node pipeline-product",
@@ -509,18 +535,17 @@ function PipelineGraph({
       });
     };
 
-    for (const [ownerName, providerSources] of providerGroups) {
-      addEdge(
-        providerNodeId(ownerName),
-        "table:source_registry",
-        providerSources.length > 1 ? `source_id × ${providerSources.length}` : "source_id",
-        "storage-edge",
-        "provider",
-        "target:source_id",
-      );
-    }
     sources.forEach((source) => {
       const providerId = providerBySource.get(source.source_id) ?? "";
+      const serviceHandle = `service:${source.source_id}`;
+      addEdge(
+        providerId,
+        "table:source_registry",
+        "",
+        "storage-edge",
+        serviceHandle,
+        "target:source_id",
+      );
       steps
         .filter(
           (step) => step.kind === "transform" && step.sources.includes(source.source_id),
@@ -529,18 +554,18 @@ function PipelineGraph({
           const mappings = mappingsForStep(step).filter(
             (mapping) => mapping.source.source_id === source.source_id,
           );
-          if (!mappings.length) {
-            step.outputs.forEach((output) =>
+          step.outputs.forEach((output) => {
+            if (tableByName.get(output)?.columns.some((column) => column.name === "source_id")) {
               addEdge(
                 providerId,
                 `table:${output}`,
-                "값 저장",
+                "",
                 "source-flow-edge",
-                `service:${source.source_id}`,
-              ),
-            );
-            return;
-          }
+                serviceHandle,
+                "target:source_id",
+              );
+            }
+          });
           mappings.forEach(({ field }) =>
             addEdge(
               providerId,
@@ -556,7 +581,7 @@ function PipelineGraph({
     addEdge(
       "table:source_registry",
       "table:ingestion_run",
-      "source_id",
+      "",
       "storage-edge",
       "source:source_id",
       "target:source_id",
@@ -564,22 +589,44 @@ function PipelineGraph({
     addEdge(
       "table:ingestion_run",
       "table:raw_record",
-      "run_id",
+      "",
       "storage-edge",
       "source:run_id",
       "target:run_id",
     );
     steps.forEach((step) => {
       if (step.kind !== "product") return;
-      step.inputs.forEach((input) =>
-        addEdge(`table:${input}`, `step:${step.id}`, "입력", "data-flow-edge"),
-      );
-      step.outputs.forEach((output) => {
+      const fields = step.graph?.fields ?? [];
+      if (!fields.length) {
+        step.inputs.forEach((input) =>
+          addEdge(`table:${input}`, `step:${step.id}`, "", "data-flow-edge"),
+        );
+        step.outputs.forEach((output) =>
+          addEdge(`step:${step.id}`, `table:${output}`, "", "data-flow-edge"),
+        );
+        return;
+      }
+      fields.forEach((field) => {
+        field.inputs.forEach((input) => {
+          if (!tableNames.has(input.table)) return;
+          if (!tableByName.get(input.table)?.columns.some((column) => column.name === input.column))
+            return;
+          addEdge(
+            `table:${input.table}`,
+            `step:${step.id}`,
+            "",
+            "data-flow-edge product-field-edge",
+            `source:${input.column}`,
+            `target:${field.id}`,
+          );
+        });
         addEdge(
           `step:${step.id}`,
-          `table:${output}`,
-          output === "read_model_snapshot" ? "게시" : "저장",
-          "data-flow-edge",
+          `table:${field.target_table}`,
+          "",
+          "data-flow-edge product-field-edge",
+          `source:${field.id}`,
+          `target:${field.target_column}`,
         );
       });
     });
@@ -743,23 +790,19 @@ function ProviderNode({
   sources,
   sourceState,
   onSource,
+  sourcesWithServiceHandles,
 }: {
   ownerName: string;
   sources: CatalogSource[];
   sourceState: Map<string, Row>;
   onSource: (sourceId: string) => void;
+  sourcesWithServiceHandles: Set<string>;
 }) {
   return (
     <div className="provider-node-content">
       <div className="provider-heading">
         <strong>{ownerName}</strong>
         <span>{sources.length}개 API 데이터 상품</span>
-        <Handle
-          type="source"
-          position={Position.Right}
-          id="provider"
-          className="field-handle provider-handle"
-        />
       </div>
       <div className="provider-services nodrag nowheel">
         {sources.map((source) => {
@@ -788,7 +831,7 @@ function ProviderNode({
                     ? `${status}${stopped ? " · 수집 중지" : ""}`
                     : "코드 등록"}
                 </span>
-                {!fields.length && (
+                {sourcesWithServiceHandles.has(source.source_id) && (
                   <Handle
                     type="source"
                     position={Position.Right}
@@ -861,12 +904,39 @@ function TableNode({ table, selected }: { table: CatalogTable; selected: boolean
   );
 }
 
-function ProductNode({ step }: { step: FlowStep }) {
+function ProductNode({
+  step,
+  fields,
+}: {
+  step: FlowStep;
+  fields: ProductGraphField[];
+}) {
   return (
     <div className="step-node-content">
       <strong>{step.label}</strong>
-      <p>{step.keys}</p>
       <span className="mono node-code">{step.code_ref}</span>
+      <div className="product-fields nodrag nowheel">
+        {fields.map((field) => (
+          <div className="product-field" key={field.id}>
+            {!!field.inputs.length && (
+              <Handle
+                type="target"
+                position={Position.Left}
+                id={`target:${field.id}`}
+                className="field-handle product-field-handle product-field-handle-target"
+              />
+            )}
+            <span>{field.label}</span>
+            <span className="mono">{field.name}</span>
+            <Handle
+              type="source"
+              position={Position.Right}
+              id={`source:${field.id}`}
+              className="field-handle product-field-handle product-field-handle-source"
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -135,8 +135,9 @@ TABLES = {
     "read_model_snapshot": (
         "게시 스냅샷",
         "처리·게시",
-        "snapshot_id endpoint snapshot_version payload_id observed_at source_updated_at "
-        "ingested_at calculated_at as_of availability state",
+        "snapshot_id endpoint lookup_key lookup_key_hash snapshot_version payload_id metadata "
+        "input_watermarks formula_versions observed_at source_updated_at ingested_at "
+        "calculated_at as_of availability quality_flags state",
     ),
     "read_model_head": (
         "현재 게시 버전",
@@ -146,7 +147,8 @@ TABLES = {
     "read_model_payload": (
         "게시 데이터 저장 정보",
         "처리·게시",
-        "payload_id encoding uncompressed_bytes compressed_bytes created_at",
+        "payload_id payload_hash encoding payload_blob uncompressed_bytes compressed_bytes "
+        "created_at",
     ),
 }
 
@@ -258,6 +260,160 @@ SOURCE_GRAPH_DETAILS = {
     "SRC_KTO_VISITOR_FORECAST": {"label": "방문자 예측", "operation": "tatsCnctrRatedList"},
     "SRC_KTO_INBOUND_STATS": {"label": "국가별 방한객 통계", "operation": "국가·월별 통계"},
     "SRC_KTO_MARKET_TREND": {"label": "해외시장 동향", "operation": "관광데이터랩 공지"},
+}
+
+# Product nodes use explicit field routes for the graph. Each route names the
+# exact input columns that feed one product attribute and the persisted column
+# that receives it. The published response body is compressed into
+# read_model_payload.payload_blob; lookup dimensions are encoded in
+# read_model_snapshot.lookup_key.
+PRODUCT_GRAPH_DETAILS = {
+    "build_regional_product": {
+        "fields": (
+            {
+                "id": "lookup_key",
+                "label": "지역별 게시 조회 키",
+                "name": "area_id → area_code",
+                "inputs": (
+                    {"table": "area", "column": "eden_area_id"},
+                ),
+                "target_table": "read_model_snapshot",
+                "target_column": "lookup_key",
+            },
+            {
+                "id": "payload",
+                "label": "지역 인사이트 응답 데이터",
+                "name": "방문 · 수요 · 다양성",
+                "inputs": (
+                    {"table": "regional_visit_observation", "column": "visitor_count"},
+                    {"table": "regional_demand_observation", "column": "stay_index"},
+                    {"table": "regional_demand_observation", "column": "spend_index"},
+                    {
+                        "table": "regional_diversity_observation",
+                        "column": "nationality_index",
+                    },
+                ),
+                "target_table": "read_model_payload",
+                "target_column": "payload_blob",
+            },
+        )
+    },
+    "build_trend_product": {
+        "fields": (
+            {
+                "id": "lookup_key",
+                "label": "전역 게시 조회 키",
+                "name": "scope=global",
+                "inputs": (),
+                "target_table": "read_model_snapshot",
+                "target_column": "lookup_key",
+            },
+            {
+                "id": "payload",
+                "label": "관광 트렌드 응답 데이터",
+                "name": "출처 · 키워드 · 지역 · 관측값",
+                "inputs": (
+                    {"table": "social_observation", "column": "source_id"},
+                    {"table": "social_observation", "column": "keyword"},
+                    {"table": "social_observation", "column": "country_id"},
+                    {"table": "social_observation", "column": "area_id"},
+                    {"table": "social_observation", "column": "bucket_start"},
+                    {"table": "social_observation", "column": "post_count"},
+                    {"table": "social_observation", "column": "view_count"},
+                ),
+                "target_table": "read_model_payload",
+                "target_column": "payload_blob",
+            },
+        )
+    },
+    "build_inbound_product": {
+        "fields": (
+            {
+                "id": "lookup_key",
+                "label": "국가별 게시 조회 키",
+                "name": "country_id → country · period",
+                "inputs": (
+                    {"table": "country", "column": "eden_country_id"},
+                    {"table": "country", "column": "iso_alpha2"},
+                ),
+                "target_table": "read_model_snapshot",
+                "target_column": "lookup_key",
+            },
+            {
+                "id": "payload",
+                "label": "해외 시장 응답 데이터",
+                "name": "방문 · 항공 · 환율 · 관심도",
+                "inputs": (
+                    {"table": "inbound_visitor_observation", "column": "visitor_count"},
+                    {"table": "flight_observation", "column": "arriving_flights"},
+                    {"table": "fx_observation", "column": "krw_rate"},
+                    {
+                        "table": "tourism_balance_observation",
+                        "column": "balance_usd",
+                    },
+                    {"table": "social_observation", "column": "post_count"},
+                    {"table": "social_observation", "column": "view_count"},
+                ),
+                "target_table": "read_model_payload",
+                "target_column": "payload_blob",
+            },
+        )
+    },
+    "build_forecast_product": {
+        "fields": (
+            {
+                "id": "lookup_key",
+                "label": "지역별 게시 조회 키",
+                "name": "area_id → area_code",
+                "inputs": (
+                    {"table": "area", "column": "eden_area_id"},
+                ),
+                "target_table": "read_model_snapshot",
+                "target_column": "lookup_key",
+            },
+            {
+                "id": "payload",
+                "label": "방문 예측 응답 데이터",
+                "name": "예측 · 날씨 · 축제 · 공휴일",
+                "inputs": (
+                    {"table": "forecast_input", "column": "forecast_date"},
+                    {"table": "forecast_input", "column": "source_forecast"},
+                    {"table": "forecast_input", "column": "weather"},
+                    {"table": "forecast_input", "column": "festivals"},
+                    {"table": "forecast_input", "column": "holiday"},
+                ),
+                "target_table": "read_model_payload",
+                "target_column": "payload_blob",
+            },
+        )
+    },
+    "build_recommendation_product": {
+        "fields": (
+            {
+                "id": "lookup_key",
+                "label": "전역 게시 조회 키",
+                "name": "scope=global",
+                "inputs": (),
+                "target_table": "read_model_snapshot",
+                "target_column": "lookup_key",
+            },
+            {
+                "id": "payload",
+                "label": "여행지 추천 응답 데이터",
+                "name": "장소 · 관계 · 방문 · 수요",
+                "inputs": (
+                    {"table": "place", "column": "eden_place_id"},
+                    {"table": "place", "column": "area_id"},
+                    {"table": "place_relation", "column": "score"},
+                    {"table": "regional_visit_observation", "column": "visitor_count"},
+                    {"table": "regional_demand_observation", "column": "stay_index"},
+                    {"table": "regional_demand_observation", "column": "spend_index"},
+                ),
+                "target_table": "read_model_payload",
+                "target_column": "payload_blob",
+            },
+        )
+    },
 }
 
 # These routes are intentionally explicit. Foreign keys describe storage, but
@@ -673,6 +829,17 @@ def catalog() -> dict[str, Any]:
                 "sources": list(step["sources"]),
                 "inputs": list(step["inputs"]),
                 "outputs": list(step["outputs"]),
+                "graph": {
+                    "fields": [
+                        {
+                            **field,
+                            "inputs": list(field["inputs"]),
+                        }
+                        for field in PRODUCT_GRAPH_DETAILS.get(step["id"], {}).get(
+                            "fields", ()
+                        )
+                    ]
+                },
             }
             for step in FLOW_STEPS
         ],
