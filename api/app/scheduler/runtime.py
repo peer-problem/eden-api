@@ -339,14 +339,9 @@ def _runtime_scope(
                 )
                 scope["allowed_content_ids"] = allowed
                 scope["new_places_limit"] = 30
-            batch = (
-                [
-                    operations[(cursor + offset) % len(operations)]
-                    for offset in range(min(5, len(operations)))
-                ]
-                if operations
-                else []
-            )
+            from app.sources.plans import rotating_batch, scheduler_batch_size
+
+            batch = rotating_batch(operations, cursor, scheduler_batch_size(source_id))
             scope.update(
                 operations=batch,
                 rotate_operations=False,

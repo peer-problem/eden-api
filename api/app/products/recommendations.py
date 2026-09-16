@@ -213,9 +213,11 @@ def build_recommendation_snapshot(
         latest_demand.setdefault(row.area_id, row)
 
     season_totals: dict[tuple[str, str], float] = {}
+    visit_sources_by_area: dict[str, set[str]] = {}
     for row in visit_rows:
         key = (row.area_id, _season(row.period_start.month))
         season_totals[key] = season_totals.get(key, 0) + float(row.visitor_count or 0)
+        visit_sources_by_area.setdefault(row.area_id, set()).add(row.source_id)
     crowd_by_area: dict[str, dict[str, float | None]] = {}
     for area_id in areas:
         crowd_by_area[area_id] = {}
@@ -288,6 +290,14 @@ def build_recommendation_snapshot(
                         *(row.source_id for row in by_place_sources.get(place.eden_place_id, [])),
                         *(row.source_id for row in related),
                         *([demand.source_id] if demand else []),
+                        *(
+                            visit_sources_by_area.get(place.area_id, set())
+                            if any(
+                                value is not None
+                                for value in crowd_by_area.get(place.area_id, {}).values()
+                            )
+                            else set()
+                        ),
                     }
                 ),
             }

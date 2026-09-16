@@ -1757,3 +1757,46 @@ def test_alert_retention_keeps_active_entry_and_removes_expired_notice(pipeline)
             session.scalar(select(AlertRevision).where(AlertRevision.alert_id == "expired-notice"))
             is None
         )
+
+
+def test_alert_freshness_limit_follows_the_source_refresh_policy(pipeline: Pipeline) -> None:
+    response = pipeline.client.get("/v1/markets/JP/alerts", params={"language": "ko"})
+
+    assert response.status_code == 200
+    freshness = response.json()["meta"]["freshness"]
+    # The seeded refresh policy allows 86,400 s; the old fixed 3-hour limit
+    # marked every response between 12-hour collection runs as stale.
+    assert freshness["max_acceptable_age_seconds"] == 86_400
+
+
+def test_recommendation_sources_credit_the_crowd_index_observations(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.products import recommendations
+    from app.products.formulas import CROWD_FORMULA_VERSION, ScoreResult
+
+    monkeypatch.setattr(
+        recommendations,
+        "crowd_index",
+        lambda value, _population: ScoreResult(
+            50.0 if value is not None else None,
+            "available" if value is not None else "unavailable",
+            None,
+            CROWD_FORMULA_VERSION,
+        ),
+    )
+    candidates = []
+    monkeypatch.setattr(
+        recommendations.SnapshotPublisher,
+        "publish",
+        lambda _self, candidate: candidates.append(candidate),
+    )
+
+    recommendations.build_recommendation_snapshot(pipeline.session_factory)
+
+    assert candidates
+    feature = next(
+        feature for feature in candidates[0].data["features"] if feature["place_id"] == PLACE_ID
+    )
+    assert any(value is not None for value in feature["crowd_by_season"].values())
+    assert "SRC_KTO_REGIONAL_VISITORS" in feature["sources"]

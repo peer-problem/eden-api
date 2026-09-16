@@ -175,3 +175,67 @@ def test_monthly_statistical_group_fails_closed_when_request_budget_is_too_small
     assert selected == []
     assert notice and "rotating_operation_group" in notice
     assert error == "source_run:rotation_group_request_limit_exceeded"
+
+
+def test_semas_operations_carry_the_dataset_reference_month_watermark() -> None:
+    from app.sources.plans import semas_place_operations
+
+    operation = semas_place_operations([("eden_place_test", 37.5, 127.0)])[0]
+
+    assert operation["watermark"] == {"response_field": "stdrYm", "format": "%Y%m"}
+
+
+def test_scheduler_batches_fit_the_run_budgets() -> None:
+    from app.sources.plans import (
+        PUBLIC_DATA_REQUEST_HEADROOM,
+        TOUR_KO_AREAS_PER_RUN,
+        rotating_batch,
+        scheduler_batch_size,
+    )
+
+    # Five 1,000-row province catalogs exceeded the 2 MiB run budget; three fit.
+    assert scheduler_batch_size("SRC_TOUR_KO") == TOUR_KO_AREAS_PER_RUN == 3
+    assert scheduler_batch_size("SRC_KMA_FORECAST") == KMA_OPERATIONS_PER_RUN == 5
+    assert PUBLIC_DATA_REQUEST_HEADROOM >= 1
+    provinces = [f"area={code}" for code in range(17)]
+    assert rotating_batch(provinces, 15, 3) == ["area=15", "area=16", "area=0"]
+    assert rotating_batch(provinces, 0, 5) == provinces[:5]
+    assert rotating_batch(provinces[:2], 1, 5) == ["area=1", "area=0"]
+    assert rotating_batch([], 3, 5) == []
+
+
+def test_batched_sources_reserve_request_headroom_for_retries() -> None:
+    from app.sources.plans import PUBLIC_DATA_REQUEST_HEADROOM, TOUR_KO_AREAS_PER_RUN
+    from app.sources.registry import _batched_request_budget
+
+    configured = 5
+    assert (
+        _batched_request_budget("SRC_KMA_FORECAST", configured)
+        == KMA_OPERATIONS_PER_RUN + PUBLIC_DATA_REQUEST_HEADROOM
+    )
+    assert (
+        _batched_request_budget("SRC_TOUR_KO", configured)
+        == TOUR_KO_AREAS_PER_RUN * 2 + PUBLIC_DATA_REQUEST_HEADROOM
+    )
+    assert _batched_request_budget("SRC_KMA_FORECAST", 40) == 40
+    assert _batched_request_budget("SRC_FESTIVAL", configured) == configured
+
+
+def test_embassy_notice_budget_covers_the_waiting_room_and_five_boards() -> None:
+    from app.config import Settings
+    from app.sources.registry import EMBASSY_NOTICE_REQUEST_BUDGET, build_adapter
+
+    settings = Settings(
+        ENVIRONMENT="test",
+        DB_HOST="database.invalid",
+        DB_USER="test-only",
+        DB_PASSWORD="test-only",  # noqa: S106 - offline adapter construction
+        SCHEDULER_ENABLED=False,
+        SOURCE_MAX_REQUESTS_PER_RUN=5,
+    )
+    adapter = build_adapter("SRC_EMBASSY_NOTICE", settings, {"targets": []})
+    try:
+        # queue pass (redirect chain + polls + reload) plus five boards with two notices each
+        assert adapter.client.max_requests == EMBASSY_NOTICE_REQUEST_BUDGET >= 13 + 5 * 3
+    finally:
+        adapter.client.close()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import time
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -62,6 +63,15 @@ SKIP_EXTENSIONS = (
     ".pptx",
     ".pdf",
 )
+# overseas.mofa.go.kr answers through an F5 virtual waiting room: the first
+# request is redirected to /waitingroom/main.html with a queue cookie, and the
+# real page loads on the same client once /waitingroom/update.html reports
+# "done". The queue advances every few seconds; bound the wait by the run budget.
+WAITING_ROOM_PATH = "/waitingroom/"
+WAITING_ROOM_UPDATE_PAGE = "update.html"
+WAITING_ROOM_MAX_POLLS = 8
+WAITING_ROOM_DEFAULT_POLL_SECONDS = 5.0
+WAITING_ROOM_MAX_POLL_SECONDS = 10.0
 DATE_PATTERN = re.compile(r"(?<!\d)(20\d{2})[./-](0?[1-9]|1[0-2])[./-](0?[1-9]|[12]\d|3[01])(?!\d)")
 PUBLISHED_LABEL_PATTERN = re.compile(
     r"^(?:작성일|등록일|등록일자|게시일|published(?:\s+at)?|publication\s+date|date)$",
@@ -343,6 +353,23 @@ def parse_notice_feed(
     return items
 
 
+def _in_waiting_room(url: str) -> bool:
+    return urlparse(url).path.startswith(WAITING_ROOM_PATH)
+
+
+def _waiting_room_state(payload: bytes) -> tuple[bool, float]:
+    """Parse "<position> <ahead> <interval_ms>"; "done" means the queue released us."""
+    tokens = payload.decode("utf-8", "replace").split()
+    released = bool(tokens) and tokens[0].lower() == "done"
+    interval = WAITING_ROOM_DEFAULT_POLL_SECONDS
+    if len(tokens) >= 3:
+        try:
+            interval = int(tokens[2]) / 1000
+        except ValueError:
+            interval = WAITING_ROOM_DEFAULT_POLL_SECONDS
+    return released, min(max(interval, 1.0), WAITING_ROOM_MAX_POLL_SECONDS)
+
+
 class OfficialNoticeAdapter(SourceAdapter):
     def __init__(
         self,
@@ -364,6 +391,28 @@ class OfficialNoticeAdapter(SourceAdapter):
             max_total_bytes,
             max_run_seconds,
         )
+
+    def _get(self, url: str) -> tuple[bytes, str, str]:
+        """GET through the source's virtual waiting room when one is in front of it."""
+        payload, content_type, final_url = self.client.get(url)
+        if not _in_waiting_room(final_url):
+            return payload, content_type, final_url
+        update_url = urljoin(final_url, WAITING_ROOM_UPDATE_PAGE)
+        released = False
+        for _ in range(WAITING_ROOM_MAX_POLLS):
+            state, _state_type, _state_url = self.client.get(update_url)
+            released, interval = _waiting_room_state(state)
+            if released:
+                break
+            if self.client.remaining_seconds() <= interval + 1:
+                raise SourceRunBudgetExceeded("Source run exceeded configured time limit")
+            time.sleep(interval)
+        if not released:
+            raise ValueError("Source waiting room did not release the client")
+        payload, content_type, final_url = self.client.get(url)
+        if _in_waiting_room(final_url):
+            raise ValueError("Source waiting room did not release the client")
+        return payload, content_type, final_url
 
     def fetch(self, scope: dict[str, Any]) -> FetchResult:
         targets = scope.get("targets")
@@ -400,8 +449,8 @@ class OfficialNoticeAdapter(SourceAdapter):
             limit = _target_item_limit(target)
             try:
                 if bootstrap_url is not None:
-                    self.client.get(bootstrap_url)
-                payload, content_type, final_url = self.client.get(url)
+                    self._get(bootstrap_url)
+                payload, content_type, final_url = self._get(url)
                 if "rss" in content_type.lower() or "xml" in content_type.lower():
                     feed_errors: list[str] = []
                     feed_items = parse_notice_feed(
@@ -443,7 +492,7 @@ class OfficialNoticeAdapter(SourceAdapter):
                             if not countries:
                                 continue
                             detail_target = {**target, "countries": countries}
-                        detail, _detail_type, detail_final_url = self.client.get(detail_url)
+                        detail, _detail_type, detail_final_url = self._get(detail_url)
                         request_count += 1
                         canonical = _canonical_url(
                             detail_final_url,
