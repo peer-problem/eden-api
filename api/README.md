@@ -138,7 +138,7 @@ Public requests only read published database snapshots. They do not trigger exte
 
 Collection uses one source worker, request budgets and resource limits. Monthly regional demand and diversity sources are checked weekly. Monthly flight refreshes cover the two most recent months while existing history remains stored. Cleanup keeps the current snapshot and two recent retired versions, preserving their referenced facts and source evidence. Superseded catalog errors and sources outside the maintained scope are quarantined without deleting their raw evidence. API usage statistics are not written to the database.
 
-`SCHEDULER_ENABLED=false` pauses collection, refresh and automatic cleanup. `ALERT_ENRICHMENT_BATCH_SIZE=0` independently disables paid translation jobs; original official notices remain available. The deployment currently uses this zero translation budget.
+`SCHEDULER_ENABLED=false` pauses collection, refresh and automatic cleanup. In production the scheduler runs as its own process (`python -m app.scheduler`, systemd unit `eden-scheduler`) with the same jobs, intervals and locks, while the API process serves requests with the scheduler disabled; the API still records pilot usage with the ingestion account. `ALERT_ENRICHMENT_BATCH_SIZE=0` independently disables paid translation jobs; original official notices remain available. The deployment currently uses this zero translation budget.
 
 | Component | Responsibility |
 | --- | --- |
@@ -183,7 +183,7 @@ app/
   normalization/   # Regional and place identity resolution
   products/        # Published aggregates, outlooks, and recommendations
   readmodels/      # Public API queries
-  scheduler/       # Bounded collection, refresh and cleanup jobs
+  scheduler/       # Bounded collection, refresh and cleanup jobs; `python -m app.scheduler` runs them standalone
   operations/      # Maintenance and deployment validation logic
 migrations/        # Alembic migrations
 tests/             # Contract, integration, unit, and operations checks
