@@ -20,6 +20,7 @@ FORECAST_HORIZON_DAYS = 30
 # bounded to today..today+89 at run time. A fresh successful run therefore
 # proves that dates without rows inside that window have no event.
 REFERENCE_SOURCES = ("SRC_FESTIVAL", "SRC_HOLIDAY")
+INHERITED_REFERENCE_SOURCES = ("SRC_KMA_FORECAST", "SRC_HOLIDAY")
 REFERENCE_HORIZON_DAYS = 90
 REFERENCE_DEFAULT_MAX_AGE_SECONDS = 7 * 24 * 3600
 SEOUL = ZoneInfo("Asia/Seoul")
@@ -110,9 +111,11 @@ def build_forecast_snapshots(
             area = session.get(Area, area_id)
             if area is None:
                 continue
-            inherited_weather = (
+            # Weather is collected on the province grid and public holidays are
+            # written per province, so child areas inherit both from their parent.
+            inherited_from_parent = (
                 (ForecastInput.area_id == area.parent_area_id)
-                & (ForecastInput.source_id == "SRC_KMA_FORECAST")
+                & (ForecastInput.source_id.in_(INHERITED_REFERENCE_SOURCES))
                 if area.parent_area_id is not None
                 else False
             )
@@ -122,7 +125,7 @@ def build_forecast_snapshots(
                     .where(
                         or_(
                             ForecastInput.area_id == area_id,
-                            inherited_weather,
+                            inherited_from_parent,
                         ),
                         ForecastInput.forecast_date >= start,
                         ForecastInput.forecast_date < end,

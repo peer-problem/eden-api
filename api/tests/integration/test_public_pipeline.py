@@ -1837,3 +1837,58 @@ def test_forecast_reference_coverage_follows_source_freshness(pipeline: Pipeline
     assert response.status_code == 200
     assert all(row["festivals"] is None for row in response.json()["data"]["daily"])
     assert all(row["holiday"] is None for row in response.json()["data"]["daily"])
+
+
+def test_child_area_forecast_inherits_the_province_holiday(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.products import forecast
+
+    today = datetime.now(SEOUL).date()
+    start = datetime.combine(today, datetime.min.time())
+    audit = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=1)
+    child_id = "eden_area_forecast_child"
+    with pipeline.session_factory.begin() as session:
+        session.add(
+            Area(
+                eden_area_id=child_id,
+                administrative_code="1111000000",
+                name_ko="자식 시군구",
+                level="sigungu",
+                parent_area_id=AREA_ID,
+                active=True,
+                created_at=audit,
+                updated_at=audit,
+            )
+        )
+        session.add(
+            ForecastInput(
+                area_id=child_id,
+                forecast_date=start + timedelta(days=1),
+                source_forecast={"place_name": "자식 관광지", "concentration_rate": 40},
+                **_fact_audit(FORECAST_SOURCE, audit),
+            )
+        )
+        # Holidays are normalized per province only.
+        session.add(
+            ForecastInput(
+                area_id=AREA_ID,
+                forecast_date=start + timedelta(days=1),
+                holiday={"name": "임시공휴일", "is_holiday": True, "date_kind": "01"},
+                **_fact_audit("SRC_HOLIDAY", audit),
+            )
+        )
+
+    candidates = []
+    monkeypatch.setattr(
+        forecast.SnapshotPublisher,
+        "publish",
+        lambda _self, candidate: candidates.append(candidate),
+    )
+    build_forecast_snapshots(pipeline.session_factory)
+
+    child = next(item for item in candidates if item.data["eden_area_id"] == child_id)
+    inherited = [row for row in child.data["inputs"] if row["source_id"] == "SRC_HOLIDAY"]
+    assert [row["holiday"]["is_holiday"] for row in inherited] == [True]
+    assert child.metadata["spatial_resolution"] == "sigungu"
+    assert "inherited_sido_weather" not in child.quality_flags
