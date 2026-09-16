@@ -36,6 +36,31 @@ Check: `systemctl show eden-scheduler -p PartOf` prints `eden-api.service`,
 `curl -s 127.0.0.1:8000/internal/readiness` shows `"scheduler_enabled":false`,
 and `journalctl -u eden-scheduler` shows `scheduler_process_started`.
 
+## Soak evidence with two services
+
+`eden-phase1-soak.timer` and `eden-phase2-soak.timer` keep sampling every five
+minutes; each sample now records `eden-scheduler` next to the required services
+and derives `scheduler_enabled` from the API readiness flag plus the service
+state. Both evaluators restart their window whenever the release symlink
+changes, so a deploy resets the 24-hour and 7-day clocks.
+
+The Phase 1 gate needs probes from a scheduler-off phase inside the same
+window. With the split that phase is "scheduler service stopped, API serving":
+
+```bash
+systemctl stop eden-scheduler            # eden-api keeps serving
+systemd-run --wait --pipe --collect --uid=eden --gid=eden \
+  -p WorkingDirectory=/opt/eden/current/api -p EnvironmentFile=/opt/eden/shared/.env \
+  -p "UnsetEnvironment=MIGRATION_DB_USER MIGRATION_DB_PASSWORD VPS_PASSWORD" \
+  /opt/eden/current/api/.venv/bin/python -m app.operations phase1-soak baseline --iterations 20
+systemctl start eden-scheduler
+```
+
+Run it right after a timer tick so the two-minute gap holds no timer sample. A
+`systemctl stop`/`start` pair does not count as a restart, but a Phase 2 sample
+taken while the service is stopped is a `scheduler_disabled` violation that
+stays in the sliding window for seven days.
+
 ## Rollback to the in-process scheduler
 
 ```bash
