@@ -5,7 +5,7 @@
 - 수집 스케줄러를 API 프로세스에서 분리해 `python -m app.scheduler`로 단독 실행할 수 있게 했다. 잡, 주기, 리더 락, 용량 게이트는 그대로이며 리더 락을 잃으면 프로세스가 종료되어 systemd가 다시 시작한다. 선택한 loopback 포트로 스케줄러 지표를 노출한다.
 - production API는 스케줄러를 끄고 실행해도 파일럿 사용량 기록용 ingestion 연결을 유지한다. 개발과 테스트 환경은 이전처럼 쓰기 연결을 열지 않는다.
 - soak 증거는 `eden-scheduler` 서비스의 상태, 재시작 횟수, 메모리를 함께 기록하고, 스케줄러 활성 여부를 API readiness와 서비스 상태에서 함께 판정한다. 정지된 스케줄러 서비스는 서비스 장애가 아니라 scheduler-off 구간으로 본다.
-- 배포와 스키마 전환 명령은 VPS에 `eden-scheduler.service`가 있으면 API와 함께 정지하고 API 확인 뒤 재시작한다.
+- 운영 systemd 유닛과 watchdog을 `api/deploy/`에 둔다. `eden-scheduler.service`는 `PartOf`와 `Wants`로 `eden-api.service`에 묶여 배포 스크립트 변경 없이 API와 함께 정지·재시작된다. 스케줄러만 죽으면 스케줄러만 재시작된다.
 - 분리 후 dead-letter 재처리는 같은 프로세스의 API 지연(p95)을 읽을 수 없어 `api_latency_pressure` 감속이 적용되지 않는다. 메모리와 용량 게이트 감속은 그대로다.
 
 ## 0.2.0 (2026-09-11)
