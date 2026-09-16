@@ -5,11 +5,6 @@ export const API_BASE = (
   import.meta.env?.VITE_EDEN_API_URL ||
   (import.meta.env?.DEV ? "/eden-api/v1" : "https://api.edenapi.org/v1")
 ).replace(/\/$/, "");
-export const API_ORIGIN = API_BASE.replace(/\/v1$/, "");
-export const OPENAPI_URL = `${API_ORIGIN}/openapi.json`;
-export const PUBLIC_API_ORIGIN = API_ORIGIN.startsWith("http")
-  ? API_ORIGIN
-  : "https://api.edenapi.org";
 export class ApiError extends Error {
   constructor(
     message: string,

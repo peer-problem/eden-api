@@ -15,7 +15,6 @@ import MarketView from "./MarketView";
 import TrendView from "./TrendView";
 import RecommendationView from "./RecommendationView";
 import PlaceDetail from "./PlaceDetail";
-import ApiDocumentation from "./ApiDocumentation";
 import DatabaseWorkspace, {
   RecordDetail,
   type Row,
@@ -23,7 +22,6 @@ import DatabaseWorkspace, {
 import { getModelContext, registerExplorerTools } from "./webmcp";
 
 const views = [
-  { id: "docs", name: "API 문서", icon: "document-open" },
   { id: "database", name: "데이터 작업 공간", icon: "database" },
   { id: "regions", name: "지역 탐색", icon: "map-marker" },
   { id: "markets", name: "방한 시장", icon: "globe" },
@@ -65,7 +63,7 @@ export default function App() {
       ),
     [writeUrl],
   );
-  const view = views.find((v) => v.id === params.get("view")) ?? views[0];
+  const view = views.find((v) => v.id === params.get("view")) ?? views[1];
   const area = params.get("area") || regions[0].code;
   const placeId = params.get("place");
   const [inspector, setInspector] = useState<Inspector>(null);
@@ -179,7 +177,7 @@ export default function App() {
       <div className="sidebar-footer">
         {compact ? (
           <Tooltip
-            content="OpenAPI JSON"
+            content="API 문서"
             hoverOpenDelay={650}
             placement="right"
             minimal
@@ -187,8 +185,8 @@ export default function App() {
             <AnchorButton
               variant="minimal"
               icon="document-open"
-              aria-label="OpenAPI JSON"
-              href="https://api.edenapi.org/openapi.json"
+              aria-label="API 문서"
+              href="https://api.edenapi.org/docs"
               target="_blank"
               rel="noreferrer"
             />
@@ -199,11 +197,11 @@ export default function App() {
               variant="minimal"
               icon="document-open"
               endIcon="share"
-              href="https://api.edenapi.org/openapi.json"
+              href="https://api.edenapi.org/docs"
               target="_blank"
               rel="noreferrer"
             >
-              OpenAPI JSON
+              API 문서
             </AnchorButton>
             <span>공개 관광 데이터</span>
           </>
@@ -309,12 +307,13 @@ export default function App() {
         <span className="header-divider" />
         <span className="header-label">관광 데이터 탐색</span>
         <span className="toolbar-spacer" />
-        <Button
+        <AnchorButton
           variant="minimal"
           icon="help"
           aria-label="API 사용 안내"
-          active={view.id === "docs"}
-          onClick={() => update({ view: "docs" })}
+          href="https://api.edenapi.org/docs"
+          target="_blank"
+          rel="noreferrer"
         />
       </header>
       <div className="app-body">
@@ -325,14 +324,7 @@ export default function App() {
           <div className="workspace-bar">
             <Breadcrumbs
               items={[
-                {
-                  text:
-                    view.id === "database"
-                      ? "데이터"
-                      : view.id === "docs"
-                        ? "개발자"
-                        : "대한민국",
-                },
+                { text: view.id === "database" ? "데이터" : "대한민국" },
                 { text: view.name },
                 ...(view.id === "regions" ? [{ text: regionName(area) }] : []),
               ]}
@@ -364,16 +356,12 @@ export default function App() {
             className={
               view.id === "database"
                 ? "database-main"
-                : view.id === "docs"
-                  ? "docs-main"
                 : view.id === "regions"
                   ? "region-main"
                   : undefined
             }
           >
-            {view.id === "docs" ? (
-              <ApiDocumentation />
-            ) : view.id === "database" ? (
+            {view.id === "database" ? (
               <DatabaseWorkspace
                 {...viewProps}
                 showRecord={(table, row) => {
@@ -418,7 +406,7 @@ export default function App() {
         size="290px"
       >
         <div className="mobile-navigation">
-          {navigation(false, view.id !== "database" && view.id !== "docs")}
+          {navigation(false, view.id !== "database")}
         </div>
       </Drawer>
       <Drawer

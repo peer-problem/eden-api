@@ -1,4 +1,4 @@
-import { Button, Tag } from "@blueprintjs/core";
+import { Button, HTMLSelect, InputGroup, Tag } from "@blueprintjs/core";
 import {
   Background,
   Controls,
@@ -11,20 +11,17 @@ import {
   useNodesState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { fieldKey, traceField } from "./fieldTrace";
-import PublicTableData from "./PublicTableData";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useResource, type Resource } from "../api";
+import { DataTable, State } from "../ui";
 import type { ViewProps } from "../RegionView";
 import { readGraphLayout, saveGraphViewport, saveNodePosition } from "./layout";
 import schema from "./catalog.json";
-import { publicModel } from "./publicModel";
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 export type Row = Record<string, JsonValue>;
 interface CatalogColumn {
   name: string;
-  label?: string;
-  description?: string;
   type: string;
   nullable: boolean;
   primary_key: boolean;
@@ -46,14 +43,12 @@ interface CatalogSource {
   storage_mode: string;
   cadence_tier: string;
   graph?: {
-    note?: string;
     label?: string;
     operation?: string;
     fields: SourceGraphField[];
   };
 }
 interface SourceGraphField {
-  targets?: { table: string; column: string }[];
   name: string;
   label: string;
   target_table?: string;
@@ -195,20 +190,49 @@ export function RecordDetail({ table, row }: { table: string; row: Row }) {
 export default function Workspace({
   params,
   update,
+  showRecord,
 }: ViewProps & { showRecord: (table: string, row: Row) => void }) {
-  const requestedTable = findTable(params.get("table"));
+  const table = findTable(params.get("table"));
+  const connection = useResource<Catalog>("/catalog", undefined, "/internal/explorer");
+  const remoteCatalog = connection.response?.data;
+  const catalog = useMemo(() => {
+    const current = Array.isArray(remoteCatalog?.pipelines)
+      ? remoteCatalog
+      : offlineCatalog;
+    const offlineSources = new Map(
+      offlineCatalog.sources.map((source) => [source.source_id, source]),
+    );
+    return {
+      ...current,
+      sources: current.sources.map((source) => ({
+        ...source,
+        graph: source.graph ?? offlineSources.get(source.source_id)?.graph,
+      })),
+    };
+  }, [remoteCatalog]);
   const pipelineId =
-    params.get("pipeline") && offlineCatalog.pipelines.some((item) => item.id === params.get("pipeline"))
+    params.get("pipeline") && catalog.pipelines.some((item) => item.id === params.get("pipeline"))
       ? params.get("pipeline")!
-      : preferredPipeline[requestedTable.name] ?? "regional";
-  const catalog = useMemo(() => publicModel(pipelineId) as Catalog, [pipelineId]);
-  const table = requestedTable.name === 'source_registry' ? requestedTable : catalog.tables.find((item) => item.name === requestedTable.name) ?? catalog.tables[0];
+      : preferredPipeline[table.name] ?? "regional";
   const pipeline =
     catalog.pipelines.find((item) => item.id === pipelineId) ?? catalog.pipelines[0];
+  const sourceRows = useResource<Rows>(
+    "/tables/source_registry/rows?limit=100",
+    undefined,
+    "/internal/explorer",
+  );
   const [recordsOpen, setRecordsOpen] = useState(false);
+  const rowKey = params.get("row");
+  const lineage = useResource<Lineage>(
+    rowKey
+      ? `/tables/${table.name}/lineage?${new URLSearchParams({ key: rowKey })}`
+      : null,
+    undefined,
+    "/internal/explorer",
+  );
   const pipelineTables = useMemo(() => {
     const stepIds = new Set(pipeline.steps);
-    const names = new Set<string>();
+    const names = new Set(["source_registry", "ingestion_run", "raw_record"]);
     catalog.flow_steps
       .filter((step) => stepIds.has(step.id))
       .forEach((step) => {
@@ -236,7 +260,7 @@ export default function Workspace({
     setRecordsOpen(true);
     update({
       table: "source_registry",
-      row: "",
+      row: JSON.stringify({ source_id: sourceId }),
       dbOffset: "",
       dbColumn: "source_id",
       dbValue: sourceId,
@@ -244,6 +268,11 @@ export default function Workspace({
     });
   };
 
+  const connectionState = connection.loading
+    ? "연결 확인 중"
+    : connection.error
+      ? "DB 연결 전"
+      : "DB 연결됨";
   return (
     <div className="database-workspace">
       <div className="pipeline-bars">
@@ -272,7 +301,7 @@ export default function Workspace({
             </Button>
           ))}
         </nav>
-        <nav className="table-switcher" aria-label={`${pipeline.label} 제공 지표`}>
+        <nav className="table-switcher" aria-label={`${pipeline.label} 테이블`}>
           <div className="table-switcher-scroll">
             {pipelineTables.map((candidate) => (
               <Button
@@ -281,7 +310,7 @@ export default function Workspace({
                 small
                 active={candidate.name === table.name}
                 aria-current={candidate.name === table.name ? "true" : undefined}
-                title={candidate.label}
+                title={candidate.name}
                 onClick={() => selectGraphTable(candidate.name)}
               >
                 {candidate.label}
@@ -289,7 +318,18 @@ export default function Workspace({
             ))}
           </div>
           <div className="database-status">
-            <Tag minimal>공개 API</Tag>
+            <Tag minimal>{connectionState}</Tag>
+            <Button
+              variant="minimal"
+              small
+              icon="refresh"
+              onClick={() => {
+                connection.retry();
+                sourceRows.retry();
+                if (rowKey) lineage.retry();
+              }}
+              aria-label="데이터 다시 조회"
+            />
           </div>
         </nav>
       </div>
@@ -299,18 +339,21 @@ export default function Workspace({
           catalog={catalog}
           pipeline={pipeline}
           selectedTable={table}
-          sourceRows={[]}
-          lineageLoading={false}
+          sourceRows={sourceRows.response?.data?.rows ?? []}
+          lineage={lineage.response?.data ?? undefined}
+          lineageLoading={lineage.loading}
           onTable={selectGraphTable}
           onSource={selectSource}
         />
         {recordsOpen && (
-          <aside className="database-record-panel" aria-label={`${table.label} 관련 API 데이터`}>
-            <PublicTableData
-              key={`${pipeline.id}:${table.name}:${params.get('dbValue') ?? ''}`}
+          <aside className="database-record-panel" aria-label={`${table.label} 실제 레코드`}>
+            <TableRows
+              key={table.name}
               table={table}
-              pipeline={pipeline.id}
               params={params}
+              update={update}
+              showRecord={showRecord}
+              lineage={lineage}
               onClose={() => setRecordsOpen(false)}
             />
           </aside>
@@ -318,21 +361,6 @@ export default function Workspace({
       </div>
     </div>
   );
-}
-
-const FieldFocus = createContext({ selected: null as string | null, fields: new Set<string>(), select: (_key: string) => {} });
-
-function FieldRow({ node, handle, className, children, label }: { node: string; handle: string; className: string; children: ReactNode; label?: string }) {
-  const focus = useContext(FieldFocus);
-  const key = fieldKey(node, handle);
-  const active = focus.fields.has(key);
-  return <div role="button" tabIndex={0} aria-pressed={focus.selected === key}
-    aria-label={`${label ?? `${node.replace(/^(table|step|provider):/, '')}.${handle.replace(/^(source|target):/, '')}`} 연결 보기`}
-    className={`${className} nodrag field-interactive${active ? ' field-traced' : ''}${focus.selected === key ? ' field-origin' : ''}`}
-    onClick={(event) => { event.stopPropagation(); focus.select(key); }}
-    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); focus.select(key); } }}>
-    {children}
-  </div>;
 }
 
 function PipelineGraph({
@@ -354,10 +382,6 @@ function PipelineGraph({
   onTable: (name: string) => void;
   onSource: (sourceId: string) => void;
 }) {
-  const [selectedField, setSelectedField] = useState<string | null>(null);
-  const [onlyPath, setOnlyPath] = useState(false);
-  const [orthogonal, setOrthogonal] = useState(false);
-  useEffect(() => { setSelectedField(null); }, [pipeline.id]);
   const graph = useMemo(() => {
     const stepIds = new Set(pipeline.steps);
     const steps = catalog.flow_steps.filter((step) => stepIds.has(step.id));
@@ -395,7 +419,15 @@ function PipelineGraph({
     );
     const tableByName = new Map(catalog.tables.map((table) => [table.name, table]));
     const sourcesWithServiceHandles = new Set(
-      sources.map((source) => source.source_id),
+      steps
+        .filter((step) => step.kind === "transform")
+        .flatMap((step) =>
+          step.outputs.some((output) =>
+            tableByName.get(output)?.columns.some((column) => column.name === "source_id"),
+          )
+            ? step.sources
+            : [],
+        ),
     );
     let providerY = 72;
     const providerNodes: Node[] = [...providerGroups.entries()].map(
@@ -437,7 +469,7 @@ function PipelineGraph({
       const index = stageItems.findIndex((item) => item.name === definition.name);
       return {
         id: `table:${definition.name}`,
-        position: { x: 650, y: graphTables.slice(0, graphTables.indexOf(definition)).reduce((height, item) => height + 105 + item.columns.length * 30, 0) },
+        position: { x: [0, 430, 800, 1180, 1580, 2240][stage], y: index * 290 },
         data: { label: <TableNode table={definition} selected={definition.name === selectedTable.name} /> },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
@@ -450,7 +482,7 @@ function PipelineGraph({
       step.sources.flatMap((sourceId) => {
         const source = sources.find((item) => item.source_id === sourceId);
         if (!source) return [];
-        return (source.graph?.fields ?? []).flatMap((field) => field.targets ? field.targets.map((target) => ({ ...field, target_table: target.table, target_column: target.column })) : [field])
+        return (source.graph?.fields ?? [])
           .filter(
             (field) =>
               field.target_table &&
@@ -462,7 +494,7 @@ function PipelineGraph({
     const stepNodes: Node[] = [
       ...products.map((step, index) => ({
         id: `step:${step.id}`,
-        position: { x: 1200, y: index * 230 + 72 },
+        position: { x: 1930, y: index * 230 + 320 },
         data: { label: <ProductNode step={step} fields={step.graph?.fields ?? []} /> },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
@@ -523,14 +555,14 @@ function PipelineGraph({
             (mapping) => mapping.source.source_id === source.source_id,
           );
           step.outputs.forEach((output) => {
-            if (tableByName.get(output)?.columns.some((column) => column.name === "meta.sources[].source_id")) {
+            if (tableByName.get(output)?.columns.some((column) => column.name === "source_id")) {
               addEdge(
                 providerId,
                 `table:${output}`,
                 "",
                 "source-flow-edge",
                 serviceHandle,
-                "target:meta.sources[].source_id",
+                "target:source_id",
               );
             }
           });
@@ -687,14 +719,6 @@ function PipelineGraph({
   }, [catalog, pipeline, selectedTable, sourceRows, lineage, onSource]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(graph.nodes);
-  const fieldTrace = useMemo(() => selectedField ? traceField(graph.edges, selectedField) : null, [graph.edges, selectedField]);
-  const displayedEdges = graph.edges.filter((edge) => !selectedField || !onlyPath || fieldTrace?.edges.has(edge.id)).map((edge) => {
-    const traced = fieldTrace?.edges.has(edge.id);
-    return { ...edge, type: orthogonal ? 'smoothstep' : edge.type,
-      zIndex: traced ? 10 : 0,
-      markerEnd: { type: MarkerType.ArrowClosed, color: traced ? '#167b82' : '#7f8996' },
-      className: `${edge.className ?? ''}${selectedField ? traced ? ' field-traced-edge' : ' field-unrelated-edge' : ''}` };
-  });
   const previousPipeline = useRef(pipeline.id);
   useEffect(() => {
     const pipelineChanged = previousPipeline.current !== pipeline.id;
@@ -710,20 +734,12 @@ function PipelineGraph({
   }, [graph.nodes, pipeline.id, setNodes]);
 
   return (
-    <section className={`pipeline-canvas${selectedField ? ' has-field-focus' : ''}`} aria-label={`${pipeline.label} 데이터 흐름`}
-      onKeyDown={(event) => { if (event.key === 'Escape') setSelectedField(null); }}>
-      <div className="field-trace-controls">
-        <Button small active={orthogonal} onClick={() => setOrthogonal((value) => !value)}>직각 연결</Button>
-        {selectedField ? <>
-          <span role="status">{JSON.parse(selectedField)[1]} · 연결 {fieldTrace?.edges.size ?? 0}개</span>
-          <Button small active={onlyPath} onClick={() => setOnlyPath((value) => !value)}>연결만 보기</Button>
-          <Button small icon="cross" aria-label="속성 선택 해제" onClick={() => setSelectedField(null)} />
-        </> : <span>속성을 선택하면 연결 경로가 표시됩니다</span>}
-      </div>
+    <section className="pipeline-canvas" aria-label={`${pipeline.label} 데이터 흐름`}>
       <div className="pipeline-legend" aria-hidden="true">
         <span><i className="legend-source" />외부 출처</span>
-        <span><i className="legend-table" />제공 지표</span>
-        <span><i className="legend-product" />API 응답 필드</span>
+        <span><i className="legend-table" />테이블</span>
+        <span><i className="legend-schema" />FK 관계</span>
+        <span><i className="legend-product" />제품 생성</span>
         {lineage && <span><i className="legend-record" />선택 레코드 경로</span>}
       </div>
       {lineageLoading && <div className="lineage-loading">레코드 경로 조회 중</div>}
@@ -733,12 +749,10 @@ function PipelineGraph({
           {lineage.truncated ? " · 일부 표시" : ""}
         </div>
       )}
-      <FieldFocus.Provider value={{ selected: selectedField, fields: fieldTrace?.fields ?? new Set(), select: (key) => setSelectedField((current) => current === key ? null : key) }}>
       <ReactFlow
         key={pipeline.id}
-        nodes={previousPipeline.current !== pipeline.id ? graph.nodes : nodes}
-        edges={displayedEdges}
-        onPaneClick={() => setSelectedField(null)}
+        nodes={nodes}
+        edges={graph.edges}
         onNodesChange={onNodesChange}
         onNodeDragStop={(_, node) =>
           saveNodePosition(
@@ -762,13 +776,11 @@ function PipelineGraph({
         maxZoom={1.35}
         onNodeClick={(_, node) => {
           if (node.id.startsWith("table:")) onTable(node.id.slice(6));
-          if (node.id.startsWith("step:")) onTable(catalog.tables[0].name);
         }}
       >
         <Background gap={22} color="#d8dde5" />
         <Controls showInteractive={false} />
       </ReactFlow>
-      </FieldFocus.Provider>
     </section>
   );
 }
@@ -786,7 +798,6 @@ function ProviderNode({
   onSource: (sourceId: string) => void;
   sourcesWithServiceHandles: Set<string>;
 }) {
-  const focus = useContext(FieldFocus);
   return (
     <div className="provider-node-content">
       <div className="provider-heading">
@@ -804,14 +815,12 @@ function ProviderNode({
             <section className="provider-service" key={source.source_id}>
               <button
                 type="button"
-                className={`provider-service-heading nodrag field-interactive${focus.fields.has(fieldKey(providerNodeId(ownerName), `service:${source.source_id}`)) ? ' field-traced' : ''}${focus.selected === fieldKey(providerNodeId(ownerName), `service:${source.source_id}`) ? ' field-origin' : ''}`}
-                aria-pressed={focus.selected === fieldKey(providerNodeId(ownerName), `service:${source.source_id}`)}
+                className="provider-service-heading nodrag"
                 onClick={(event) => {
                   event.stopPropagation();
-                  focus.select(fieldKey(providerNodeId(ownerName), `service:${source.source_id}`));
                   onSource(source.source_id);
                 }}
-                title={`${source.source_id} API 출처 정보 보기`}
+                title={`${source.source_id} 레코드 보기`}
               >
                 <span className="provider-service-name">
                   <strong>{source.graph?.label ?? source.source_id}</strong>
@@ -820,7 +829,7 @@ function ProviderNode({
                 <span className={`source-live-state source-${statusClass}`}>
                   {state
                     ? `${status}${stopped ? " · 수집 중지" : ""}`
-                    : "출처"}
+                    : "코드 등록"}
                 </span>
                 {sourcesWithServiceHandles.has(source.source_id) && (
                   <Handle
@@ -831,17 +840,16 @@ function ProviderNode({
                   />
                 )}
               </button>
-              {source.graph?.note && <p style={{ padding: '6px 10px', margin: 0, fontSize: '10px', lineHeight: 1.5 }}>{source.graph.note}</p>}
               {!!fields.length && (
                 <div className="source-field-list">
                   {fields.map((field) => (
-                    <FieldRow node={providerNodeId(ownerName)} handle={sourceFieldHandle(source.source_id, field.name)}
+                    <div
                       className={`source-field${field.raw_only ? " source-field-raw" : ""}`}
                       key={field.name}
                     >
                       <span>{field.label}</span>
                       <span className="mono">{field.name}</span>
-                      {field.raw_only && <b>연결 없음</b>}
+                      {field.raw_only && <b>원본만</b>}
                       {!field.raw_only && (
                         <Handle
                           type="source"
@@ -850,7 +858,7 @@ function ProviderNode({
                           className="field-handle source-field-handle"
                         />
                       )}
-                    </FieldRow>
+                    </div>
                   ))}
                 </div>
               )}
@@ -866,19 +874,21 @@ function TableNode({ table, selected }: { table: CatalogTable; selected: boolean
   return (
     <div className="table-node-content">
       <strong>{table.label}</strong>
+      <span className="mono node-id">{table.name}</span>
       <div className="node-columns nodrag nowheel">
         {table.columns.map((column) => (
-          <FieldRow node={`table:${table.name}`} handle={`source:${column.name}`} label={`${table.label} · ${column.label ?? column.name}`} className="node-column" key={column.name}>
+          <div className="node-column" key={column.name}>
             <Handle
               type="target"
               position={Position.Left}
               id={`target:${column.name}`}
               className="field-handle table-field-handle table-field-handle-target"
             />
-            <span className="column-flags" />
-            <span className="column-name" title={column.name}>{column.label ?? column.name}
-              {column.description && <small style={{ display: 'block', whiteSpace: 'normal', maxWidth: '220px', fontSize: '9px', lineHeight: 1.5, color: '#62717e' }}>{column.description}</small>}
+            <span className="column-flags">
+              {column.primary_key && <b>PK</b>}
+              {!!column.references.length && <b>FK</b>}
             </span>
+            <span className="mono column-name">{column.name}</span>
             <span className="mono column-type">{column.type}{column.nullable ? " ?" : ""}</span>
             <Handle
               type="source"
@@ -886,7 +896,7 @@ function TableNode({ table, selected }: { table: CatalogTable; selected: boolean
               id={`source:${column.name}`}
               className="field-handle table-field-handle table-field-handle-source"
             />
-          </FieldRow>
+          </div>
         ))}
       </div>
       {selected && <span className="selected-node-label">현재 데이터</span>}
@@ -907,7 +917,7 @@ function ProductNode({
       <span className="mono node-code">{step.code_ref}</span>
       <div className="product-fields nodrag nowheel">
         {fields.map((field) => (
-          <FieldRow node={`step:${step.id}`} handle={`source:${field.id}`} label={field.name} className="product-field" key={field.id}>
+          <div className="product-field" key={field.id}>
             {!!field.inputs.length && (
               <Handle
                 type="target"
@@ -918,15 +928,137 @@ function ProductNode({
             )}
             <span>{field.label}</span>
             <span className="mono">{field.name}</span>
-            {field.target_table && <Handle
+            <Handle
               type="source"
               position={Position.Right}
               id={`source:${field.id}`}
               className="field-handle product-field-handle product-field-handle-source"
-            />}
-          </FieldRow>
+            />
+          </div>
         ))}
       </div>
     </div>
+  );
+}
+
+function TableRows({
+  table,
+  params,
+  update,
+  showRecord,
+  lineage,
+  onClose,
+}: {
+  table: CatalogTable;
+  params: URLSearchParams;
+  update: ViewProps["update"];
+  showRecord: (table: string, row: Row) => void;
+  lineage: Resource<Lineage>;
+  onClose: () => void;
+}) {
+  const initialColumn = params.get("dbColumn") || "";
+  const [column, setColumn] = useState(initialColumn);
+  const [value, setValue] = useState(params.get("dbValue") || "");
+  useEffect(() => {
+    setColumn(params.get("dbColumn") || "");
+    setValue(params.get("dbValue") || "");
+  }, [params.toString()]);
+  const offset = Math.max(0, Math.min(5000, Number(params.get("dbOffset")) || 0));
+  const query = new URLSearchParams({ offset: String(offset), limit: "50" });
+  if (initialColumn && table.columns.some((item) => item.name === initialColumn)) {
+    query.set("filter_column", initialColumn);
+    query.set("filter_value", params.get("dbValue") || "");
+  }
+  const resource = useResource<Rows>(
+    `/tables/${table.name}/rows?${query}`,
+    undefined,
+    "/internal/explorer",
+  );
+  const rows = resource.response?.data?.rows ?? [];
+  const selectedKey = params.get("row");
+  return (
+    <section className="workspace-records">
+      <div className="records-heading">
+        <div>
+          <h2>실제 레코드</h2>
+          <span className="mono">{table.name}</span>
+        </div>
+        <div className="records-heading-actions">
+          <Button variant="minimal" icon="refresh" onClick={resource.retry}>다시 조회</Button>
+          <Button variant="minimal" icon="cross" aria-label="실제 레코드 닫기" onClick={onClose} />
+        </div>
+      </div>
+      <form
+        className="toolbar record-toolbar"
+        onSubmit={(event) => {
+          event.preventDefault();
+          update({ dbColumn: column, dbValue: value, dbOffset: "", row: "" });
+        }}
+      >
+        <HTMLSelect
+          aria-label="필터 열"
+          value={column}
+          onChange={(event) => setColumn(event.target.value)}
+          options={[
+            { label: "필터 없음", value: "" },
+            ...table.columns.map((item) => ({ label: item.name, value: item.name })),
+          ]}
+        />
+        <InputGroup
+          aria-label="필터 값 (정확히 일치)"
+          placeholder="정확히 일치하는 값"
+          disabled={!column}
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          maxLength={500}
+        />
+        <Button type="submit" icon="filter">적용</Button>
+        <Button variant="minimal" onClick={() => update({ dbColumn: "", dbValue: "", dbOffset: "", row: "" })}>초기화</Button>
+        {selectedKey && (
+          <Button variant="minimal" icon="cross" onClick={() => update({ row: "" })}>
+            계보 강조 해제
+          </Button>
+        )}
+      </form>
+      <State resource={resource} empty={!rows.length}>
+        <DataTable label={`${table.name} 데이터`} headers={["선택", ...table.columns.map((item) => item.name)]}>
+          {rows.map((row) => {
+            const key = Object.fromEntries(table.primary_key.map((name) => [name, row[name]]));
+            const serializedKey = JSON.stringify(key);
+            return (
+              <tr key={serializedKey} className={selectedKey === serializedKey ? "selected-record-row" : undefined}>
+                <td>
+                  <Button
+                    variant="minimal"
+                    small
+                    icon="data-lineage"
+                    active={selectedKey === serializedKey}
+                    onClick={() => {
+                      update({ row: serializedKey, dbTab: "" });
+                      showRecord(table.name, row);
+                    }}
+                  >
+                    그래프에 표시
+                  </Button>
+                </td>
+                {table.columns.map((item) => (
+                  <td key={item.name} className="db-cell" title={row[item.name] == null ? "NULL" : displayValue(row[item.name])}>
+                    {row[item.name] == null ? <span className="muted">NULL</span> : displayValue(row[item.name])}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
+        </DataTable>
+      </State>
+      {lineage.error && selectedKey && <p className="inline-note">{lineage.error}</p>}
+      <div className="pagination">
+        <Button icon="chevron-left" disabled={!offset || resource.loading} onClick={() => update({ dbOffset: String(Math.max(0, offset - 50)), row: "" })}>이전</Button>
+        <span className="muted">
+          {resource.response ? `${offset + (rows.length ? 1 : 0)}–${offset + rows.length}행` : "조회 전"} · 최대 50행씩
+        </span>
+        <Button endIcon="chevron-right" disabled={!resource.response?.data?.has_more || resource.loading || offset >= 5000} onClick={() => update({ dbOffset: String(offset + 50), row: "" })}>다음</Button>
+      </div>
+    </section>
   );
 }
