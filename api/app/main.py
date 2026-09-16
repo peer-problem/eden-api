@@ -54,16 +54,22 @@ def create_app(
             factory = create_session_factory(engine)
             app.state.read_repository = MariaDBReadRepository(factory)
             app.state.session_factory = factory
-            if resolved_settings.SCHEDULER_ENABLED:
-                from app.scheduler.runtime import start_scheduler
-
+            # Pilot usage rows are written with the ingestion account. Production keeps
+            # recording them when the scheduler runs as its own process.
+            if (
+                resolved_settings.SCHEDULER_ENABLED
+                or resolved_settings.ENVIRONMENT == "production"
+            ):
                 scheduler_engine = create_scheduler_database_engine(resolved_settings)
                 scheduler_factory = create_session_factory(scheduler_engine)
                 app.state.pilot_session_factory = scheduler_factory
-                app.state.scheduler = start_scheduler(
-                    resolved_settings,
-                    scheduler_factory,
-                )
+                if resolved_settings.SCHEDULER_ENABLED:
+                    from app.scheduler.runtime import start_scheduler
+
+                    app.state.scheduler = start_scheduler(
+                        resolved_settings,
+                        scheduler_factory,
+                    )
         yield
         scheduler = getattr(app.state, "scheduler", None)
         if scheduler is not None:

@@ -1,0 +1,44 @@
+# EDEN collection scheduler as its own process. Same code, jobs, intervals and
+# locks as the former in-API scheduler; only the process boundary is new, so
+# scheduler memory growth can no longer stall the public API.
+#
+# PartOf/After bind it to eden-api.service: the unchanged deploy script's
+# `systemctl stop|restart|start eden-api` stops, restarts and starts this unit
+# too (stop before the API, start after it). Its own failures do not touch the API.
+[Unit]
+Description=EDEN scheduler (collection, publication, retention)
+After=network-online.target mariadb.service eden-api.service
+Wants=network-online.target
+Requires=mariadb.service
+PartOf=eden-api.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=eden
+Group=eden
+WorkingDirectory=/opt/eden/current/api
+EnvironmentFile=/opt/eden/shared/.env
+EnvironmentFile=-/opt/eden/shared/phase1-contract.env
+UnsetEnvironment=MIGRATION_DB_USER MIGRATION_DB_PASSWORD VPS_PASSWORD
+# Retention rebuilds large reference sets in a worker thread every five minutes;
+# capping glibc malloc arenas keeps that churn from growing RSS indefinitely.
+Environment=MALLOC_ARENA_MAX=2
+ExecStart=/opt/eden/current/api/.venv/bin/python -m app.scheduler --metrics-port 8001
+Restart=always
+RestartSec=10
+TimeoutStopSec=90
+CPUQuota=60%
+CPUWeight=50
+MemoryHigh=infinity
+MemoryMax=600M
+MemorySwapMax=0
+TasksMax=64
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

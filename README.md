@@ -75,9 +75,11 @@ Python 3.12는 uv가 준비합니다. DB 연결에는 MariaDB Connector/C 3.4 �
 
 API 배포는 이미 구성된 VPS에 `api/`와 두 운영 실행 파일을 전송합니다. 운영 의존성을 설치하고 `.env`에서 생성한 설정을 반영한 뒤 API를 재시작합니다. SSH fingerprint와 DB TLS, 계정별 권한을 확인하며 실패하면 이전 release와 환경 파일을 복구합니다.
 
+운영 VPS에서 수집·게시·정리 스케줄러는 `eden-scheduler.service`가 `python -m app.scheduler`로 별도 프로세스에서 실행합니다. `eden-api.service`는 `/opt/eden/shared/api.env`의 `SCHEDULER_ENABLED=false`로 공개 API만 담당하며, 두 서비스는 각자 메모리 상한을 갖습니다. 잡 내용과 주기, 락, 용량 게이트는 프로세스 분리 전과 같습니다. 스케줄러 유닛은 `PartOf`와 `Wants`로 API 유닛에 묶여 있어 배포 스크립트의 `systemctl stop/restart/start eden-api`가 두 서비스에 함께 적용됩니다. 유닛 파일과 최초 설치 절차는 [api/deploy/README.md](api/deploy/README.md)에 있습니다.
+
 Nginx와 systemd 설정은 VPS의 기존 구성을 사용합니다. 서버 계정과 타이머를 다시 만들거나 과거 배포 파일을 청소하지 않습니다. 일반 배포에서 DB 마이그레이션과 데이터 수집도 수행하지 않습니다.
 
-API는 설정된 scheduler 상태로 한 번 시작한 뒤 readiness와 공개 OpenAPI 접속을 확인합니다. 성능 baseline 측정과 전체 경로 warmup은 배포 중 자동 실행하지 않습니다. 스키마 전환에 필요한 soak 증거는 별도로 준비해야 하며 기존 전환 조건은 유지합니다.
+API는 scheduler 없이 시작한 뒤 readiness와 공개 OpenAPI 접속을 확인하며, 스케줄러 서비스는 systemd 의존성으로 API와 함께 재시작됩니다. 성능 baseline 측정과 전체 경로 warmup은 배포 중 자동 실행하지 않습니다. 스키마 전환에 필요한 soak 증거는 별도로 준비해야 하며 기존 전환 조건은 유지합니다.
 
 대시보드를 배포할 Mac에는 `npm install -g vercel`로 Vercel CLI도 설치합니다. 대시보드 배포는 루트 `.env`의 `VERCEL_DEPLOY_KEY`로 `eden-frontend` 프로젝트를 사용합니다. 배포 범위는 `dashboard/`이며 설치와 빌드는 Vercel에서 수행합니다. 브라우저에 필요한 공개 설정만 `VITE_` 접두사를 사용하며 비밀값에는 이 접두사를 붙이지 않습니다.
 

@@ -1,0 +1,7 @@
+[Unit]
+Description=EDEN API liveness watchdog (kills a frozen API so Restart=always recovers it)
+After=eden-api.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/eden-api-watchdog

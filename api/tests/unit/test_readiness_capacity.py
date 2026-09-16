@@ -80,21 +80,31 @@ def test_production_readiness_passes_with_a_clear_capacity_gate() -> None:
     }
 
 
-def test_scheduler_off_serves_requests_without_opening_a_writer(monkeypatch) -> None:
+def test_scheduler_off_serves_requests_and_keeps_the_pilot_writer(monkeypatch) -> None:
+    """A production API without the in-process scheduler still records pilot usage.
+
+    The scheduler now runs as eden-scheduler.service, so the API's own process role
+    no longer decides whether pilot rows are written with the ingestion account.
+    """
     settings = _production_settings().model_copy(update={"SCHEDULER_ENABLED": False})
     disposed = []
     monkeypatch.setattr(
         main_module,
         "create_database_engine",
-        lambda _settings: SimpleNamespace(dispose=lambda: disposed.append(True)),
+        lambda _settings: SimpleNamespace(dispose=lambda: disposed.append("reader")),
     )
-    monkeypatch.setattr(main_module, "create_session_factory", lambda _engine: object())
+    monkeypatch.setattr(
+        main_module,
+        "create_scheduler_database_engine",
+        lambda _settings: SimpleNamespace(dispose=lambda: disposed.append("writer")),
+    )
+    monkeypatch.setattr(main_module, "create_session_factory", lambda engine: ("factory", engine))
     monkeypatch.setattr(main_module, "MariaDBReadRepository", lambda _factory: ReadyRepository())
 
-    def forbidden_writer(_settings):
-        raise AssertionError("Scheduler-off API must not open an ingestion connection")
+    def forbidden_scheduler(*_args):
+        raise AssertionError("Scheduler-off API must not start the scheduler")
 
-    monkeypatch.setattr(main_module, "create_scheduler_database_engine", forbidden_writer)
+    monkeypatch.setattr("app.scheduler.runtime.start_scheduler", forbidden_scheduler)
     app = create_app(settings)
     with TestClient(app) as client:
         response = client.get("/internal/readiness", headers={"X-EDEN-Pilot": "test-client"})
@@ -102,5 +112,5 @@ def test_scheduler_off_serves_requests_without_opening_a_writer(monkeypatch) -> 
         assert response.json()["scheduler_enabled"] is False
         assert response.json()["warnings"] == []
         assert not hasattr(app.state, "scheduler")
-        assert not hasattr(app.state, "pilot_session_factory")
-    assert disposed == [True]
+        assert app.state.pilot_session_factory[0] == "factory"
+    assert disposed == ["reader", "writer"]

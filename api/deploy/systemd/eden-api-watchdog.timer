@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the EDEN API liveness watchdog every 30 seconds
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=30
+AccuracySec=5
+Unit=eden-api-watchdog.service
+
+[Install]
+WantedBy=timers.target

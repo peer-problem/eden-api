@@ -174,3 +174,4 @@ def test_local_deployment_commands_use_only_the_requested_destination(tmp_path, 
     else:
         assert actions.startswith("vercel deploy --prod --yes --project eden-frontend")
         assert "ssh " not in actions
+
