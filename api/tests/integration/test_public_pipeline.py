@@ -1066,7 +1066,7 @@ def test_all_eight_public_routes_read_built_or_normalized_database_products(
     assert recommendation.status_code == 200, recommendation.text
     recommendation_payload = recommendation.json()
     assert recommendation_payload["data"]["recommendations"][0]["place"]["content_id"]
-    assert recommendation_payload["meta"]["availability"] == "partial"
+    assert recommendation_payload["meta"]["availability"] == "available"
 
     assert bodies[0]["data"]["sources"] == ["SRC_YOUTUBE"]
     assert bodies[1]["data"]["visitors"]["total"] == 100
@@ -1892,3 +1892,15 @@ def test_child_area_forecast_inherits_the_province_holiday(
     assert [row["holiday"]["is_holiday"] for row in inherited] == [True]
     assert child.metadata["spatial_resolution"] == "sigungu"
     assert "inherited_sido_weather" not in child.quality_flags
+
+
+def test_inbound_flights_block_is_available_without_passenger_counts(pipeline: Pipeline) -> None:
+    response = pipeline.client.get(
+        "/v1/markets/inbound", params={"countries": "JP", "period": "3m", "include": "flights"}
+    )
+
+    assert response.status_code == 200
+    market = response.json()["data"]["markets"][0]
+    assert market["arriving_flights"] is not None
+    assert market["passengers"] is None
+    assert market["source_availability"]["flights"] == {"availability": "available", "reason": None}

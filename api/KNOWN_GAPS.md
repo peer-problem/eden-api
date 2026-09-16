@@ -25,7 +25,7 @@
 | markets/{country}/alerts | `source_scope=local`, `status=inactive`, `source_type=foreign_affairs` | 현지 기관 수집기 없음, 비활성 문서는 삭제되므로 도달 불가 |
 | recommendations | `estimated_budget_krw`, `budget_krw`, `days`, `party_size`, 접근성·이동시간 조건 | 검증 원천 없음 |
 
-원천 계획이 없다면 스키마에서 제거하거나 문서에 미제공으로 고정하는 편이 사용자에게 정직하다. 둘 다 API 계약 변경이므로 팀 결정 사항이다.
+**결정(2026-09-16):** 위 필드는 "미제공"으로 문서화하고(README "Fields That Are Not Provided", OpenAPI 필드 설명) 가용성 판정에서 제외한다. 필드와 응답 구조는 그대로 두어 대시보드와 클라이언트는 영향을 받지 않는다. 그 결과 insights·inbound·recommendations는 원천이 있는 필드가 모두 채워지면 `available`로 응답한다. 원천이 생기면 해당 필드를 채우고 이 목록에서 빼면 된다.
 
 ## 데이터 품질로 격리된 항목
 

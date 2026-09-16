@@ -230,19 +230,25 @@ FIELD_DESCRIPTIONS = {
         "0~100 참고 수요 지수. 역사적 요일 중앙값의 동률 중간 순위 백분위 또는 공식 지표."
     ),
     "expected_visitors": (
-        "공식 원천이 제공한 예상 인원. 참고 지수로 인원을 만들지 않으며 없으면 null."
+        "예상 인원. 현재 어떤 원천도 인원 예측을 제공하지 않아 항상 null이며 "
+        "참고 지수로 인원을 만들지 않습니다."
     ),
-    "confidence": "검증된 신뢰도만 허용합니다. 현재 참고 전망에서는 null.",
+    "confidence": "검증된 신뢰도만 허용합니다. 현재 신뢰도 원천이 없어 항상 null.",
     "method": ("official은 공식 전망. historical_weekday_proxy는 방문 관측에 기반한 참고 지수."),
     "sample_count": "참고 전망의 분포에 사용한 유효 일별 관측 수. 같은 날짜는 한 번 셉니다.",
     "basis": "같은 요일 표본 수와 전체 중앙값 대체 여부 및 장기 연장 설명.",
     "posts": "검색 표본의 게시물 또는 영상 관측 수. 날짜별 합계는 고유 게시물 수가 아닙니다.",
     "views": "검색 표본 영상의 조회 수 합계. 실제 국적별 시청자 수가 아닙니다.",
     "reactions": "해당 원천 표본의 반응 수. 미제공 반응을 0으로 대체하지 않습니다.",
-    "passengers": ("원천이 제공한 항공 여객 수(명). 항공편 수를 대입하지 않으며 없으면 null."),
+    "passengers": (
+        "항공 여객 수(명). 공항공사 국가별 통계는 운항편 수만 제공하므로 항상 null이며 "
+        "가용성 판정에서 제외됩니다."
+    ),
     "arriving_flights": "해당 국가에서 도착하는 운항편 수. 여객 수와 다른 지표입니다.",
     "completeness_ratio": ("요청 관측 창의 제공 비율(0~1). 누락된 날짜를 0명으로 해석하지 마세요."),
-    "estimated_budget_krw": ("검증된 여행 비용(KRW). 현재 관광지별 원천이 없어 null."),
+    "estimated_budget_krw": (
+        "검증된 여행 비용(KRW). 관광지별 비용 원천이 없어 항상 null이며 가용성 판정에서 제외됩니다."
+    ),
     "applied_constraints": "실제 필터와 순위에 반영한 입력 조건 및 값.",
     "unapplied_inputs": "명시적으로 전달했지만 적용하지 못한 입력의 이름, 값과 사유.",
     "requested_area_code": (
@@ -258,23 +264,29 @@ FIELD_DESCRIPTIONS.update(
     {
         "accessibility_required": "필수 접근성 조건. 검증 원천이 없어 true이면 추천 불가.",
         "address": "실제 반환 언어의 원천 주소. 미보유 시 null.",
-        "age_index": "공식 원천의 연령 다양성 지수(0~100). 원천이 없으면 null.",
+        "age_index": (
+            "연령 다양성 지수(0~100). 공식 원천이 없어 항상 null이며 가용성 판정에서 제외됩니다."
+        ),
         "age_seconds": "응답 생성 시각에서 자료 기준 시각까지 지난 초. 기준일이 없으면 null.",
         "area": "실제 자료에 대응하는 행정구역.",
         "area_code": "행정구역 코드. 요청 시에는 EDEN 지역 ID도 허용.",
         "attraction_name": "관광지별 방문 원천의 조회 대상 이름. 지역 집계이면 null.",
         "availability": "available은 제공 가능, partial은 일부 제공, unavailable은 제공 불가.",
         "available_languages": "현재 보유한 콘텐츠 언어 코드 목록.",
-        "avg_stay_nights": "공식 관측의 평균 숙박일 수(박). 원천이 없으면 null.",
+        "avg_stay_nights": (
+            "평균 숙박일 수(박). 공식 원천이 없어 항상 null이며 가용성 판정에서 제외됩니다."
+        ),
         "avoid_crowds": "보유한 혼잡 참고 지표를 추천 순위에 반영. 기본 false.",
         "baseline_start": "비교 관측 창 시작 날짜. 경계 포함.",
         "baseline_end": "비교 관측 창 마지막 날짜. 경계 포함.",
-        "budget_availability": "비용 검증 가능 여부. 현재 원천이 없어 unavailable.",
+        "budget_availability": (
+            "비용 검증 가능 여부. 원천이 없어 항상 unavailable이며 결과 가용성을 낮추지 않습니다."
+        ),
         "budget_krw": "요청 예산(KRW). 현재 비용 검증 원천이 없어 순위에 미반영.",
         "category": "원천에서 확인한 장소 분류 코드 또는 이름. 임의 테마를 만들지 않음.",
         "code": "클라이언트가 오류를 구별하는 안정된 오류 코드.",
         "comparison": "요청한 이전 기간 또는 전년 동기 비교. 미요청 시 null.",
-        "concentration_rate": "원천 방문 집중률(%). 원천이 없으면 null.",
+        "concentration_rate": "원천 방문 집중률(%). 방문 시계열 원천은 제공하지 않아 항상 null.",
         "condition": "기상청 관측 코드에서 해석한 날씨 상태. 미보유 시 null.",
         "constraints": "추천 필터와 필수 조건. 적용 여부는 응답에서 확인.",
         "content_id": "상세 조회에 사용할 고유 EDEN 관광지 ID.",
@@ -286,7 +298,7 @@ FIELD_DESCRIPTIONS.update(
         "date": "Asia/Seoul 기준 전망 대상 날짜.",
         "demand": "공식 월간 수요 지표 블록. 미선택 시 null.",
         "destination": "항공편의 도착 공항 또는 노선 목적지 원천 코드.",
-        "destination_searches": "해당 관측 구간의 관광지 검색 수. 원천이 없으면 null.",
+        "destination_searches": "관광지 검색 수. 연결된 원천이 없어 항상 null.",
         "details": "오류 필드 위치와 사유. 부가 정보가 없으면 null.",
         "distance_m": "관광지 좌표에서 상점 좌표까지 직선거리(m). 이동거리가 아님.",
         "diversity": "공식 월간 다양성 지표 블록. 미선택 시 null.",

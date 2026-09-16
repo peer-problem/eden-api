@@ -121,6 +121,11 @@ def _latest_month(rows):
     return [row for row in rows if str(row["period_start"])[:7] == latest]
 
 
+# Declared fields with no current source. They stay null by contract and are
+# excluded from availability so that fully sourced blocks read as available.
+UNSOURCED_FIELDS = ("demand.avg_stay_nights", "diversity.age_index")
+
+
 def build_region_insight_view(
     product: dict[str, Any], scope: dict[str, Any]
 ) -> tuple[dict[str, Any], Availability, str | None]:
@@ -229,12 +234,12 @@ def build_region_insight_view(
         stay_values = [value for value in stay if value is not None]
         spend_values = [value for value in spend if value is not None]
         night_values = [value for value in nights if value is not None]
-        present_dimensions = sum(
-            bool(values) for values in (stay_values, spend_values, night_values)
-        )
+        # avg_stay_nights has no official source (see UNSOURCED_FIELDS); it stays
+        # null and does not degrade the block.
+        present_dimensions = sum(bool(values) for values in (stay_values, spend_values))
         state = (
             Availability.AVAILABLE
-            if present_dimensions == 3
+            if present_dimensions == 2
             else Availability.PARTIAL
             if present_dimensions
             else Availability.UNAVAILABLE
@@ -262,14 +267,9 @@ def build_region_insight_view(
         nationalities = [
             value for row in rows if (value := _number(row.get("nationality_index"))) is not None
         ]
-        has_any_dimension = bool(ages or nationalities)
-        state = (
-            Availability.AVAILABLE
-            if ages and nationalities
-            else Availability.PARTIAL
-            if has_any_dimension
-            else Availability.UNAVAILABLE
-        )
+        # age_index has no official source (see UNSOURCED_FIELDS); nationality
+        # diversity is the only sourced dimension and decides the block.
+        state = Availability.AVAILABLE if nationalities else Availability.UNAVAILABLE
         states.append(state)
         diversity = {
             "data_period": str(rows[0]["period_start"])[:7] if rows else None,
@@ -277,15 +277,7 @@ def build_region_insight_view(
             "nationality_index": (bounded_index(mean(nationalities)) if nationalities else None),
             "availability": state.value,
             "reason": (
-                None
-                if state == Availability.AVAILABLE
-                else (
-                    "연령 다양성 원천이 없어 국적 다양성만 제공합니다."
-                    if not ages
-                    else "국적 다양성 원천이 없어 연령 다양성만 제공합니다."
-                )
-                if state == Availability.PARTIAL
-                else "요청 기간의 다양성 관측이 없습니다."
+                None if state == Availability.AVAILABLE else "요청 기간의 다양성 관측이 없습니다."
             ),
         }
 

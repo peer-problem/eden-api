@@ -119,6 +119,19 @@ Successful queries return a `data` and `meta` envelope. Missing information is n
 
 Sources publish on different schedules. Check individual data blocks as well as the overall metadata. Invalid inputs return `422`, unknown IDs return `404`, and requests exceeding rate limits return `429`.
 
+### Fields That Are Not Provided
+
+Some declared fields have no verified source today. They are always `null` (or `unavailable` for their availability block), and they are excluded from `meta.availability`, so a response is `available` when every sourced field is present. The list is the current product decision (2026-09-16); adding a source to any of them is a separate change.
+
+| Endpoint | Field | Why |
+| --- | --- | --- |
+| `/v1/regions/{area_code}/insights` | `demand.avg_stay_nights`, `diversity.age_index` | The official regional statistics publish no such dimension |
+| `/v1/visitors/timeseries` | `concentration_rate`, `summary.peak_concentration_rate` | The visitor statistics do not publish concentration |
+| `/v1/forecasts/visitors` | `expected_visitors`, `confidence`, `adjustment_factors` | No source forecasts headcounts or confidence; the reference index is not scaled into people |
+| `/v1/markets/inbound` | `passengers`, `social_interest.youtube.score` | Airport statistics publish flight counts only; a search sample is not a country signal |
+| `/v1/trends` | `destination_searches`, `search_ratio`, `sns_mentions` | No connected source; NAVER and the other social platforms need external approval |
+| `/v1/recommendations/destinations` | `estimated_budget_krw`, `budget_krw`, `travel_window.days`, `party_size`, `constraints.accessibility_required`, `constraints.max_travel_minutes` | No verified cost, stay, capacity, accessibility or travel-time source |
+
 ### Understanding the Indicators
 
 - **YouTube metrics** describe a sample of publicly available search results. A search region filter does not identify viewers' nationalities.

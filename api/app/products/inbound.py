@@ -369,14 +369,21 @@ def build_inbound_snapshots(
                     "availability": availability.value,
                     "reason": reason,
                 },
+                # passengers has no source (the airport statistics publish flight
+                # counts only) and stays null without degrading the block.
                 "flights": {
-                    "availability": "partial" if current_flights else "unavailable",
+                    "availability": (
+                        "unavailable"
+                        if not current_flights
+                        else "partial"
+                        if flight_change_reason
+                        else "available"
+                    ),
                     "reason": (
-                        "국가별 도착 운항편 수는 있으나 여객 수는 원천에서 제공하지 않습니다."
-                        if current_flights
-                        else "월간 국가별 항공 관측이 없습니다."
-                    )
-                    + (f" {flight_change_reason}" if flight_change_reason else ""),
+                        "월간 국가별 항공 관측이 없습니다."
+                        if not current_flights
+                        else flight_change_reason
+                    ),
                 },
                 "flight_schedule": {
                     "availability": "available" if schedule else "unavailable",
