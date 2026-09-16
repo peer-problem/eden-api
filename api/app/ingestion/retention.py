@@ -36,12 +36,18 @@ def retain_observations(
             select(m.ReadModelSnapshot.metadata_json["normalized_references"])
             .execution_options(yield_per=10)
         )
-        for reference in references:
-            if monotonic() >= deadline or (pause_reason and pause_reason()):
-                # Incomplete protection must never permit deletion.
-                return {}
-            for kind, identifiers in (reference or {}).items():
-                protected[kind].update(str(value) for value in identifiers)
+        # The streaming result holds an unbuffered server-side cursor. Leaving it
+        # unread on an early exit poisons the pooled connection ("Commands out of
+        # sync" on the next statement), so always close it before the session.
+        try:
+            for reference in references:
+                if monotonic() >= deadline or (pause_reason and pause_reason()):
+                    # Incomplete protection must never permit deletion.
+                    return {}
+                for kind, identifiers in (reference or {}).items():
+                    protected[kind].update(str(value) for value in identifiers)
+        finally:
+            references.close()
     policies = [
         (m.RegionalVisitObservation, "observation_id", "period_start", now - timedelta(days=486)),
         (

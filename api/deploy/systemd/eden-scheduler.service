@@ -21,6 +21,9 @@ WorkingDirectory=/opt/eden/current/api
 EnvironmentFile=/opt/eden/shared/.env
 EnvironmentFile=-/opt/eden/shared/phase1-contract.env
 UnsetEnvironment=MIGRATION_DB_USER MIGRATION_DB_PASSWORD VPS_PASSWORD
+# Retention rebuilds large reference sets in a worker thread every five minutes;
+# capping glibc malloc arenas keeps that churn from growing RSS indefinitely.
+Environment=MALLOC_ARENA_MAX=2
 ExecStart=/opt/eden/current/api/.venv/bin/python -m app.scheduler --metrics-port 8001
 Restart=always
 RestartSec=10
