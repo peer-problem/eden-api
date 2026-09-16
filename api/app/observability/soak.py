@@ -26,6 +26,10 @@ REQUIRED_SERVICES = (
     "mariadb",
     "nginx",
 )
+# The scheduler may run inside eden-api or as its own service. Its restarts and memory
+# are tracked, but a stopped scheduler is a scheduler-off phase, not a service failure.
+SCHEDULER_SERVICE = "eden-scheduler"
+MONITORED_SERVICES = (*REQUIRED_SERVICES, SCHEDULER_SERVICE)
 REQUIRED_PUBLIC_ENDPOINTS = (
     "trends",
     "region_insights",
@@ -55,7 +59,7 @@ def _key_value_file(path: Path) -> dict[str, int]:
 
 
 def _service_state(service: str) -> dict[str, Any]:
-    if service not in REQUIRED_SERVICES:
+    if service not in MONITORED_SERVICES:
         raise ValueError(f"Unsupported soak service: {service}")
     result = subprocess.run(  # noqa: S603 - executable and argument are allowlisted
         (
@@ -92,6 +96,18 @@ def _readiness_state() -> tuple[bool, bool | None]:
         return False, None
 
 
+def scheduler_enabled_state(
+    api_scheduler_enabled: bool | None,
+    scheduler_service: dict[str, Any] | None,
+) -> bool | None:
+    """Combine the API readiness flag with the standalone scheduler service state."""
+    if api_scheduler_enabled is True:
+        return True
+    if isinstance(scheduler_service, dict) and scheduler_service.get("active_state") == "active":
+        return True
+    return False if api_scheduler_enabled is False else None
+
+
 def collect_sample(
     *,
     now: datetime | None = None,
@@ -100,14 +116,17 @@ def collect_sample(
     sampled_at = now or datetime.now(UTC)
     memory = _key_value_file(Path("/proc/meminfo"))
     vmstat = _key_value_file(Path("/proc/vmstat"))
-    readiness, scheduler_enabled = _readiness_state()
+    readiness, api_scheduler_enabled = _readiness_state()
+    services = {service: _service_state(service) for service in MONITORED_SERVICES}
     return {
         "sampled_at": sampled_at.astimezone(UTC).isoformat(),
         "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
         "release": str(release_path.resolve()),
         "readiness": readiness,
-        "scheduler_enabled": scheduler_enabled,
-        "services": {service: _service_state(service) for service in REQUIRED_SERVICES},
+        "scheduler_enabled": scheduler_enabled_state(
+            api_scheduler_enabled, services.get(SCHEDULER_SERVICE)
+        ),
+        "services": services,
         "memory": {
             "available_bytes": memory.get("MemAvailable"),
             "swap_total_bytes": memory.get("SwapTotal"),
@@ -197,7 +216,7 @@ def evaluate_samples(
     retention_disabled_samples = 0
     capacity_gate_failures = 0
     capacity_evidence_missing_samples = 0
-    restart_counts: dict[str, list[int]] = {service: [] for service in REQUIRED_SERVICES}
+    restart_counts: dict[str, list[int]] = {service: [] for service in MONITORED_SERVICES}
     for sample in tail:
         if not sample.get("readiness"):
             readiness_failures += 1
@@ -220,9 +239,9 @@ def evaluate_samples(
             ):
                 capacity_gate_failures += 1
         services = sample.get("services", {})
-        for service in REQUIRED_SERVICES:
+        for service in MONITORED_SERVICES:
             state = services.get(service, {})
-            if state.get("active_state") != "active":
+            if service in REQUIRED_SERVICES and state.get("active_state") != "active":
                 service_failures.append(service)
             restarts = state.get("restarts")
             if isinstance(restarts, int):
@@ -373,7 +392,7 @@ def evaluate_samples(
             ),
             default=None,
         )
-        for service in REQUIRED_SERVICES
+        for service in MONITORED_SERVICES
     }
 
     violations: list[str] = []

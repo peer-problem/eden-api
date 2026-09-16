@@ -174,3 +174,59 @@ def test_local_deployment_commands_use_only_the_requested_destination(tmp_path, 
     else:
         assert actions.startswith("vercel deploy --prod --yes --project eden-frontend")
         assert "ssh " not in actions
+
+
+@pytest.mark.parametrize("scheduler_unit", [True, False])
+def test_deploy_cycles_the_standalone_scheduler_around_the_api_switch(tmp_path, scheduler_unit):
+    root = tmp_path / "eden"
+    shared = root / "shared"
+    shared.mkdir(parents=True)
+    previous = root / "releases/20260916T100000Z"
+    release = root / "releases/20260916T110000Z"
+    for directory in (previous, release):
+        (directory / "api").mkdir(parents=True)
+    (root / "current").symlink_to(previous)
+    for name in ("runtime.env", "migration.env"):
+        (release / name).write_text(f"new {name}")
+        target = shared / (".env" if name == "runtime.env" else name)
+        target.write_text(f"old {name}")
+        target.chmod(0o640 if name == "runtime.env" else 0o600)
+    script = tmp_path / "deploy.sh"
+    script.write_text(DEPLOY_SCRIPT.read_text().replace("/opt/eden", str(root)))
+    harness = r'''
+EDEN_OPS_LIBRARY_ONLY=true source "$1"
+validate_migration_environment() { :; }
+load_dotenv_file() { :; }
+uv() { [[ "$1" == sync ]] || cat >/dev/null; }
+runuser() { :; }
+chown() { :; }
+chmod() { :; }
+systemctl() {
+  case "$1" in
+    show) printf '%s/current/api\n' "$ROOT" ;;
+    cat) [[ "$SCHEDULER_UNIT" == true ]] ;;
+    *) printf '%s\n' "$*" >>"$ROOT/actions" ;;
+  esac
+}
+install() { cp "${@: -2:1}" "${@: -1}"; }
+wait_for_api() { :; }
+curl() { :; }
+remote_deploy "$2"
+'''
+    result = subprocess.run(  # noqa: S603 - local fixtures and stubbed system commands
+        ["/bin/bash", "-c", harness, "deploy-test", str(script), str(release)],
+        env={**os.environ, "ROOT": str(root), "SCHEDULER_UNIT": str(scheduler_unit).lower()},
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    actions = (root / "actions").read_text().splitlines()
+    assert (root / "current").resolve() == release
+    if scheduler_unit:
+        assert actions == [
+            "stop eden-scheduler.service",
+            "stop eden-api",
+            "restart eden-api",
+            "restart eden-scheduler.service",
+        ]
+    else:
+        assert actions == ["stop eden-api", "restart eden-api"]
