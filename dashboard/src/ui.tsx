@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { availabilityName, date, number } from './data';
 import type { Meta, Source } from './types';
 import type { Resource } from './api';
+import catalog from './explorer/catalog.json';
 
 export function Picker({
   label,
@@ -162,24 +163,46 @@ export function Properties({ rows }: { rows: [string, ReactNode][] }) {
   );
 }
 export function Sources({ sources }: { sources: Source[] }) {
+  const collectedAt = (value: string | null | undefined) => {
+    if (!value) return '—';
+    const timestamp = new Date(value);
+    if (Number.isNaN(timestamp.getTime())) return '—';
+    return `${new Intl.DateTimeFormat('ko-KR', {
+      timeZone: 'Asia/Seoul',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).format(timestamp)} KST`;
+  };
   return (
     <div className="source-list">
       {sources.length === 0 && (
         <p className="muted">제공된 출처 정보가 없습니다.</p>
       )}
-      {sources.map((s, i) => (
+      {sources.map((s, i) => {
+        const source = catalog.sources.find((entry) => entry.source_id === s.source_id);
+        const tables = [...new Set(catalog.flow_steps
+          .filter((step) => step.kind === 'transform' && step.sources.some((id) => id === s.source_id))
+          .flatMap((step) => step.outputs))];
+        return (
         <section key={`${s.source_id}-${i}`}>
-          <span className="mono source-id">{s.source_id}</span>
           <Properties
             rows={[
-              ['상태', <Status value={s.status} stale={s.stale} />],
-              ['관측 기준일', date(s.data_as_of)],
-              ['마지막 수집 성공', date(s.last_success_at)],
+              ['출처', source?.owner_name ?? s.source_id],
+              ['출처 ID', <span className="mono source-id">{s.source_id}</span>],
+              ['저장 테이블', tables.length ? tables.map((table) => (
+                <span className="source-table mono" key={table}>{table}</span>
+              )) : '—'],
+              ['자료 기준일', date(s.data_as_of)],
+              ['최근 수집 성공', collectedAt(s.last_success_at)],
+              ...(s.stale || !['available', 'active'].includes(s.status)
+                ? [['수집 상태', <Status value={s.status} stale={s.stale} />] as [string, ReactNode]]
+                : []),
             ]}
           />
           {s.reason && <p className="muted break-text">{s.reason}</p>}
         </section>
-      ))}
+        );
+      })}
     </div>
   );
 }

@@ -15,6 +15,7 @@ import MarketView from "./MarketView";
 import TrendView from "./TrendView";
 import RecommendationView from "./RecommendationView";
 import PlaceDetail from "./PlaceDetail";
+import ApiDocumentation from "./ApiDocumentation";
 import DatabaseWorkspace, {
   RecordDetail,
   type Row,
@@ -22,6 +23,7 @@ import DatabaseWorkspace, {
 import { getModelContext, registerExplorerTools } from "./webmcp";
 
 const views = [
+  { id: "docs", name: "API 문서", icon: "document-open" },
   { id: "database", name: "데이터 작업 공간", icon: "database" },
   { id: "regions", name: "지역 탐색", icon: "map-marker" },
   { id: "markets", name: "방한 시장", icon: "globe" },
@@ -63,12 +65,14 @@ export default function App() {
       ),
     [writeUrl],
   );
-  const view = views.find((v) => v.id === params.get("view")) ?? views[1];
+  const view = views.find((v) => v.id === params.get("view")) ?? views[0];
   const area = params.get("area") || regions[0].code;
   const placeId = params.get("place");
   const [inspector, setInspector] = useState<Inspector>(null);
   const [detailOpen, setDetailOpen] = useState(() => Boolean(placeId));
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [workspaceActionsTarget, setWorkspaceActionsTarget] =
+    useState<HTMLDivElement | null>(null);
   const [isNarrow, setNarrow] = useState(
     () => matchMedia("(max-width: 1100px)").matches,
   );
@@ -155,8 +159,7 @@ export default function App() {
                 aria-current={r.code === area ? "true" : undefined}
                 onClick={() => update({ area: r.code })}
               >
-                <span>{r.name}</span>
-                <span className="region-code">{r.code.slice(0, 2)}</span>
+                {r.name}
               </Button>
             ))}
           </nav>
@@ -176,7 +179,7 @@ export default function App() {
       <div className="sidebar-footer">
         {compact ? (
           <Tooltip
-            content="API 문서"
+            content="OpenAPI JSON"
             hoverOpenDelay={650}
             placement="right"
             minimal
@@ -184,8 +187,8 @@ export default function App() {
             <AnchorButton
               variant="minimal"
               icon="document-open"
-              aria-label="API 문서"
-              href="https://api.edenapi.org/docs"
+              aria-label="OpenAPI JSON"
+              href="https://api.edenapi.org/openapi.json"
               target="_blank"
               rel="noreferrer"
             />
@@ -196,11 +199,11 @@ export default function App() {
               variant="minimal"
               icon="document-open"
               endIcon="share"
-              href="https://api.edenapi.org/docs"
+              href="https://api.edenapi.org/openapi.json"
               target="_blank"
               rel="noreferrer"
             >
-              API 문서
+              OpenAPI JSON
             </AnchorButton>
             <span>공개 관광 데이터</span>
           </>
@@ -224,9 +227,6 @@ export default function App() {
     <>
       <div className="inspector-heading">
         <div>
-          <span className="eyebrow">
-            {inspector?.kind === "sources" ? "데이터 근거" : "선택 객체"}
-          </span>
           <h2>{detailTitle}</h2>
         </div>
         <Button
@@ -245,14 +245,6 @@ export default function App() {
           <Properties
             rows={[
               ["자료 기준일", date(inspector.meta.as_of)],
-              [
-                "가용성",
-                <Status
-                  value={inspector.meta.availability}
-                  stale={inspector.meta.stale}
-                />,
-              ],
-              ["지역 범위", inspector.meta.spatial_resolution],
             ]}
           />
           {inspector.meta.reason && (
@@ -272,7 +264,6 @@ export default function App() {
               <Properties
                 rows={[
                   ["이름", regionName(area)],
-                  ["행정 코드", <span className="mono">{area}</span>],
                   ["유형", "시도"],
                 ]}
               />
@@ -300,7 +291,7 @@ export default function App() {
       )}
     </>
   );
-  const viewProps = { params, update, showSources };
+  const viewProps = { params, update, showSources, workspaceActionsTarget };
   return (
     <div className="app">
       <a className="skip-link" href="#main">
@@ -318,13 +309,12 @@ export default function App() {
         <span className="header-divider" />
         <span className="header-label">관광 데이터 탐색</span>
         <span className="toolbar-spacer" />
-        <AnchorButton
+        <Button
           variant="minimal"
           icon="help"
           aria-label="API 사용 안내"
-          href="https://api.edenapi.org/docs"
-          target="_blank"
-          rel="noreferrer"
+          active={view.id === "docs"}
+          onClick={() => update({ view: "docs" })}
         />
       </header>
       <div className="app-body">
@@ -335,21 +325,38 @@ export default function App() {
           <div className="workspace-bar">
             <Breadcrumbs
               items={[
-                { text: view.id === "database" ? "데이터" : "대한민국" },
+                {
+                  text:
+                    view.id === "database"
+                      ? "데이터"
+                      : view.id === "docs"
+                        ? "개발자"
+                        : "대한민국",
+                },
                 { text: view.name },
                 ...(view.id === "regions" ? [{ text: regionName(area) }] : []),
               ]}
             />
-            {hasInspectorContent && (
-              <Button
-                variant="minimal"
-                icon="panel-stats"
-                active={detailOpen}
-                onClick={() => (detailOpen ? closeDetail() : setDetailOpen(true))}
-                aria-label="상세 패널 전환"
-                aria-expanded={detailOpen}
-              />
-            )}
+            <div className="workspace-bar-actions">
+              {view.id === "regions" && (
+                <div
+                  className="workspace-bar-region-slot"
+                  ref={setWorkspaceActionsTarget}
+                />
+              )}
+              {hasInspectorContent && (
+                <Button
+                  variant="minimal"
+                  icon="panel-stats"
+                  active={detailOpen}
+                  onClick={() =>
+                    detailOpen ? closeDetail() : setDetailOpen(true)
+                  }
+                  aria-label="상세 패널 전환"
+                  aria-expanded={detailOpen}
+                />
+              )}
+            </div>
           </div>
           <main
             id="main"
@@ -357,12 +364,16 @@ export default function App() {
             className={
               view.id === "database"
                 ? "database-main"
+                : view.id === "docs"
+                  ? "docs-main"
                 : view.id === "regions"
                   ? "region-main"
                   : undefined
             }
           >
-            {view.id === "database" ? (
+            {view.id === "docs" ? (
+              <ApiDocumentation />
+            ) : view.id === "database" ? (
               <DatabaseWorkspace
                 {...viewProps}
                 showRecord={(table, row) => {
@@ -407,7 +418,7 @@ export default function App() {
         size="290px"
       >
         <div className="mobile-navigation">
-          {navigation(false, view.id !== "database")}
+          {navigation(false, view.id !== "database" && view.id !== "docs")}
         </div>
       </Drawer>
       <Drawer

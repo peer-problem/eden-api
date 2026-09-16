@@ -5,6 +5,7 @@ import {
   saveGraphViewport,
   saveNodePosition,
 } from "./explorer/layout";
+import catalog from "./explorer/catalog.json";
 
 class MemoryStorage {
   private values = new Map<string, string>();
@@ -76,4 +77,43 @@ test("corrupt storage does not break the graph", () => {
   storage.setItem("eden-explorer:graph-layout:v2:regional", "not-json");
 
   assert.deepEqual(readGraphLayout(storage, "regional"), { positions: {} });
+});
+
+test("every product field route terminates at real table attributes", () => {
+  const tables = new Map(
+    catalog.tables.map((table) => [
+      table.name,
+      new Set(table.columns.map((column) => column.name)),
+    ]),
+  );
+  const products = catalog.flow_steps.filter((step) => step.kind === "product");
+
+  assert.ok(products.length > 0);
+  for (const step of products) {
+    assert.ok(step.graph.fields.length > 0, `${step.id} needs explicit field routes`);
+    for (const field of step.graph.fields) {
+      assert.ok(
+        tables.get(field.target_table)?.has(field.target_column),
+        `${step.id}.${field.id} targets missing ${field.target_table}.${field.target_column}`,
+      );
+      for (const input of field.inputs) {
+        assert.ok(
+          tables.get(input.table)?.has(input.column),
+          `${step.id}.${field.id} reads missing ${input.table}.${input.column}`,
+        );
+      }
+    }
+  }
+});
+
+test("inbound country identity is published through the snapshot lookup key", () => {
+  const inbound = catalog.flow_steps.find((step) => step.id === "build_inbound_product");
+  const lookup = inbound?.graph.fields.find((field) => field.id === "lookup_key");
+
+  assert.deepEqual(lookup?.inputs, [
+    { table: "country", column: "eden_country_id" },
+    { table: "country", column: "iso_alpha2" },
+  ]);
+  assert.equal(lookup?.target_table, "read_model_snapshot");
+  assert.equal(lookup?.target_column, "lookup_key");
 });
