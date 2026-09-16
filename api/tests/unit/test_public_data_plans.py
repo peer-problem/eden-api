@@ -219,6 +219,14 @@ def test_batched_sources_reserve_request_headroom_for_retries() -> None:
     )
     assert _batched_request_budget("SRC_KMA_FORECAST", 40) == 40
     assert _batched_request_budget("SRC_FESTIVAL", configured) == configured
+    from app.sources.plans import SEMAS_PLACES_PER_RUN, semas_place_operations
+
+    assert (
+        _batched_request_budget("SRC_SEMAS_SHOPS", configured)
+        == SEMAS_PLACES_PER_RUN + PUBLIC_DATA_REQUEST_HEADROOM
+    )
+    places = [(f"place-{index}", 37.5, 127.0) for index in range(SEMAS_PLACES_PER_RUN + 3)]
+    assert len(semas_place_operations(places)) == SEMAS_PLACES_PER_RUN
 
 
 def test_embassy_notice_budget_covers_the_waiting_room_and_five_boards() -> None:

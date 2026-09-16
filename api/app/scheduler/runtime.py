@@ -61,6 +61,7 @@ from app.sources.essential import (
 )
 from app.sources.plans import (
     KTO_RELATED_PLACES_PER_RUN,
+    SEMAS_PLACES_PER_RUN,
     kto_related_place_operations,
     semas_place_operations,
 )
@@ -69,7 +70,6 @@ from app.sources.registry import build_adapter
 logger = logging.getLogger("eden.scheduler")
 SEMAS_CANDIDATE_LIMIT = 900
 RELATED_CANDIDATE_LIMIT = 900
-SEMAS_PLACES_PER_RUN = 5
 PLACE_PIPELINE_SOURCES = frozenset(
     {
         "SRC_KTO_PLACE_HUB",

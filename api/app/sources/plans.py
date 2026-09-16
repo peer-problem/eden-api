@@ -16,7 +16,9 @@ TOUR_KO_AREAS_PER_RUN = 3
 # Retries share the per-run request budget with the batch itself. Reserve
 # room so one transient failure cannot starve the last operation of a batch.
 PUBLIC_DATA_REQUEST_HEADROOM = 2
-SEMAS_PLACES_PER_RUN = 5
+# One radius query answers about 25 KB; twenty places stay far inside the
+# 2 MiB run byte budget and cover the ~480 essential places within a week.
+SEMAS_PLACES_PER_RUN = 20
 
 KTO_ADMINISTRATIVE_AREA_CODES = (
     "11",

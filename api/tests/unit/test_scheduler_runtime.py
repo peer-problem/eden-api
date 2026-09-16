@@ -373,8 +373,10 @@ def test_pipeline_retry_waits_an_hour_instead_of_refetching_each_minute() -> Non
 
 
 def test_shop_rotation_resumes_from_persisted_cursor(monkeypatch):
+    from app.sources.plans import SEMAS_PLACES_PER_RUN as per_run
+
     registry = SimpleNamespace(evidence={"collection_cursor": 1})
-    rows = [(f"place-{i}", 37.5, 127.0) for i in range(12)]
+    rows = [(f"place-{i}", 37.5, 127.0) for i in range(per_run * 2 + 2)]
 
     class Session:
         def __enter__(self):
@@ -392,10 +394,11 @@ def test_shop_rotation_resumes_from_persisted_cursor(monkeypatch):
     monkeypatch.setattr(runtime, "essential_place_ids", lambda _session: [row[0] for row in rows])
     monkeypatch.setattr(runtime, "semas_place_operations", lambda places: places)
     first = runtime._runtime_scope("SRC_SEMAS_SHOPS", {}, Session)
-    assert first["operations"] == rows[5:10]
+    assert first["operations"] == rows[per_run : per_run * 2]
     assert runtime._runtime_scope("SRC_SEMAS_SHOPS", {}, Session) == first
     registry.evidence["collection_cursor"] = first["next_cursor"]
-    assert runtime._runtime_scope("SRC_SEMAS_SHOPS", {}, Session)["operations"] == rows[10:]
+    resumed = runtime._runtime_scope("SRC_SEMAS_SHOPS", {}, Session)
+    assert resumed["operations"] == rows[per_run * 2 :]
 
 
 def test_weather_cadence_reserves_polling_time_for_four_batches(monkeypatch):

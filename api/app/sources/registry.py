@@ -40,6 +40,7 @@ def _batched_request_budget(source_id: str, configured: int) -> int:
     from app.sources.plans import (
         KMA_OPERATIONS_PER_RUN,
         PUBLIC_DATA_REQUEST_HEADROOM,
+        SEMAS_PLACES_PER_RUN,
         TOUR_KO_AREAS_PER_RUN,
     )
 
@@ -48,6 +49,8 @@ def _batched_request_budget(source_id: str, configured: int) -> int:
     if source_id == "SRC_TOUR_KO":
         # Province catalogs can span two pages each.
         return max(configured, TOUR_KO_AREAS_PER_RUN * 2 + PUBLIC_DATA_REQUEST_HEADROOM)
+    if source_id == "SRC_SEMAS_SHOPS":
+        return max(configured, SEMAS_PLACES_PER_RUN + PUBLIC_DATA_REQUEST_HEADROOM)
     return configured
 
 
