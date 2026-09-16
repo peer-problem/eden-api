@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# EDEN API liveness watchdog. A frozen (memory-throttled) uvicorn stays "active"
+# in systemd, so probe loopback /internal/health and SIGKILL the service after two
+# consecutive failures; Restart=always brings it back. Success is silent.
+set -u
+STATE=/run/eden-api-watchdog.failures
+systemctl is-active --quiet eden-api.service || { rm -f "$STATE"; exit 0; }
+if curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:8000/internal/health; then
+  rm -f "$STATE"; exit 0
+fi
+count=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 ))
+if (( count < 2 )); then
+  echo "$count" >"$STATE"
+  logger -t eden-api-watchdog -p daemon.warning "health probe failed ($count/2)"
+  exit 0
+fi
+rm -f "$STATE"
+logger -t eden-api-watchdog -p daemon.err "health probe failed $count times; killing eden-api for restart"
+systemctl kill --signal=SIGKILL eden-api.service
