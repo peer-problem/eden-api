@@ -1,0 +1,2799 @@
+{
+  "tables": [
+    {
+      "name": "area",
+      "label": "지역",
+      "group": "기준 정보",
+      "columns": [
+        {
+          "name": "eden_area_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "administrative_code",
+          "type": "VARCHAR(32)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "name_ko",
+          "type": "VARCHAR(200)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "name_en",
+          "type": "VARCHAR(200)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "parent_area_id",
+          "type": "VARCHAR(64)",
+          "nullable": true,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "area",
+              "column": "eden_area_id"
+            }
+          ]
+        },
+        {
+          "name": "level",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "active",
+          "type": "BOOLEAN",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "eden_area_id"
+      ]
+    },
+    {
+      "name": "country",
+      "label": "국가",
+      "group": "기준 정보",
+      "columns": [
+        {
+          "name": "eden_country_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "iso_alpha2",
+          "type": "VARCHAR(2)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "name_ko",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "name_en",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "default_language",
+          "type": "VARCHAR(16)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "default_currency",
+          "type": "VARCHAR(3)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "eden_country_id"
+      ]
+    },
+    {
+      "name": "place",
+      "label": "장소",
+      "group": "기준 정보",
+      "columns": [
+        {
+          "name": "eden_place_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "area_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "area",
+              "column": "eden_area_id"
+            }
+          ]
+        },
+        {
+          "name": "category",
+          "type": "VARCHAR(128)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "lat",
+          "type": "NUMERIC(10, 7)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "lng",
+          "type": "NUMERIC(10, 7)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "merge_status",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "canonical_place_id",
+          "type": "VARCHAR(64)",
+          "nullable": true,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "place",
+              "column": "eden_place_id"
+            }
+          ]
+        }
+      ],
+      "primary_key": [
+        "eden_place_id"
+      ]
+    },
+    {
+      "name": "place_localization",
+      "label": "장소 번역",
+      "group": "기준 정보",
+      "columns": [
+        {
+          "name": "id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "eden_place_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "place",
+              "column": "eden_place_id"
+            }
+          ]
+        },
+        {
+          "name": "language",
+          "type": "VARCHAR(16)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "title",
+          "type": "VARCHAR(500)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "address",
+          "type": "VARCHAR(1000)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "is_fallback",
+          "type": "BOOLEAN",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "id"
+      ]
+    },
+    {
+      "name": "area_source_map",
+      "label": "지역 식별자 연결",
+      "group": "기준 정보",
+      "columns": [
+        {
+          "name": "id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "external_area_code",
+          "type": "VARCHAR(128)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "eden_area_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "area",
+              "column": "eden_area_id"
+            }
+          ]
+        },
+        {
+          "name": "spatial_resolution",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "id"
+      ]
+    },
+    {
+      "name": "place_source_map",
+      "label": "장소 식별자 연결",
+      "group": "기준 정보",
+      "columns": [
+        {
+          "name": "id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "external_content_id",
+          "type": "VARCHAR(128)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "eden_place_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "place",
+              "column": "eden_place_id"
+            }
+          ]
+        }
+      ],
+      "primary_key": [
+        "id"
+      ]
+    },
+    {
+      "name": "place_relation",
+      "label": "장소 관계",
+      "group": "정규화",
+      "columns": [
+        {
+          "name": "relation_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "from_place_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "place",
+              "column": "eden_place_id"
+            }
+          ]
+        },
+        {
+          "name": "to_place_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "place",
+              "column": "eden_place_id"
+            }
+          ]
+        },
+        {
+          "name": "relation_type",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "rank",
+          "type": "INTEGER",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "score",
+          "type": "NUMERIC(8, 4)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "observed_at",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "availability",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "relation_id"
+      ]
+    },
+    {
+      "name": "source_registry",
+      "label": "데이터 출처",
+      "group": "수집",
+      "columns": [
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "owner_name",
+          "type": "VARCHAR(300)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "access_method",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "storage_mode",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "status_reason",
+          "type": "VARCHAR(1000)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "enabled",
+          "type": "BOOLEAN",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "docs_url",
+          "type": "VARCHAR(1000)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "source_id"
+      ]
+    },
+    {
+      "name": "source_state",
+      "label": "출처별 수집 상태",
+      "group": "수집",
+      "columns": [
+        {
+          "name": "id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "scope_key",
+          "type": "VARCHAR(500)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "last_attempt_at",
+          "type": "DATETIME",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "last_success_at",
+          "type": "DATETIME",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "data_as_of",
+          "type": "DATETIME",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "consecutive_failures",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "id"
+      ]
+    },
+    {
+      "name": "refresh_policy",
+      "label": "수집 주기",
+      "group": "수집",
+      "columns": [
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": true,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "interval_seconds",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "expected_publish_lag_seconds",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "max_acceptable_age_seconds",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "retry_limit",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "source_id"
+      ]
+    },
+    {
+      "name": "ingestion_run",
+      "label": "수집 실행 이력",
+      "group": "수집",
+      "columns": [
+        {
+          "name": "run_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "job_id",
+          "type": "VARCHAR(128)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "started_at",
+          "type": "DATETIME",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "finished_at",
+          "type": "DATETIME",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "raw_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "normalized_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "run_id"
+      ]
+    },
+    {
+      "name": "raw_record",
+      "label": "원본 레코드 메타데이터",
+      "group": "수집",
+      "columns": [
+        {
+          "name": "raw_record_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "run_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "ingestion_run",
+              "column": "run_id"
+            }
+          ]
+        },
+        {
+          "name": "external_key",
+          "type": "VARCHAR(500)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "observed_at",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "source_updated_at",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "ingested_at",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "content_type",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "content_hash",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "tombstone",
+          "type": "BOOLEAN",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "raw_record_id"
+      ]
+    },
+    {
+      "name": "regional_visit_observation",
+      "label": "지역 방문 관측",
+      "group": "정규화",
+      "columns": [
+        {
+          "name": "observation_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "area_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "area",
+              "column": "eden_area_id"
+            }
+          ]
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "period_start",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "subject_type",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "subject_key",
+          "type": "VARCHAR(300)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "visitor_type",
+          "type": "VARCHAR(16)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "grain",
+          "type": "VARCHAR(16)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "visitor_count",
+          "type": "BIGINT",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "concentration_rate",
+          "type": "NUMERIC(8, 4)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "availability",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "observation_id"
+      ]
+    },
+    {
+      "name": "regional_demand_observation",
+      "label": "관광 수요 관측",
+      "group": "정규화",
+      "columns": [
+        {
+          "name": "observation_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "area_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "area",
+              "column": "eden_area_id"
+            }
+          ]
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "period_start",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "stay_index",
+          "type": "NUMERIC(8, 4)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "spend_index",
+          "type": "NUMERIC(8, 4)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "lodging_index",
+          "type": "NUMERIC(8, 4)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "avg_stay_nights",
+          "type": "NUMERIC(8, 3)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "availability",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "observation_id"
+      ]
+    },
+    {
+      "name": "regional_diversity_observation",
+      "label": "관광 다양성 관측",
+      "group": "정규화",
+      "columns": [
+        {
+          "name": "observation_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "area_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "area",
+              "column": "eden_area_id"
+            }
+          ]
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "period_start",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "age_index",
+          "type": "NUMERIC(8, 4)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "nationality_index",
+          "type": "NUMERIC(8, 4)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "availability",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "observation_id"
+      ]
+    },
+    {
+      "name": "forecast_input",
+      "label": "예측 입력",
+      "group": "정규화",
+      "columns": [
+        {
+          "name": "input_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "area_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "area",
+              "column": "eden_area_id"
+            }
+          ]
+        },
+        {
+          "name": "place_id",
+          "type": "VARCHAR(64)",
+          "nullable": true,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "place",
+              "column": "eden_place_id"
+            }
+          ]
+        },
+        {
+          "name": "forecast_date",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "source_forecast",
+          "type": "JSON",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "weather",
+          "type": "JSON",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "festivals",
+          "type": "JSON",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "holiday",
+          "type": "JSON",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "availability",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "input_id"
+      ]
+    },
+    {
+      "name": "social_observation",
+      "label": "관심도 관측",
+      "group": "정규화",
+      "columns": [
+        {
+          "name": "observation_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "raw_record_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "raw_record",
+              "column": "raw_record_id"
+            }
+          ]
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "keyword",
+          "type": "VARCHAR(500)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "country_id",
+          "type": "VARCHAR(64)",
+          "nullable": true,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "country",
+              "column": "eden_country_id"
+            }
+          ]
+        },
+        {
+          "name": "area_id",
+          "type": "VARCHAR(64)",
+          "nullable": true,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "area",
+              "column": "eden_area_id"
+            }
+          ]
+        },
+        {
+          "name": "bucket_start",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "post_count",
+          "type": "BIGINT",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "view_count",
+          "type": "BIGINT",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "availability",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "observation_id"
+      ]
+    },
+    {
+      "name": "inbound_visitor_observation",
+      "label": "방한 방문 관측",
+      "group": "정규화",
+      "columns": [
+        {
+          "name": "observation_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "country_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "country",
+              "column": "eden_country_id"
+            }
+          ]
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "period_start",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "visitor_count",
+          "type": "BIGINT",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "availability",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "observation_id"
+      ]
+    },
+    {
+      "name": "flight_observation",
+      "label": "항공 관측",
+      "group": "정규화",
+      "columns": [
+        {
+          "name": "observation_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "country_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "country",
+              "column": "eden_country_id"
+            }
+          ]
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "period_start",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "grain",
+          "type": "VARCHAR(16)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "arriving_flights",
+          "type": "INTEGER",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "passengers",
+          "type": "BIGINT",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "availability",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "observation_id"
+      ]
+    },
+    {
+      "name": "fx_observation",
+      "label": "환율 관측",
+      "group": "정규화",
+      "columns": [
+        {
+          "name": "observation_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "currency",
+          "type": "VARCHAR(3)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "rate_date",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "krw_rate",
+          "type": "NUMERIC(20, 8)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "availability",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "observation_id"
+      ]
+    },
+    {
+      "name": "tourism_balance_observation",
+      "label": "관광수지 관측",
+      "group": "정규화",
+      "columns": [
+        {
+          "name": "observation_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "source_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "source_registry",
+              "column": "source_id"
+            }
+          ]
+        },
+        {
+          "name": "period_start",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "receipt_usd",
+          "type": "NUMERIC(20, 2)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "expenditure_usd",
+          "type": "NUMERIC(20, 2)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "balance_usd",
+          "type": "NUMERIC(20, 2)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "availability",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "observation_id"
+      ]
+    },
+    {
+      "name": "provenance_edge",
+      "label": "레코드 근거 연결",
+      "group": "처리·게시",
+      "columns": [
+        {
+          "name": "provenance_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "output_type",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "output_id",
+          "type": "VARCHAR(128)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "raw_record_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "raw_record",
+              "column": "raw_record_id"
+            }
+          ]
+        },
+        {
+          "name": "formula_version",
+          "type": "VARCHAR(100)",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "created_at",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "provenance_id"
+      ]
+    },
+    {
+      "name": "product_refresh_request",
+      "label": "데이터 제품 갱신 이력",
+      "group": "처리·게시",
+      "columns": [
+        {
+          "name": "family",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "requested_at",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "claimed_at",
+          "type": "DATETIME",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "next_attempt_at",
+          "type": "DATETIME",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "completed_at",
+          "type": "DATETIME",
+          "nullable": true,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "attempt_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "family"
+      ]
+    },
+    {
+      "name": "read_model_snapshot",
+      "label": "게시 스냅샷",
+      "group": "처리·게시",
+      "columns": [
+        {
+          "name": "snapshot_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "endpoint",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "snapshot_version",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "payload_id",
+          "type": "VARCHAR(64)",
+          "nullable": true,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "read_model_payload",
+              "column": "payload_id"
+            }
+          ]
+        },
+        {
+          "name": "observed_at",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "source_updated_at",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "ingested_at",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "calculated_at",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "as_of",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "availability",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "state",
+          "type": "VARCHAR(16)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "snapshot_id"
+      ]
+    },
+    {
+      "name": "read_model_head",
+      "label": "현재 게시 버전",
+      "group": "처리·게시",
+      "columns": [
+        {
+          "name": "endpoint",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "lookup_key_hash",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "snapshot_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": false,
+          "references": [
+            {
+              "table": "read_model_snapshot",
+              "column": "snapshot_id"
+            }
+          ]
+        },
+        {
+          "name": "updated_at",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "endpoint",
+        "lookup_key_hash"
+      ]
+    },
+    {
+      "name": "read_model_payload",
+      "label": "게시 데이터 저장 정보",
+      "group": "처리·게시",
+      "columns": [
+        {
+          "name": "payload_id",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "primary_key": true,
+          "references": []
+        },
+        {
+          "name": "encoding",
+          "type": "VARCHAR(32)",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "uncompressed_bytes",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "compressed_bytes",
+          "type": "BIGINT",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        },
+        {
+          "name": "created_at",
+          "type": "DATETIME",
+          "nullable": false,
+          "primary_key": false,
+          "references": []
+        }
+      ],
+      "primary_key": [
+        "payload_id"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "SRC_MOIS_ADMIN_CODES",
+      "owner_name": "행정안전부",
+      "base_url": "https://www.mois.go.kr/cmm/fms/FileDown.do",
+      "docs_url": "https://www.mois.go.kr/frt/bbs/type001/commonSelectBoardArticle.do?bbsId=BBSMSTR_000000000052&nttId=127979",
+      "access_method": "zip_file",
+      "storage_mode": "aggregate",
+      "cadence_tier": "E",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_NAVER_TREND",
+      "owner_name": "NAVER Cloud",
+      "base_url": "https://naverapihub.apigw.ntruss.com/search-trend/v1/search",
+      "docs_url": "https://api.ncloud-docs.com/docs/naver-api-hub-search-trend",
+      "access_method": "json_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "B",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_YOUTUBE",
+      "owner_name": "Google",
+      "base_url": "https://www.googleapis.com/youtube/v3",
+      "docs_url": "https://developers.google.com/youtube/v3",
+      "access_method": "json_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "B",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_INSTAGRAM",
+      "owner_name": "Meta",
+      "base_url": "https://graph.facebook.com",
+      "docs_url": "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login/hashtag-search",
+      "access_method": "json_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "A",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_FACEBOOK",
+      "owner_name": "Meta",
+      "base_url": "https://graph.facebook.com",
+      "docs_url": "https://developers.facebook.com/docs/graph-api/",
+      "access_method": "json_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "A",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_TIKTOK",
+      "owner_name": "TikTok",
+      "base_url": "https://open.tiktokapis.com/v2/research",
+      "docs_url": "https://developers.tiktok.com/products/research-api/",
+      "access_method": "json_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "A",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_X",
+      "owner_name": "X",
+      "base_url": "https://api.x.com/2/tweets/counts/recent",
+      "docs_url": "https://docs.x.com/x-api/posts/search/introduction",
+      "access_method": "json_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "A",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_REDDIT",
+      "owner_name": "Reddit",
+      "base_url": "https://oauth.reddit.com",
+      "docs_url": "https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki",
+      "access_method": "json_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "A",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_WEIBO",
+      "owner_name": "Sina Weibo",
+      "base_url": "https://api.weibo.com/2",
+      "docs_url": "https://open.weibo.com/wiki/API",
+      "access_method": "json_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "A",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_DOUYIN",
+      "owner_name": "Douyin",
+      "base_url": "https://open.douyin.com",
+      "docs_url": "https://developer.open-douyin.com/docs/resource/zh-CN/dop/develop/openapi/account-permission/",
+      "access_method": "json_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "A",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_XIAOHONGSHU",
+      "owner_name": "Xiaohongshu",
+      "base_url": "https://adapi.xiaohongshu.com",
+      "docs_url": "https://adapi.xiaohongshu.com/doc",
+      "access_method": "json_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "A",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_LINE",
+      "owner_name": "LINE Yahoo",
+      "base_url": "https://api.line.me",
+      "docs_url": "https://developers.line.biz/en/docs/messaging-api/get-insight/",
+      "access_method": "json_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "A",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_KTO_RESOURCE_DEMAND",
+      "owner_name": "한국관광공사",
+      "base_url": "https://apis.data.go.kr/B551011/AreaTarResDemService",
+      "docs_url": "https://www.data.go.kr/data/15152138/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "C",
+      "graph": {
+        "label": "관광 자원 수요",
+        "operation": "서비스 · 문화자원 수요",
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_KTO_REGIONAL_VISITORS",
+      "owner_name": "한국관광공사",
+      "base_url": "https://apis.data.go.kr/B551011/DataLabService",
+      "docs_url": "https://www.data.go.kr/data/15101972/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "C",
+      "graph": {
+        "label": "지역별 방문자 수",
+        "operation": "metcoRegnVisitrDDList",
+        "fields": [
+          {
+            "name": "baseYmd",
+            "label": "방문 기준일",
+            "target_table": "regional_visit_observation",
+            "target_column": "period_start"
+          },
+          {
+            "name": "areaCd / signguCd",
+            "label": "지역 코드",
+            "target_table": "regional_visit_observation",
+            "target_column": "area_id"
+          },
+          {
+            "name": "touDivNm",
+            "label": "방문자 구분",
+            "target_table": "regional_visit_observation",
+            "target_column": "visitor_type"
+          },
+          {
+            "name": "touNum",
+            "label": "방문자 수",
+            "target_table": "regional_visit_observation",
+            "target_column": "visitor_count"
+          }
+        ]
+      }
+    },
+    {
+      "source_id": "SRC_KTO_DEMAND_INTENSITY",
+      "owner_name": "한국관광공사",
+      "base_url": "https://apis.data.go.kr/B551011/AreaTarDemDsService",
+      "docs_url": "https://www.data.go.kr/data/15151868/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "C",
+      "graph": {
+        "label": "지역별 관광 수요 강도",
+        "operation": "체류 강도 · 소비 강도",
+        "fields": [
+          {
+            "name": "baseYm",
+            "label": "기준월",
+            "target_table": "regional_demand_observation",
+            "target_column": "period_start"
+          },
+          {
+            "name": "areaCd",
+            "label": "지역 코드",
+            "target_table": "regional_demand_observation",
+            "target_column": "area_id"
+          },
+          {
+            "name": "tarSjrnDsIxVal",
+            "label": "관광 체류 강도",
+            "target_table": "regional_demand_observation",
+            "target_column": "stay_index"
+          },
+          {
+            "name": "tarExpDsIxVal",
+            "label": "관광 소비 강도",
+            "target_table": "regional_demand_observation",
+            "target_column": "spend_index"
+          }
+        ]
+      }
+    },
+    {
+      "source_id": "SRC_KTO_DIVERSITY",
+      "owner_name": "한국관광공사",
+      "base_url": "https://apis.data.go.kr/B551011/AreaTarDivService",
+      "docs_url": "https://www.data.go.kr/data/15151365/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "C",
+      "graph": {
+        "label": "지역별 관광 다양성",
+        "operation": "관광객 · 관광 소비 · 국제적 다양성",
+        "fields": [
+          {
+            "name": "baseYm",
+            "label": "기준월",
+            "target_table": "regional_diversity_observation",
+            "target_column": "period_start"
+          },
+          {
+            "name": "areaCd",
+            "label": "지역 코드",
+            "target_table": "regional_diversity_observation",
+            "target_column": "area_id"
+          },
+          {
+            "name": "touDivIxVal",
+            "label": "관광객 다양성",
+            "raw_only": true
+          },
+          {
+            "name": "expDivIxVal",
+            "label": "관광 소비 다양성",
+            "raw_only": true
+          },
+          {
+            "name": "intlDivIxVal",
+            "label": "국제적 다양성",
+            "target_table": "regional_diversity_observation",
+            "target_column": "nationality_index"
+          }
+        ]
+      }
+    },
+    {
+      "source_id": "SRC_TOUR_KO",
+      "owner_name": "한국관광공사",
+      "base_url": "https://apis.data.go.kr/B551011/KorService2",
+      "docs_url": "https://www.data.go.kr/data/15101578/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "C",
+      "graph": {
+        "label": "관광지 정보 · 한국어",
+        "operation": "areaBasedList2",
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_TOUR_EN",
+      "owner_name": "한국관광공사",
+      "base_url": "https://apis.data.go.kr/B551011/EngService2",
+      "docs_url": "https://www.data.go.kr/data/15101753/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "C",
+      "graph": {
+        "label": "관광지 정보 · 영어",
+        "operation": "areaBasedList2",
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_TOUR_JA",
+      "owner_name": "한국관광공사",
+      "base_url": "https://apis.data.go.kr/B551011/JpnService2",
+      "docs_url": "https://www.data.go.kr/data/15101760/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "C",
+      "graph": {
+        "label": "관광지 정보 · 일본어",
+        "operation": "areaBasedList2",
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_TOUR_ZH_CN",
+      "owner_name": "한국관광공사",
+      "base_url": "https://apis.data.go.kr/B551011/ChsService2",
+      "docs_url": "https://www.data.go.kr/data/15101764/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "C",
+      "graph": {
+        "label": "관광지 정보 · 중국어",
+        "operation": "areaBasedList2",
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_KTO_PLACE_HUB",
+      "owner_name": "한국관광공사",
+      "base_url": "https://apis.data.go.kr/B551011/LocgoHubTarService1",
+      "docs_url": "https://www.data.go.kr/data/15128559/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "C",
+      "graph": {
+        "label": "관광지 기본 정보",
+        "operation": "areaBasedList1",
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_KTO_PLACE_RELATED",
+      "owner_name": "한국관광공사",
+      "base_url": "https://apis.data.go.kr/B551011/TarRlteTarService1",
+      "docs_url": "https://www.data.go.kr/data/15128560/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "C",
+      "graph": {
+        "label": "연관 관광지",
+        "operation": "searchKeyword1",
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_SEMAS_SHOPS",
+      "owner_name": "소상공인시장진흥공단",
+      "base_url": "https://apis.data.go.kr/B553077/api/open/sdsc2",
+      "docs_url": "https://www.data.go.kr/data/15012005/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "C",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_KTO_VISITOR_FORECAST",
+      "owner_name": "한국관광공사",
+      "base_url": "https://apis.data.go.kr/B551011/TatsCnctrRateService",
+      "docs_url": "https://www.data.go.kr/data/15128555/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "B",
+      "graph": {
+        "label": "방문자 예측",
+        "operation": "tatsCnctrRatedList",
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_KMA_FORECAST",
+      "owner_name": "기상청",
+      "base_url": "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0",
+      "docs_url": "https://www.data.go.kr/data/15084084/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "B",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_FESTIVAL",
+      "owner_name": "행정안전부",
+      "base_url": "https://api.data.go.kr/openapi/tn_pubr_public_cltur_fstvl_api",
+      "docs_url": "https://www.data.go.kr/data/15013104/standard.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "B",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_HOLIDAY",
+      "owner_name": "한국천문연구원",
+      "base_url": "https://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService",
+      "docs_url": "https://www.data.go.kr/data/15012690/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "E",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_TOURISM_ADMISSION",
+      "owner_name": "한국문화관광연구원",
+      "base_url": "http://openapi.tour.go.kr/openapi/service/TourismResourceStatsService",
+      "docs_url": "https://www.data.go.kr/data/15000366/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "D",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_KTO_INBOUND_STATS",
+      "owner_name": "한국관광공사",
+      "base_url": "https://datalab.visitkorea.or.kr",
+      "docs_url": "https://datalab.visitkorea.or.kr/datalab/portal/ts/getEntcnyFrgnCust2Form.do",
+      "access_method": "html_or_file",
+      "storage_mode": "content",
+      "cadence_tier": "D",
+      "graph": {
+        "label": "국가별 방한객 통계",
+        "operation": "국가·월별 통계",
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_AIRPORT_COUNTRY",
+      "owner_name": "인천국제공항공사",
+      "base_url": "https://apis.data.go.kr/B551177/AviationStatsByCountry",
+      "docs_url": "https://www.data.go.kr/data/15095071/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "D",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_AIRPORT_WEEKLY",
+      "owner_name": "인천국제공항공사",
+      "base_url": "https://apis.data.go.kr/B551177/PaxFltSched",
+      "docs_url": "https://www.data.go.kr/data/15095059/openapi.do",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "A",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_KEXIM_FX",
+      "owner_name": "한국수출입은행",
+      "base_url": "https://oapi.koreaexim.go.kr/site/program/financial/exchangeJSON",
+      "docs_url": "https://www.data.go.kr/data/3068846/openapi.do",
+      "access_method": "json_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "C",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_BOK_ECOS",
+      "owner_name": "한국은행",
+      "base_url": "https://ecos.bok.or.kr/api",
+      "docs_url": "https://ecos.bok.or.kr/api/",
+      "access_method": "json_xml_api",
+      "storage_mode": "aggregate",
+      "cadence_tier": "D",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_EMBASSY_NOTICE",
+      "owner_name": "대한민국 재외공관 및 등록 해외 공식기관",
+      "base_url": "https://www.mofa.go.kr",
+      "docs_url": "https://www.mofa.go.kr/www/wpge/m_20347/contents.do",
+      "access_method": "rss_html_allowlist",
+      "storage_mode": "content",
+      "cadence_tier": "A",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_KETA",
+      "owner_name": "대한민국 법무부",
+      "base_url": "https://www.k-eta.go.kr",
+      "docs_url": "https://www.k-eta.go.kr/",
+      "access_method": "html_allowlist",
+      "storage_mode": "content",
+      "cadence_tier": "A",
+      "graph": {
+        "fields": []
+      }
+    },
+    {
+      "source_id": "SRC_KTO_MARKET_TREND",
+      "owner_name": "한국관광공사",
+      "base_url": "https://datalab.visitkorea.or.kr",
+      "docs_url": "https://datalab.visitkorea.or.kr/site/portal/ex/bbs/List.do?cbIdx=1602",
+      "access_method": "html_allowlist",
+      "storage_mode": "content",
+      "cadence_tier": "A",
+      "graph": {
+        "label": "해외시장 동향",
+        "operation": "관광데이터랩 공지",
+        "fields": []
+      }
+    }
+  ],
+  "flow_steps": [
+    {
+      "id": "normalize_regional_visitors",
+      "label": "지역 방문 관측 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_KTO_REGIONAL_VISITORS"
+      ],
+      "inputs": [
+        "raw_record",
+        "area_source_map"
+      ],
+      "outputs": [
+        "regional_visit_observation"
+      ],
+      "keys": "외부 지역 코드 → eden_area_id · period_start · visitor_type",
+      "detail": "지역 코드를 EDEN 지역으로 대응시키고 방문 수와 집중도를 기간 단위로 집계합니다.",
+      "code_ref": "app.normalization.public_data.normalize_regional_visitors_run"
+    },
+    {
+      "id": "normalize_tourism_admission",
+      "label": "관광지 입장객 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_TOURISM_ADMISSION"
+      ],
+      "inputs": [
+        "raw_record",
+        "area"
+      ],
+      "outputs": [
+        "regional_visit_observation"
+      ],
+      "keys": "시도·시군구 이름 → area_id · 관광지명 · 월 · 내국인/외국인",
+      "detail": "내·외국인 입장객과 합계를 관광지·월별 지역 방문 관측으로 저장합니다.",
+      "code_ref": "app.normalization.inbound_sources.normalize_tourism_admission_run"
+    },
+    {
+      "id": "normalize_regional_demand",
+      "label": "관광 수요 지수 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_KTO_DEMAND_INTENSITY"
+      ],
+      "inputs": [
+        "raw_record",
+        "area_source_map"
+      ],
+      "outputs": [
+        "regional_demand_observation"
+      ],
+      "keys": "외부 지역 코드 → eden_area_id · baseYm → period_start",
+      "detail": "체류·소비·숙박 지수를 지역과 월 기준 관측값으로 변환합니다.",
+      "code_ref": "app.normalization.public_data.normalize_regional_demand_run"
+    },
+    {
+      "id": "normalize_regional_diversity",
+      "label": "관광 다양성 지수 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_KTO_DIVERSITY"
+      ],
+      "inputs": [
+        "raw_record",
+        "area_source_map"
+      ],
+      "outputs": [
+        "regional_diversity_observation"
+      ],
+      "keys": "외부 지역 코드 → eden_area_id · baseYm → period_start",
+      "detail": "연령·국적 다양성 지수를 지역과 월 기준 관측값으로 변환합니다.",
+      "code_ref": "app.normalization.public_data.normalize_regional_diversity_run"
+    },
+    {
+      "id": "normalize_social",
+      "label": "관광 관심도 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_NAVER_TREND",
+        "SRC_YOUTUBE",
+        "SRC_INSTAGRAM",
+        "SRC_FACEBOOK",
+        "SRC_REDDIT"
+      ],
+      "inputs": [
+        "raw_record",
+        "country"
+      ],
+      "outputs": [
+        "social_observation"
+      ],
+      "keys": "source_id · keyword · country_id · bucket_start · bucket_grain",
+      "detail": "출처 집계를 키워드·국가·기간 버킷으로 맞추되 출처별 값은 유지합니다.",
+      "code_ref": "app.normalization.social.normalize_social_run"
+    },
+    {
+      "id": "normalize_resource_demand",
+      "label": "지역 자원 관심도 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_KTO_RESOURCE_DEMAND"
+      ],
+      "inputs": [
+        "raw_record",
+        "area_source_map"
+      ],
+      "outputs": [
+        "social_observation"
+      ],
+      "keys": "외부 지역 코드 → area_id · 자원명 · baseYm",
+      "detail": "지역 관광 자원별 검색·관심 수요를 월 단위 관심도 관측으로 저장합니다.",
+      "code_ref": "app.normalization.public_data.normalize_resource_demand_run"
+    },
+    {
+      "id": "normalize_places",
+      "label": "다국어 장소 식별자 통합",
+      "kind": "transform",
+      "sources": [
+        "SRC_TOUR_KO",
+        "SRC_TOUR_EN",
+        "SRC_TOUR_JA",
+        "SRC_TOUR_ZH_CN"
+      ],
+      "inputs": [
+        "raw_record",
+        "area_source_map"
+      ],
+      "outputs": [
+        "place",
+        "place_localization",
+        "place_source_map"
+      ],
+      "keys": "source_id + external_content_id → eden_place_id · language",
+      "detail": "언어별 TourAPI 콘텐츠를 같은 EDEN 장소로 연결하고 번역은 별도 저장합니다.",
+      "code_ref": "app.normalization.places.normalize_tour_catalog_run"
+    },
+    {
+      "id": "normalize_place_relations",
+      "label": "관광지 관계 연결",
+      "kind": "transform",
+      "sources": [
+        "SRC_KTO_PLACE_HUB",
+        "SRC_KTO_PLACE_RELATED"
+      ],
+      "inputs": [
+        "raw_record",
+        "area_source_map",
+        "place_source_map"
+      ],
+      "outputs": [
+        "place",
+        "place_relation"
+      ],
+      "keys": "외부 관광지 코드 → eden_place_id · 기준 월 · 관계 유형 · 순위",
+      "detail": "관광지 허브와 연관 관광지를 EDEN 장소로 맞추고 순위를 관계 점수로 변환합니다.",
+      "code_ref": "app.normalization.places"
+    },
+    {
+      "id": "normalize_inbound",
+      "label": "방한 방문자 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_KTO_INBOUND_STATS"
+      ],
+      "inputs": [
+        "raw_record",
+        "country"
+      ],
+      "outputs": [
+        "inbound_visitor_observation"
+      ],
+      "keys": "ISO 국가 코드 → country_id · 월 → period_start",
+      "detail": "국가별 월 방문자 행을 합산해 방한 방문 관측으로 저장합니다.",
+      "code_ref": "app.normalization.inbound.normalize_kto_inbound_run"
+    },
+    {
+      "id": "normalize_airport_country",
+      "label": "국가별 항공 실적 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_AIRPORT_COUNTRY"
+      ],
+      "inputs": [
+        "raw_record",
+        "country"
+      ],
+      "outputs": [
+        "flight_observation"
+      ],
+      "keys": "국가 코드 → country_id · 월 · month grain",
+      "detail": "국가별 월간 도착 항공편과 여객 수를 항공 관측으로 저장합니다.",
+      "code_ref": "app.normalization.inbound_sources.normalize_airport_country_run"
+    },
+    {
+      "id": "normalize_airport_weekly",
+      "label": "주간 항공 일정 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_AIRPORT_WEEKLY"
+      ],
+      "inputs": [
+        "raw_record",
+        "country"
+      ],
+      "outputs": [
+        "flight_observation"
+      ],
+      "keys": "국가 코드 → country_id · 주간 기준일 · 7d_schedule grain",
+      "detail": "향후 7일 도착 일정을 국가별 항공편 수로 확장해 저장합니다.",
+      "code_ref": "app.normalization.inbound_sources.normalize_airport_weekly_run"
+    },
+    {
+      "id": "normalize_kexim_fx",
+      "label": "수출입은행 환율 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_KEXIM_FX"
+      ],
+      "inputs": [
+        "raw_record"
+      ],
+      "outputs": [
+        "fx_observation"
+      ],
+      "keys": "통화 코드 · rate_date",
+      "detail": "한국수출입은행 환율을 통화와 고시 일자별 관측으로 저장합니다.",
+      "code_ref": "app.normalization.inbound_sources.normalize_fx_run"
+    },
+    {
+      "id": "normalize_bok",
+      "label": "ECOS 환율·관광수지 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_BOK_ECOS"
+      ],
+      "inputs": [
+        "raw_record"
+      ],
+      "outputs": [
+        "fx_observation",
+        "tourism_balance_observation"
+      ],
+      "keys": "통화·일자 / 월별 일반여행 수입 − 지출",
+      "detail": "ECOS 환율은 일별로 저장하고 일반여행 수입과 지출은 월별 관광수지로 계산합니다.",
+      "code_ref": "app.normalization.inbound_sources.normalize_bok_run"
+    },
+    {
+      "id": "normalize_visitor_forecast",
+      "label": "방문 예측 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_KTO_VISITOR_FORECAST"
+      ],
+      "inputs": [
+        "raw_record",
+        "area_source_map",
+        "place_localization"
+      ],
+      "outputs": [
+        "forecast_input"
+      ],
+      "keys": "외부 지역 코드 → area_id · 관광지명 → place_id · forecast_date",
+      "detail": "관광공사 방문 예측과 혼잡도를 지역·관광지·예측일 기준 입력으로 저장합니다.",
+      "code_ref": "app.normalization.forecast.normalize_visitor_forecast_run"
+    },
+    {
+      "id": "normalize_weather",
+      "label": "기상 예보 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_KMA_FORECAST"
+      ],
+      "inputs": [
+        "raw_record",
+        "area"
+      ],
+      "outputs": [
+        "forecast_input"
+      ],
+      "keys": "기상 격자 → area_id · forecast_date",
+      "detail": "기상청 격자 예보를 지역과 날짜별 날씨 입력으로 저장합니다.",
+      "code_ref": "app.normalization.forecast.normalize_weather_run"
+    },
+    {
+      "id": "normalize_festival",
+      "label": "축제 일정 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_FESTIVAL"
+      ],
+      "inputs": [
+        "raw_record",
+        "area"
+      ],
+      "outputs": [
+        "forecast_input"
+      ],
+      "keys": "공식 주소 → area_id · 행사 시작일~종료일",
+      "detail": "행사 기간의 각 날짜에 해당 축제를 지역 예측 입력으로 연결합니다.",
+      "code_ref": "app.normalization.forecast.normalize_festival_run"
+    },
+    {
+      "id": "normalize_holiday",
+      "label": "공휴일 정규화",
+      "kind": "transform",
+      "sources": [
+        "SRC_HOLIDAY"
+      ],
+      "inputs": [
+        "raw_record",
+        "area"
+      ],
+      "outputs": [
+        "forecast_input"
+      ],
+      "keys": "locdate → forecast_date · 전국 지역",
+      "detail": "공휴일을 날짜별로 전체 활성 지역의 예측 입력에 연결합니다.",
+      "code_ref": "app.normalization.forecast.normalize_holiday_run"
+    },
+    {
+      "id": "build_regional_product",
+      "label": "지역 인사이트 구성",
+      "kind": "product",
+      "sources": [],
+      "inputs": [
+        "area",
+        "place",
+        "regional_visit_observation",
+        "regional_demand_observation",
+        "regional_diversity_observation"
+      ],
+      "outputs": [
+        "read_model_snapshot"
+      ],
+      "keys": "area_id · 관측 종류별 최신 period_start와 조회 기간",
+      "detail": "지역별 방문·수요·다양성의 최신 가용 기간을 각각 조회해 한 regional_product 스냅샷으로 게시합니다.",
+      "code_ref": "app.products.regional.build_regional_snapshots"
+    },
+    {
+      "id": "build_trend_product",
+      "label": "트렌드 제품 구성",
+      "kind": "product",
+      "sources": [],
+      "inputs": [
+        "social_observation",
+        "area",
+        "country"
+      ],
+      "outputs": [
+        "read_model_snapshot"
+      ],
+      "keys": "source_id · keyword · country_id · area_id · bucket_start 중 최신 버전",
+      "detail": "출처별 최신 관심도 관측을 유지한 채 social_signal 스냅샷으로 게시합니다.",
+      "code_ref": "app.products.trends.build_trend_snapshot"
+    },
+    {
+      "id": "build_inbound_product",
+      "label": "해외 시장 지표 구성",
+      "kind": "product",
+      "sources": [],
+      "inputs": [
+        "inbound_visitor_observation",
+        "flight_observation",
+        "fx_observation",
+        "tourism_balance_observation",
+        "social_observation",
+        "country"
+      ],
+      "outputs": [
+        "read_model_snapshot"
+      ],
+      "keys": "country_id · 국가별 방문 최신월 · 기간 창 · 최신 환율",
+      "detail": "방문자·항공·환율·관심도를 국가와 기간 창 기준으로 묶어 inbound_market_country로 게시합니다.",
+      "code_ref": "app.products.inbound.build_inbound_snapshots"
+    },
+    {
+      "id": "build_forecast_product",
+      "label": "방문 예측 제품 구성",
+      "kind": "product",
+      "sources": [],
+      "inputs": [
+        "area",
+        "forecast_input"
+      ],
+      "outputs": [
+        "read_model_snapshot"
+      ],
+      "keys": "area_id · 서울 달력 기준 30일 forecast_date",
+      "detail": "forecast_input의 방문 예측·날씨·축제·공휴일을 지역별 30일 범위 forecast_product로 묶습니다. 시군구 날씨가 없으면 상위 시도 입력을 사용합니다.",
+      "code_ref": "app.products.forecast.build_forecast_snapshots"
+    },
+    {
+      "id": "build_recommendation_product",
+      "label": "여행지 추천 특성 구성",
+      "kind": "product",
+      "sources": [],
+      "inputs": [
+        "place",
+        "place_localization",
+        "place_source_map",
+        "place_relation",
+        "area",
+        "country",
+        "regional_visit_observation",
+        "regional_demand_observation"
+      ],
+      "outputs": [
+        "read_model_snapshot"
+      ],
+      "keys": "eden_place_id · area_id · 최신 방문/수요 관측",
+      "detail": "장소·관계·지역 방문·수요로 recommendation_feature를 만듭니다.",
+      "code_ref": "app.products.recommendations.build_recommendation_snapshot"
+    }
+  ],
+  "pipelines": [
+    {
+      "id": "regional",
+      "label": "지역 인사이트",
+      "steps": [
+        "normalize_regional_visitors",
+        "normalize_tourism_admission",
+        "normalize_regional_demand",
+        "normalize_regional_diversity",
+        "normalize_places",
+        "build_regional_product"
+      ]
+    },
+    {
+      "id": "inbound",
+      "label": "해외 시장",
+      "steps": [
+        "normalize_inbound",
+        "normalize_airport_country",
+        "normalize_airport_weekly",
+        "normalize_kexim_fx",
+        "normalize_bok",
+        "normalize_social",
+        "normalize_resource_demand",
+        "build_inbound_product"
+      ]
+    },
+    {
+      "id": "trends",
+      "label": "관광 트렌드",
+      "steps": [
+        "normalize_social",
+        "normalize_resource_demand",
+        "build_trend_product"
+      ]
+    },
+    {
+      "id": "forecast",
+      "label": "방문 예측",
+      "steps": [
+        "normalize_visitor_forecast",
+        "normalize_weather",
+        "normalize_festival",
+        "normalize_holiday",
+        "build_forecast_product"
+      ]
+    },
+    {
+      "id": "recommendation",
+      "label": "여행지 추천",
+      "steps": [
+        "normalize_places",
+        "normalize_place_relations",
+        "normalize_regional_visitors",
+        "normalize_regional_demand",
+        "build_recommendation_product"
+      ]
+    }
+  ],
+  "basis": "orm_schema_and_code_routes",
+  "database_checked": false
+}
