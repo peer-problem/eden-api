@@ -1487,7 +1487,13 @@ class MariaDBReadRepository:
             ),
             as_of=as_of,
             calculated_at=calculated_at,
-            max_acceptable_age_seconds=3 * 3600,
+            # The notice sources refresh every 12 hours; a fixed 3-hour limit
+            # flagged every response between runs as stale.
+            max_acceptable_age_seconds=_selected_max_age(
+                session,
+                _request_source_ids("market_alerts", scope),
+                24 * 3600,
+            ),
             spatial_resolution=SpatialResolution.COUNTRY,
             sources=source_rows,
         )

@@ -114,9 +114,12 @@ def test_region_indices_are_bounded_and_partial_diversity_edit_is_preserved() ->
 
     assert data["demand"]["stay_index"] == 100.0
     assert data["demand"]["spend_index"] == 0.0
-    assert data["demand"]["availability"] == "partial"
-    assert data["demand"]["reason"] == "일부 수요 차원이 없습니다."
-    assert data["diversity"]["availability"] == "partial"
+    # avg_stay_nights has no source; both sourced dimensions are present.
+    assert data["demand"]["availability"] == "available"
+    assert data["demand"]["reason"] is None
+    assert data["demand"]["avg_stay_nights"] is None
+    # nationality diversity is the only sourced dimension; age alone is no data.
+    assert data["diversity"]["availability"] == "unavailable"
     assert data["diversity"]["nationality_index"] is None
     assert availability == Availability.PARTIAL
 
@@ -271,4 +274,42 @@ def test_all_visitor_coverage_requires_a_total_or_both_components():
     )
     assert data["summary"]["total"] == 25
     assert data["summary"]["completeness_ratio"] == round(1 / 7, 6)
+    assert availability == Availability.PARTIAL
+
+
+def test_region_insight_is_available_without_the_unsourced_fields() -> None:
+    product = {
+        "area": _area(),
+        "visits": [_visit("all", 10, period_start="2026-01-01")],
+        "demand": [{"period_start": "2026-01-01", "stay_index": 61.0, "spend_index": 72.0}],
+        "diversity": [{"period_start": "2026-01-01", "nationality_index": 40.0}],
+    }
+
+    data, availability, reason = build_region_insight_view(
+        product, {"include": ["demand", "diversity"], "period": "7d"}
+    )
+
+    assert data["demand"]["availability"] == "available"
+    assert data["demand"]["avg_stay_nights"] is None
+    assert data["diversity"]["availability"] == "available"
+    assert data["diversity"]["age_index"] is None
+    assert availability == Availability.AVAILABLE
+    assert reason is None
+    RegionInsightData.model_validate(data)
+
+
+def test_region_demand_is_partial_when_a_sourced_dimension_is_missing() -> None:
+    product = {
+        "area": _area(),
+        "visits": [],
+        "demand": [{"period_start": "2026-01-01", "stay_index": 61.0}],
+        "diversity": [],
+    }
+
+    data, availability, _reason = build_region_insight_view(
+        product, {"include": ["demand"], "period": "7d"}
+    )
+
+    assert data["demand"]["availability"] == "partial"
+    assert data["demand"]["reason"] == "일부 수요 차원이 없습니다."
     assert availability == Availability.PARTIAL

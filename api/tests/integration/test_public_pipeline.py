@@ -781,8 +781,10 @@ def test_fixture_source_reaches_raw_normalized_snapshot_and_forecast_api(
         55.0,
     ]
     assert all(row["weather"] is None for row in payload["data"]["daily"])
-    assert all(row["festivals"] is None for row in payload["data"]["daily"])
-    assert all(row["holiday"] is None for row in payload["data"]["daily"])
+    # The fixture's festival and holiday sources succeeded just now, so dates
+    # without an event are known to be empty rather than uncollected.
+    assert all(row["festivals"] == [] for row in payload["data"]["daily"])
+    assert all(row["holiday"] is False for row in payload["data"]["daily"])
     assert all(row["confidence"] is None for row in payload["data"]["daily"])
 
 
@@ -1064,7 +1066,7 @@ def test_all_eight_public_routes_read_built_or_normalized_database_products(
     assert recommendation.status_code == 200, recommendation.text
     recommendation_payload = recommendation.json()
     assert recommendation_payload["data"]["recommendations"][0]["place"]["content_id"]
-    assert recommendation_payload["meta"]["availability"] == "partial"
+    assert recommendation_payload["meta"]["availability"] == "available"
 
     assert bodies[0]["data"]["sources"] == ["SRC_YOUTUBE"]
     assert bodies[1]["data"]["visitors"]["total"] == 100
@@ -1757,3 +1759,148 @@ def test_alert_retention_keeps_active_entry_and_removes_expired_notice(pipeline)
             session.scalar(select(AlertRevision).where(AlertRevision.alert_id == "expired-notice"))
             is None
         )
+
+
+def test_alert_freshness_limit_follows_the_source_refresh_policy(pipeline: Pipeline) -> None:
+    response = pipeline.client.get("/v1/markets/JP/alerts", params={"language": "ko"})
+
+    assert response.status_code == 200
+    freshness = response.json()["meta"]["freshness"]
+    # The seeded refresh policy allows 86,400 s; the old fixed 3-hour limit
+    # marked every response between 12-hour collection runs as stale.
+    assert freshness["max_acceptable_age_seconds"] == 86_400
+
+
+def test_recommendation_sources_credit_the_crowd_index_observations(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.products import recommendations
+    from app.products.formulas import CROWD_FORMULA_VERSION, ScoreResult
+
+    monkeypatch.setattr(
+        recommendations,
+        "crowd_index",
+        lambda value, _population: ScoreResult(
+            50.0 if value is not None else None,
+            "available" if value is not None else "unavailable",
+            None,
+            CROWD_FORMULA_VERSION,
+        ),
+    )
+    candidates = []
+    monkeypatch.setattr(
+        recommendations.SnapshotPublisher,
+        "publish",
+        lambda _self, candidate: candidates.append(candidate),
+    )
+
+    recommendations.build_recommendation_snapshot(pipeline.session_factory)
+
+    assert candidates
+    feature = next(
+        feature for feature in candidates[0].data["features"] if feature["place_id"] == PLACE_ID
+    )
+    assert any(value is not None for value in feature["crowd_by_season"].values())
+    assert "SRC_KTO_REGIONAL_VISITORS" in feature["sources"]
+
+
+def test_forecast_reference_coverage_follows_source_freshness(pipeline: Pipeline) -> None:
+    from app.products.forecast import REFERENCE_HORIZON_DAYS, reference_coverage
+
+    today = datetime.now(SEOUL).date()
+    with pipeline.session_factory() as session:
+        coverage = reference_coverage(session, today)
+    expected_through = (today + timedelta(days=REFERENCE_HORIZON_DAYS - 1)).isoformat()
+    assert coverage == {
+        "SRC_FESTIVAL": {"from": today.isoformat(), "through": expected_through},
+        "SRC_HOLIDAY": {"from": today.isoformat(), "through": expected_through},
+    }
+
+    with pipeline.session_factory.begin() as session:
+        stale = session.scalar(
+            select(SourceState).where(
+                SourceState.source_id == "SRC_FESTIVAL", SourceState.scope_key == "global"
+            )
+        )
+        stale.last_success_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
+        never = session.scalar(
+            select(SourceState).where(
+                SourceState.source_id == "SRC_HOLIDAY", SourceState.scope_key == "global"
+            )
+        )
+        never.last_success_at = None
+    with pipeline.session_factory() as session:
+        assert reference_coverage(session, today) == {}
+
+    build_forecast_snapshots(pipeline.session_factory)
+    response = pipeline.client.get("/v1/forecasts/visitors", params={"area_code": "11", "days": 2})
+    assert response.status_code == 200
+    assert all(row["festivals"] is None for row in response.json()["data"]["daily"])
+    assert all(row["holiday"] is None for row in response.json()["data"]["daily"])
+
+
+def test_child_area_forecast_inherits_the_province_holiday(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.products import forecast
+
+    today = datetime.now(SEOUL).date()
+    start = datetime.combine(today, datetime.min.time())
+    audit = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=1)
+    child_id = "eden_area_forecast_child"
+    with pipeline.session_factory.begin() as session:
+        session.add(
+            Area(
+                eden_area_id=child_id,
+                administrative_code="1111000000",
+                name_ko="자식 시군구",
+                level="sigungu",
+                parent_area_id=AREA_ID,
+                active=True,
+                created_at=audit,
+                updated_at=audit,
+            )
+        )
+        session.add(
+            ForecastInput(
+                area_id=child_id,
+                forecast_date=start + timedelta(days=1),
+                source_forecast={"place_name": "자식 관광지", "concentration_rate": 40},
+                **_fact_audit(FORECAST_SOURCE, audit),
+            )
+        )
+        # Holidays are normalized per province only.
+        session.add(
+            ForecastInput(
+                area_id=AREA_ID,
+                forecast_date=start + timedelta(days=1),
+                holiday={"name": "임시공휴일", "is_holiday": True, "date_kind": "01"},
+                **_fact_audit("SRC_HOLIDAY", audit),
+            )
+        )
+
+    candidates = []
+    monkeypatch.setattr(
+        forecast.SnapshotPublisher,
+        "publish",
+        lambda _self, candidate: candidates.append(candidate),
+    )
+    build_forecast_snapshots(pipeline.session_factory)
+
+    child = next(item for item in candidates if item.data["eden_area_id"] == child_id)
+    inherited = [row for row in child.data["inputs"] if row["source_id"] == "SRC_HOLIDAY"]
+    assert [row["holiday"]["is_holiday"] for row in inherited] == [True]
+    assert child.metadata["spatial_resolution"] == "sigungu"
+    assert "inherited_sido_weather" not in child.quality_flags
+
+
+def test_inbound_flights_block_is_available_without_passenger_counts(pipeline: Pipeline) -> None:
+    response = pipeline.client.get(
+        "/v1/markets/inbound", params={"countries": "JP", "period": "3m", "include": "flights"}
+    )
+
+    assert response.status_code == 200
+    market = response.json()["data"]["markets"][0]
+    assert market["arriving_flights"] is not None
+    assert market["passengers"] is None
+    assert market["source_availability"]["flights"] == {"availability": "available", "reason": None}

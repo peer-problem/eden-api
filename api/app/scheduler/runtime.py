@@ -61,6 +61,7 @@ from app.sources.essential import (
 )
 from app.sources.plans import (
     KTO_RELATED_PLACES_PER_RUN,
+    SEMAS_PLACES_PER_RUN,
     kto_related_place_operations,
     semas_place_operations,
 )
@@ -69,7 +70,6 @@ from app.sources.registry import build_adapter
 logger = logging.getLogger("eden.scheduler")
 SEMAS_CANDIDATE_LIMIT = 900
 RELATED_CANDIDATE_LIMIT = 900
-SEMAS_PLACES_PER_RUN = 5
 PLACE_PIPELINE_SOURCES = frozenset(
     {
         "SRC_KTO_PLACE_HUB",
@@ -339,14 +339,9 @@ def _runtime_scope(
                 )
                 scope["allowed_content_ids"] = allowed
                 scope["new_places_limit"] = 30
-            batch = (
-                [
-                    operations[(cursor + offset) % len(operations)]
-                    for offset in range(min(5, len(operations)))
-                ]
-                if operations
-                else []
-            )
+            from app.sources.plans import rotating_batch, scheduler_batch_size
+
+            batch = rotating_batch(operations, cursor, scheduler_batch_size(source_id))
             scope.update(
                 operations=batch,
                 rotate_operations=False,

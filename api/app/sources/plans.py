@@ -10,7 +10,15 @@ DOCUMENTATION_VERIFIED_AT = datetime(2026, 9, 10, tzinfo=UTC)
 KTO_RELATED_PLACES_PER_RUN = 5
 KMA_OPERATIONS_PER_RUN = 5
 PUBLIC_DATA_OPERATIONS_PER_RUN = 5
-SEMAS_PLACES_PER_RUN = 5
+# One TourAPI province catalog page is up to 1,000 rows (about 650 KB); five
+# provinces exceeded the 2 MiB run byte budget and starved the last one.
+TOUR_KO_AREAS_PER_RUN = 3
+# Retries share the per-run request budget with the batch itself. Reserve
+# room so one transient failure cannot starve the last operation of a batch.
+PUBLIC_DATA_REQUEST_HEADROOM = 2
+# One radius query answers about 25 KB; twenty places stay far inside the
+# 2 MiB run byte budget and cover the ~480 essential places within a week.
+SEMAS_PLACES_PER_RUN = 20
 
 KTO_ADMINISTRATIVE_AREA_CODES = (
     "11",
@@ -521,6 +529,21 @@ def public_data_refresh_scope(
     return scope
 
 
+def scheduler_batch_size(source_id: str) -> int:
+    """Operations the scheduler hands one run of a province-rotating source."""
+    return TOUR_KO_AREAS_PER_RUN if source_id == "SRC_TOUR_KO" else KMA_OPERATIONS_PER_RUN
+
+
+def rotating_batch(operations: list[Any], cursor: int, batch_size: int) -> list[Any]:
+    """Return the next bounded window of a circular operation list."""
+    if not operations:
+        return []
+    return [
+        operations[(cursor + offset) % len(operations)]
+        for offset in range(min(batch_size, len(operations)))
+    ]
+
+
 def semas_place_operations(
     places: list[tuple[str, float, float]],
 ) -> list[dict[str, Any]]:
@@ -535,6 +558,10 @@ def semas_place_operations(
                 "cy": f"{lat:.7f}",
             },
             "response_type_param": "type",
+            # The response header carries the dataset's reference month
+            # (stdrYm, e.g. "202606"); without it every run is graded as
+            # freshness-unknown and a re-visit that stores nothing counts as failed.
+            "watermark": {"response_field": "stdrYm", "format": "%Y%m"},
             "max_pages": 1,
             "paginate": False,
             "bounded_sample": True,

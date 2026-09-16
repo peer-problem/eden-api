@@ -243,12 +243,14 @@ def build_recommendation_view(
             Availability.UNAVAILABLE,
             f"요청 지역과 테마에 맞는 추천 입력이 없습니다. 해당 범위의 보유 테마: {themes}.",
         )
+    # estimated_budget_krw has no verified source; each item says so in
+    # budget_availability and the result is not degraded for it.
     return (
         {
             "recommendations": selected,
             "applied_constraints": applied,
             "unapplied_inputs": unapplied,
         },
-        Availability.PARTIAL,
-        "관광지별 검증 예산 원천이 없어 예산 값은 제공하지 않습니다.",
+        Availability.AVAILABLE,
+        None,
     )

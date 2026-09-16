@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -8,6 +9,7 @@ from xml.etree.ElementTree import ParseError
 
 import pytest
 
+from app.domain.enums import SourceStatus
 from app.sources.alerts import (
     KTO_BOOTSTRAP_URL,
     KTO_MARKET_URL,
@@ -650,3 +652,155 @@ def test_bok_ecos_schema_drift_and_source_errors_are_rejected(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         _ecos_rows(_fixture_json(fixture_name))
+
+
+def _waiting_room_site(
+    update_states: list[bytes],
+) -> tuple[Callable[[str], tuple[bytes, str, str]], list[str]]:
+    """Simulate overseas.mofa.go.kr: the first hit lands in the queue, later hits pass."""
+    listing = b"""
+        <html><body><a href="/cn-ko/brd/m_1/view.do?seq=1">Travel advisory</a></body></html>
+    """
+    detail = b"""
+        <html><head><meta name="date" content="2026-09-10"></head>
+        <body><article><h1>Travel advisory</h1>
+        <p>Review entry conditions.</p></article></body></html>
+    """
+    calls: list[str] = []
+    released = {"value": False}
+
+    def get(url: str) -> tuple[bytes, str, str]:
+        calls.append(url)
+        if url.endswith("/waitingroom/update.html"):
+            state = update_states.pop(0)
+            released["value"] = state.startswith(b"done")
+            return state, "text/plain", url
+        if url == "https://embassy.example/cn-ko/brd/m_1/list.do":
+            if not released["value"]:
+                return (
+                    b"<html><head><title>Waitingroom</title></head><body></body></html>",
+                    "text/html",
+                    "https://embassy.example/waitingroom/main.html",
+                )
+            return listing, "text/html", url
+        if url == "https://embassy.example/cn-ko/brd/m_1/view.do?seq=1":
+            return detail, "text/html", url
+        raise AssertionError(f"unexpected request: {url}")
+
+    return get, calls
+
+
+def test_notice_fetch_waits_through_the_virtual_waiting_room(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.sources import alerts as alerts_module
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(alerts_module.time, "sleep", lambda seconds: sleeps.append(seconds))
+    get, calls = _waiting_room_site([b"0 94 5000", b"0 25 5000", b"done 0 5000"])
+    adapter = OfficialNoticeAdapter("SRC_EMBASSY_NOTICE", {"embassy.example"}, 5, 1024 * 1024)
+    adapter.client.get = get  # type: ignore[method-assign]
+
+    result = adapter.fetch(
+        {
+            "targets": [
+                {
+                    **NOTICE_TARGET,
+                    "url": "https://embassy.example/cn-ko/brd/m_1/list.do",
+                    "max_items": 1,
+                }
+            ]
+        }
+    )
+
+    assert result.status is SourceStatus.AVAILABLE
+    assert len(result.items) == 1
+    assert calls == [
+        "https://embassy.example/cn-ko/brd/m_1/list.do",
+        "https://embassy.example/waitingroom/update.html",
+        "https://embassy.example/waitingroom/update.html",
+        "https://embassy.example/waitingroom/update.html",
+        "https://embassy.example/cn-ko/brd/m_1/list.do",
+        "https://embassy.example/cn-ko/brd/m_1/view.do?seq=1",
+    ]
+    assert sleeps == [5.0, 5.0]
+
+
+def test_notice_fetch_reports_a_waiting_room_that_never_releases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.sources import alerts as alerts_module
+
+    monkeypatch.setattr(alerts_module.time, "sleep", lambda _seconds: None)
+    get, calls = _waiting_room_site([b"0 90 5000"] * alerts_module.WAITING_ROOM_MAX_POLLS)
+    adapter = OfficialNoticeAdapter("SRC_EMBASSY_NOTICE", {"embassy.example"}, 5, 1024 * 1024)
+    adapter.client.get = get  # type: ignore[method-assign]
+
+    result = adapter.fetch(
+        {
+            "targets": [
+                {
+                    **NOTICE_TARGET,
+                    "url": "https://embassy.example/cn-ko/brd/m_1/list.do",
+                    "max_items": 1,
+                }
+            ]
+        }
+    )
+
+    assert result.status is SourceStatus.DEGRADED
+    assert result.items == ()
+    assert result.partial_errors == ("Test Embassy:index:ValueError",)
+    assert calls.count("https://embassy.example/waitingroom/update.html") == (
+        alerts_module.WAITING_ROOM_MAX_POLLS
+    )
+
+
+def test_notice_fetch_stops_polling_the_waiting_room_when_the_run_budget_ends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.sources import alerts as alerts_module
+
+    monkeypatch.setattr(alerts_module.time, "sleep", lambda _seconds: None)
+    get, calls = _waiting_room_site([b"0 90 5000", b"0 80 5000", b"done 0 5000"])
+    adapter = OfficialNoticeAdapter("SRC_EMBASSY_NOTICE", {"embassy.example"}, 5, 1024 * 1024)
+    adapter.client.get = get  # type: ignore[method-assign]
+    adapter.client.remaining_seconds = lambda: 3.0  # type: ignore[method-assign]
+
+    result = adapter.fetch(
+        {
+            "targets": [
+                {
+                    **NOTICE_TARGET,
+                    "url": "https://embassy.example/cn-ko/brd/m_1/list.do",
+                    "max_items": 1,
+                }
+            ]
+        }
+    )
+
+    assert result.items == ()
+    assert result.partial_errors == ("Test Embassy:index:SourceRunBudgetExceeded",)
+    assert calls.count("https://embassy.example/waitingroom/update.html") == 1
+
+
+def test_semas_watermark_reads_the_dataset_reference_month() -> None:
+    from app.sources.plans import semas_place_operations
+
+    request = semas_place_operations([("eden_place_test", 37.5662952, 126.9779692)])[0]
+    document = {
+        "header": {"stdrYm": "202606", "resultCode": "00"},
+        "body": {"items": [{"bizesId": "1", "lon": "126.97", "lat": "37.56"}]},
+    }
+
+    watermark = public_data_watermark(
+        request, request["params"], document, source_id="SRC_SEMAS_SHOPS"
+    )
+
+    assert watermark == datetime(2026, 6, 1, tzinfo=UTC)
+    assert (
+        public_data_watermark(
+            request, request["params"], {"header": {}, "body": {}}, source_id="SRC_SEMAS_SHOPS"
+        )
+        is None
+    )

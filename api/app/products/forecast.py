@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select
@@ -11,11 +11,18 @@ from app.domain.enums import Availability
 from app.products.formulas import FORECAST_FORMULA_VERSION
 from app.products.snapshots import SnapshotCandidate, SnapshotPublisher
 from app.readmodels.keys import lookup_key
-from app.repositories.models import Area, ForecastInput
+from app.repositories.models import Area, ForecastInput, RefreshPolicy, SourceState
 
 FORECAST_PRODUCT_VERSION = "forecast_input_product_v1"
 FORECAST_MAX_AGE_SECONDS = 18 * 3600
 FORECAST_HORIZON_DAYS = 30
+# Festival and holiday normalizers write rows only for dates that have an event,
+# bounded to today..today+89 at run time. A fresh successful run therefore
+# proves that dates without rows inside that window have no event.
+REFERENCE_SOURCES = ("SRC_FESTIVAL", "SRC_HOLIDAY")
+INHERITED_REFERENCE_SOURCES = ("SRC_KMA_FORECAST", "SRC_HOLIDAY")
+REFERENCE_HORIZON_DAYS = 90
+REFERENCE_DEFAULT_MAX_AGE_SECONDS = 7 * 24 * 3600
 SEOUL = ZoneInfo("Asia/Seoul")
 
 
@@ -29,6 +36,41 @@ def _aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def reference_coverage(
+    session: Session,
+    today: date,
+    *,
+    now: datetime | None = None,
+) -> dict[str, dict[str, str]]:
+    """Return, per reference source, the last date its latest fresh run covers."""
+    now = now or datetime.now(UTC)
+    rows = session.execute(
+        select(
+            SourceState.source_id,
+            SourceState.last_success_at,
+            RefreshPolicy.max_acceptable_age_seconds,
+        )
+        .outerjoin(RefreshPolicy, RefreshPolicy.source_id == SourceState.source_id)
+        .where(
+            SourceState.source_id.in_(REFERENCE_SOURCES),
+            SourceState.scope_key == "global",
+        )
+    ).all()
+    coverage: dict[str, dict[str, str]] = {}
+    for source_id, last_success_at, max_age_seconds in rows:
+        if last_success_at is None:
+            continue
+        success = _aware(last_success_at)
+        max_age = timedelta(seconds=max_age_seconds or REFERENCE_DEFAULT_MAX_AGE_SECONDS)
+        if now - success > max_age:
+            continue
+        through = success.astimezone(SEOUL).date() + timedelta(days=REFERENCE_HORIZON_DAYS - 1)
+        if through < today:
+            continue
+        coverage[source_id] = {"from": today.isoformat(), "through": through.isoformat()}
+    return coverage
 
 
 def build_forecast_snapshots(
@@ -60,6 +102,8 @@ def build_forecast_snapshots(
                 .order_by(Area.eden_area_id)
             ).all()
         )
+    with session_factory() as session:
+        coverage = reference_coverage(session, today)
     publisher = SnapshotPublisher(session_factory)
     published: list[str] = []
     for area_id in area_ids:
@@ -67,9 +111,11 @@ def build_forecast_snapshots(
             area = session.get(Area, area_id)
             if area is None:
                 continue
-            inherited_weather = (
+            # Weather is collected on the province grid and public holidays are
+            # written per province, so child areas inherit both from their parent.
+            inherited_from_parent = (
                 (ForecastInput.area_id == area.parent_area_id)
-                & (ForecastInput.source_id == "SRC_KMA_FORECAST")
+                & (ForecastInput.source_id.in_(INHERITED_REFERENCE_SOURCES))
                 if area.parent_area_id is not None
                 else False
             )
@@ -79,7 +125,7 @@ def build_forecast_snapshots(
                     .where(
                         or_(
                             ForecastInput.area_id == area_id,
-                            inherited_weather,
+                            inherited_from_parent,
                         ),
                         ForecastInput.forecast_date >= start,
                         ForecastInput.forecast_date < end,
@@ -107,6 +153,7 @@ def build_forecast_snapshots(
                 data={
                     "area_code": area.administrative_code or area.eden_area_id,
                     "eden_area_id": area.eden_area_id,
+                    "reference_coverage": coverage,
                     "inputs": [
                         {
                             "input_id": row.input_id,

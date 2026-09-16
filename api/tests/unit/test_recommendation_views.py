@@ -51,8 +51,11 @@ def test_recommendation_ties_have_a_stable_place_id_order() -> None:
     assert [row["rank"] for row in data["recommendations"]] == [1, 2]
     assert data["recommendations"][0]["sources"] == ["SRC_A", "SRC_Z"]
     assert data["recommendations"][0]["crowd_index"] == 100.0
-    assert availability == Availability.PARTIAL
-    assert reason is not None
+    # The missing budget source is disclosed per item, not as a degraded result.
+    assert data["recommendations"][0]["estimated_budget_krw"] is None
+    assert data["recommendations"][0]["budget_availability"]["availability"] == "unavailable"
+    assert availability == Availability.AVAILABLE
+    assert reason is None
     RecommendationsData.model_validate(data)
 
 
@@ -114,7 +117,7 @@ def test_deprecated_inputs_and_budget_are_disclosed_without_changing_rank():
     scope["travel_window"]["days"] = 30
     after, availability, _ = build_recommendation_view(product, scope)
     assert before["recommendations"] == after["recommendations"]
-    assert availability == Availability.PARTIAL
+    assert availability == Availability.AVAILABLE
     fields = {item["field"] for item in after["unapplied_inputs"]}
     assert {"travel_window.days", "party_size", "budget_krw"} <= fields
 

@@ -97,6 +97,22 @@ def _insert_once(session: Session, table, values: dict[str, Any], key_columns: l
     session.execute(insert(table).values(**values).on_duplicate_key_update(**no_op))
 
 
+def preserve_collection_cursor(
+    seeded_evidence: dict[str, Any], existing_evidence: object
+) -> dict[str, Any]:
+    """Keep the scheduler's rotation position when reference data is re-seeded.
+
+    Re-seeding rewrites the registry evidence; dropping the cursor restarts
+    every batched source at its first batch and re-collects the same rows.
+    """
+    if not isinstance(existing_evidence, dict):
+        return seeded_evidence
+    cursor = existing_evidence.get("collection_cursor")
+    if cursor is None:
+        return seeded_evidence
+    return {**seeded_evidence, "collection_cursor": cursor}
+
+
 def seed_reference_data(session: Session) -> None:
     now = datetime.now(UTC)
     active_areas = session.execute(
@@ -208,6 +224,10 @@ def seed_reference_data(session: Session) -> None:
             "created_at": now,
             "updated_at": now,
         }
+        existing = session.get(SourceRegistry, source.source_id)
+        values["evidence"] = preserve_collection_cursor(
+            values["evidence"], existing.evidence if existing is not None else None
+        )
         source_update = {
             key: value
             for key, value in values.items()

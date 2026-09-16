@@ -119,6 +119,19 @@ Successful queries return a `data` and `meta` envelope. Missing information is n
 
 Sources publish on different schedules. Check individual data blocks as well as the overall metadata. Invalid inputs return `422`, unknown IDs return `404`, and requests exceeding rate limits return `429`.
 
+### Fields That Are Not Provided
+
+Some declared fields have no verified source today. They are always `null` (or `unavailable` for their availability block), and they are excluded from `meta.availability`, so a response is `available` when every sourced field is present. The list is the current product decision (2026-09-16); adding a source to any of them is a separate change.
+
+| Endpoint | Field | Why |
+| --- | --- | --- |
+| `/v1/regions/{area_code}/insights` | `demand.avg_stay_nights`, `diversity.age_index` | The official regional statistics publish no such dimension |
+| `/v1/visitors/timeseries` | `concentration_rate`, `summary.peak_concentration_rate` | The visitor statistics do not publish concentration |
+| `/v1/forecasts/visitors` | `expected_visitors`, `confidence`, `adjustment_factors` | No source forecasts headcounts or confidence; the reference index is not scaled into people |
+| `/v1/markets/inbound` | `passengers`, `social_interest.youtube.score` | Airport statistics publish flight counts only; a search sample is not a country signal |
+| `/v1/trends` | `destination_searches`, `search_ratio`, `sns_mentions` | No connected source; NAVER and the other social platforms need external approval |
+| `/v1/recommendations/destinations` | `estimated_budget_krw`, `budget_krw`, `travel_window.days`, `party_size`, `constraints.accessibility_required`, `constraints.max_travel_minutes` | No verified cost, stay, capacity, accessibility or travel-time source |
+
 ### Understanding the Indicators
 
 - **YouTube metrics** describe a sample of publicly available search results. A search region filter does not identify viewers' nationalities.
@@ -138,7 +151,7 @@ Public requests only read published database snapshots. They do not trigger exte
 
 Collection uses one source worker, request budgets and resource limits. Monthly regional demand and diversity sources are checked weekly. Monthly flight refreshes cover the two most recent months while existing history remains stored. Cleanup keeps the current snapshot and two recent retired versions, preserving their referenced facts and source evidence. Superseded catalog errors and sources outside the maintained scope are quarantined without deleting their raw evidence. API usage statistics are not written to the database.
 
-`SCHEDULER_ENABLED=false` pauses collection, refresh and automatic cleanup. In production the scheduler runs as its own process (`python -m app.scheduler`, systemd unit `eden-scheduler`) with the same jobs, intervals and locks, while the API process serves requests with the scheduler disabled; the API still records pilot usage with the ingestion account. The unit files and one-time installation steps are in [deploy/README.md](deploy/README.md). `ALERT_ENRICHMENT_BATCH_SIZE=0` independently disables paid translation jobs; original official notices remain available. The deployment currently uses this zero translation budget.
+`SCHEDULER_ENABLED=false` pauses collection, refresh and automatic cleanup. In production the scheduler runs as its own process (`python -m app.scheduler`, systemd unit `eden-scheduler`) with the same jobs, intervals and locks, while the API process serves requests with the scheduler disabled; the API still records pilot usage with the ingestion account. The unit files and one-time installation steps are in [deploy/README.md](deploy/README.md). `ALERT_ENRICHMENT_BATCH_SIZE=0` independently disables paid translation jobs; original official notices remain available. The deployment currently uses this zero translation budget. Fields that no current source can fill and deferred decisions are listed in [KNOWN_GAPS.md](KNOWN_GAPS.md).
 
 | Component | Responsibility |
 | --- | --- |

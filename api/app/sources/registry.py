@@ -32,6 +32,28 @@ STATISTICAL_PUBLIC_DATA_SOURCES = {
 }
 
 
+EMBASSY_NOTICE_REQUEST_BUDGET = 40
+
+
+def _batched_request_budget(source_id: str, configured: int) -> int:
+    """Give scheduler-batched sources room for retries on top of their batch."""
+    from app.sources.plans import (
+        KMA_OPERATIONS_PER_RUN,
+        PUBLIC_DATA_REQUEST_HEADROOM,
+        SEMAS_PLACES_PER_RUN,
+        TOUR_KO_AREAS_PER_RUN,
+    )
+
+    if source_id == "SRC_KMA_FORECAST":
+        return max(configured, KMA_OPERATIONS_PER_RUN + PUBLIC_DATA_REQUEST_HEADROOM)
+    if source_id == "SRC_TOUR_KO":
+        # Province catalogs can span two pages each.
+        return max(configured, TOUR_KO_AREAS_PER_RUN * 2 + PUBLIC_DATA_REQUEST_HEADROOM)
+    if source_id == "SRC_SEMAS_SHOPS":
+        return max(configured, SEMAS_PLACES_PER_RUN + PUBLIC_DATA_REQUEST_HEADROOM)
+    return configured
+
+
 def build_adapter(
     source_id: str,
     settings: Settings,
@@ -152,7 +174,7 @@ def build_adapter(
             (
                 min(settings.SOURCE_STATISTICAL_MAX_REQUESTS_PER_RUN, 60)
                 if source_id in STATISTICAL_PUBLIC_DATA_SOURCES
-                else settings.SOURCE_MAX_REQUESTS_PER_RUN
+                else _batched_request_budget(source_id, settings.SOURCE_MAX_REQUESTS_PER_RUN)
             ),
             settings.SOURCE_MAX_RUN_BYTES,
             settings.SOURCE_MAX_RECORDS_PER_RUN,
@@ -177,7 +199,11 @@ def build_adapter(
             hosts,
             settings.SOURCE_HTTP_TIMEOUT_SECONDS,
             settings.SOURCE_MAX_RESPONSE_BYTES,
-            20 if source_id == "SRC_EMBASSY_NOTICE" else settings.SOURCE_MAX_REQUESTS_PER_RUN,
+            # Five embassy boards; the shared host's waiting room costs one
+            # redirect chain plus a few polls before the first board loads.
+            EMBASSY_NOTICE_REQUEST_BUDGET
+            if source_id == "SRC_EMBASSY_NOTICE"
+            else settings.SOURCE_MAX_REQUESTS_PER_RUN,
             settings.SOURCE_MAX_RUN_BYTES,
             settings.SOURCE_MAX_RUN_SECONDS,
         )

@@ -101,6 +101,10 @@ class SecureSourceClient:
     def _remaining_seconds(self) -> float:
         return self.max_run_seconds - (monotonic() - self.started_at)
 
+    def remaining_seconds(self) -> float:
+        """Seconds left in this run's time budget (negative once exhausted)."""
+        return self._remaining_seconds()
+
     def _reserve_request(self) -> float:
         remaining = self._remaining_seconds()
         if remaining <= 0:

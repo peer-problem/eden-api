@@ -45,10 +45,10 @@ EXPANSION_SOURCES = frozenset(
 DAY = 86400
 SOURCE_INTERVALS = {
     "SRC_MOIS_ADMIN_CODES": 30 * DAY,
-    "SRC_TOUR_KO": DAY,  # Five provinces per batch, nationwide within one week.
+    "SRC_TOUR_KO": DAY,  # Three provinces per batch, nationwide within six days.
     "SRC_YOUTUBE": DAY,
     "SRC_KMA_FORECAST": 3 * 3600,
-    "SRC_SEMAS_SHOPS": 6 * 3600,  # Five places per batch, 510 within 26 days.
+    "SRC_SEMAS_SHOPS": 6 * 3600,  # Twenty places per batch, ~480 within a week.
     "SRC_FESTIVAL": 7 * DAY,
     "SRC_HOLIDAY": 30 * DAY,
     "SRC_EMBASSY_NOTICE": 12 * 3600,
