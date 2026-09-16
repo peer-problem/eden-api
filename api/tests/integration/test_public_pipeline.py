@@ -781,8 +781,10 @@ def test_fixture_source_reaches_raw_normalized_snapshot_and_forecast_api(
         55.0,
     ]
     assert all(row["weather"] is None for row in payload["data"]["daily"])
-    assert all(row["festivals"] is None for row in payload["data"]["daily"])
-    assert all(row["holiday"] is None for row in payload["data"]["daily"])
+    # The fixture's festival and holiday sources succeeded just now, so dates
+    # without an event are known to be empty rather than uncollected.
+    assert all(row["festivals"] == [] for row in payload["data"]["daily"])
+    assert all(row["holiday"] is False for row in payload["data"]["daily"])
     assert all(row["confidence"] is None for row in payload["data"]["daily"])
 
 
@@ -1800,3 +1802,38 @@ def test_recommendation_sources_credit_the_crowd_index_observations(
     )
     assert any(value is not None for value in feature["crowd_by_season"].values())
     assert "SRC_KTO_REGIONAL_VISITORS" in feature["sources"]
+
+
+def test_forecast_reference_coverage_follows_source_freshness(pipeline: Pipeline) -> None:
+    from app.products.forecast import REFERENCE_HORIZON_DAYS, reference_coverage
+
+    today = datetime.now(SEOUL).date()
+    with pipeline.session_factory() as session:
+        coverage = reference_coverage(session, today)
+    expected_through = (today + timedelta(days=REFERENCE_HORIZON_DAYS - 1)).isoformat()
+    assert coverage == {
+        "SRC_FESTIVAL": {"from": today.isoformat(), "through": expected_through},
+        "SRC_HOLIDAY": {"from": today.isoformat(), "through": expected_through},
+    }
+
+    with pipeline.session_factory.begin() as session:
+        stale = session.scalar(
+            select(SourceState).where(
+                SourceState.source_id == "SRC_FESTIVAL", SourceState.scope_key == "global"
+            )
+        )
+        stale.last_success_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
+        never = session.scalar(
+            select(SourceState).where(
+                SourceState.source_id == "SRC_HOLIDAY", SourceState.scope_key == "global"
+            )
+        )
+        never.last_success_at = None
+    with pipeline.session_factory() as session:
+        assert reference_coverage(session, today) == {}
+
+    build_forecast_snapshots(pipeline.session_factory)
+    response = pipeline.client.get("/v1/forecasts/visitors", params={"area_code": "11", "days": 2})
+    assert response.status_code == 200
+    assert all(row["festivals"] is None for row in response.json()["data"]["daily"])
+    assert all(row["holiday"] is None for row in response.json()["data"]["daily"])

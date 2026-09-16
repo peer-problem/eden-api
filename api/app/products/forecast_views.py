@@ -170,6 +170,20 @@ def build_forecast_view(
     by_date: dict[date, list[dict[str, Any]]] = {}
     for row in product.get("inputs", []):
         by_date.setdefault(_date(str(row["forecast_date"])), []).append(row)
+    coverage = product.get("reference_coverage") or {}
+
+    def covered(source_id: str, target: date) -> bool:
+        window = coverage.get(source_id) if isinstance(coverage, dict) else None
+        if not isinstance(window, dict):
+            return False
+        try:
+            return (
+                date.fromisoformat(str(window.get("from", target.isoformat())))
+                <= target
+                <= date.fromisoformat(str(window["through"]))
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
 
     daily: list[dict[str, Any]] = []
     all_weather: list[dict[str, Any]] = []
@@ -188,6 +202,7 @@ def build_forecast_view(
         weather_value = _weather_value(rows, scope)
         weather = _weather_block(weather_value, scope) if "weather" in include else None
         festival_values = [row.get("festivals") for row in rows if row.get("festivals") is not None]
+        festival_known = bool(festival_values) or covered("SRC_FESTIVAL", target)
         festivals = (
             sorted(
                 {
@@ -197,20 +212,21 @@ def build_forecast_view(
                     if item.get("name")
                 }
             )
-            if festival_values
+            if festival_known
             else None
         )
         holiday_values = [
             row.get("holiday") for row in rows if isinstance(row.get("holiday"), dict)
         ]
+        holiday_known = bool(holiday_values) or covered("SRC_HOLIDAY", target)
         is_holiday = any(item.get("is_holiday") for item in holiday_values)
         factors: dict[str, float] = {}
         if weather and weather.get("availability") == "available":
             all_weather.append(weather)
-        if festival_values and "festivals" in include:
+        if festival_known and "festivals" in include:
             all_festivals.extend(festivals or [])
             any_festival_evidence = True
-        if holiday_values and "holidays" in include:
+        if holiday_known and "holidays" in include:
             any_holiday = any_holiday or is_holiday
             any_holiday_evidence = True
         concentration = base.get("concentration_rate") if base else None
@@ -233,9 +249,9 @@ def build_forecast_view(
         missing_adjustments: list[str] = []
         if "weather" in include and (weather is None or weather.get("availability") != "available"):
             missing_adjustments.append("weather")
-        if "festivals" in include and not festival_values:
+        if "festivals" in include and not festival_known:
             missing_adjustments.append("festivals")
-        if "holidays" in include and not holiday_values:
+        if "holidays" in include and not holiday_known:
             missing_adjustments.append("holidays")
         if has_base and not missing_adjustments:
             complete_days += 1
@@ -264,7 +280,7 @@ def build_forecast_view(
                 "confidence": confidence,
                 "weather": weather,
                 "festivals": festivals if "festivals" in include else None,
-                "holiday": (is_holiday if "holidays" in include and holiday_values else None),
+                "holiday": (is_holiday if "holidays" in include and holiday_known else None),
                 "adjustment_factors": factors,
                 "method": "official" if has_official else proxy["method"] if proxy else None,
                 "basis_period": proxy["basis_period"] if proxy else None,

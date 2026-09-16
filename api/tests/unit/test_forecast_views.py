@@ -389,3 +389,102 @@ def test_named_attraction_does_not_receive_area_proxy():
     )
     assert status == Availability.UNAVAILABLE
     assert data["daily"][0]["demand_score"] is None
+
+
+def _coverage_product(through: str) -> dict[str, object]:
+    return {
+        "area_code": "11",
+        "eden_area_id": "eden_area_11",
+        "reference_coverage": {
+            "SRC_FESTIVAL": {"from": "2026-08-29", "through": through},
+            "SRC_HOLIDAY": {"from": "2026-08-29", "through": through},
+        },
+        "inputs": [
+            {
+                "input_id": 1,
+                "source_id": "SRC_KTO_VISITOR_FORECAST",
+                "forecast_date": "2026-08-29",
+                "source_forecast": {"place_name": "광화문", "concentration_rate": 50.0},
+            },
+            {
+                "input_id": 2,
+                "source_id": "SRC_KTO_VISITOR_FORECAST",
+                "forecast_date": "2026-08-30",
+                "source_forecast": {"place_name": "광화문", "concentration_rate": 55.0},
+            },
+        ],
+    }
+
+
+def test_covered_dates_without_events_are_known_empty_not_missing() -> None:
+    scope = {**_scope(days=2), "include": ["festivals", "holidays"]}
+
+    data, availability, reason = build_forecast_view(
+        _coverage_product("2026-11-26"), scope, today=date(2026, 8, 29)
+    )
+
+    assert [day["festivals"] for day in data["daily"]] == [[], []]
+    assert [day["holiday"] for day in data["daily"]] == [False, False]
+    assert [day["availability"] for day in data["daily"]] == ["available", "available"]
+    assert data["festivals"] == []
+    assert data["holiday"] is False
+    assert availability == Availability.AVAILABLE
+    assert reason is None
+    VisitorForecastData.model_validate(data)
+
+
+def test_dates_past_the_reference_coverage_window_stay_missing() -> None:
+    scope = {**_scope(days=2), "include": ["festivals", "holidays"]}
+
+    data, availability, reason = build_forecast_view(
+        _coverage_product("2026-08-29"), scope, today=date(2026, 8, 29)
+    )
+
+    first, second = data["daily"]
+    assert first["festivals"] == [] and first["holiday"] is False
+    assert first["availability"] == "available"
+    assert second["festivals"] is None and second["holiday"] is None
+    assert second["availability"] == "partial"
+    assert second["reason"] == "일부 참고 정보가 없습니다: festivals, holidays"
+    assert availability == Availability.PARTIAL
+    assert reason == "일부 날짜에서 요청한 참고 원천이 없습니다."
+
+
+def test_event_rows_still_win_over_empty_coverage() -> None:
+    product = _coverage_product("2026-11-26")
+    product["inputs"].append(
+        {
+            "input_id": 3,
+            "source_id": "SRC_FESTIVAL",
+            "forecast_date": "2026-08-30",
+            "festivals": [{"name": "서울거리예술축제"}],
+        }
+    )
+    product["inputs"].append(
+        {
+            "input_id": 4,
+            "source_id": "SRC_HOLIDAY",
+            "forecast_date": "2026-08-30",
+            "holiday": {"name": "임시공휴일", "is_holiday": True},
+        }
+    )
+    scope = {**_scope(days=2), "include": ["festivals", "holidays"]}
+
+    data, _, _ = build_forecast_view(product, scope, today=date(2026, 8, 29))
+
+    assert data["daily"][1]["festivals"] == ["서울거리예술축제"]
+    assert data["daily"][1]["holiday"] is True
+    assert data["festivals"] == ["서울거리예술축제"]
+    assert data["holiday"] is True
+
+
+def test_malformed_coverage_is_ignored() -> None:
+    product = _coverage_product("not-a-date")
+    product["reference_coverage"]["SRC_HOLIDAY"] = "garbage"
+    scope = {**_scope(days=1), "include": ["festivals", "holidays"]}
+
+    data, availability, _ = build_forecast_view(product, scope, today=date(2026, 8, 29))
+
+    assert data["daily"][0]["festivals"] is None
+    assert data["daily"][0]["holiday"] is None
+    assert availability == Availability.PARTIAL
