@@ -282,6 +282,7 @@ class FlightRoute(ApiModel):
 
 class FlightSchedule(ApiModel):
     forecast_days: int = Field(ge=1, le=7)
+    basis_period: BasisPeriod | None = None
     flights: int | None = Field(default=None, ge=0)
     change_rate: float | None = None
     major_routes: list[FlightRoute]

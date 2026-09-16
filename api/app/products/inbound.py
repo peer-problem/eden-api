@@ -79,6 +79,34 @@ def _change_rate(current: int | None, previous: int | None) -> float | None:
     return round((current - previous) / previous * 100, 4)
 
 
+def _monthly_change_rate(
+    current_rows: list[InboundVisitorObservation] | list[FlightObservation],
+    previous_rows: list[InboundVisitorObservation] | list[FlightObservation],
+    month_count: int,
+    value_field: str,
+) -> tuple[float | None, str | None]:
+    counts = [
+        len(
+            {
+                _month_ordinal(row.period_start)
+                for row in rows
+                if getattr(row, value_field) is not None
+            }
+        )
+        for rows in (current_rows, previous_rows)
+    ]
+    if counts != [month_count, month_count]:
+        return None, (
+            f"증가율 비교에 필요한 각 {month_count}개월 중 현재 {counts[0]}개월과 "
+            f"이전 {counts[1]}개월의 관측만 있어 증가율을 계산할 수 없습니다."
+        )
+    current = _sum_optional([getattr(row, value_field) for row in current_rows])
+    previous = _sum_optional([getattr(row, value_field) for row in previous_rows])
+    if previous == 0:
+        return None, "이전 비교 기간의 합계가 0이므로 증가율을 계산할 수 없습니다."
+    return _change_rate(current, previous), None
+
+
 def build_inbound_snapshots(
     session_factory: sessionmaker[Session],
 ) -> InboundProductResult:
@@ -231,10 +259,12 @@ def build_inbound_snapshots(
             )
             social_rows = [row for row in social_population_rows if row.country_id == country_id]
             current_total = _sum_optional([row.visitor_count for row in current_rows])
-            previous_total = _sum_optional([row.visitor_count for row in previous_rows])
             arriving_flights = _sum_optional([row.arriving_flights for row in current_flights])
-            previous_arriving_flights = _sum_optional(
-                [row.arriving_flights for row in previous_flights]
+            visitor_change, visitor_change_reason = _monthly_change_rate(
+                current_rows, previous_rows, month_count, "visitor_count"
+            )
+            flight_change, flight_change_reason = _monthly_change_rate(
+                current_flights, previous_flights, month_count, "arriving_flights"
             )
             available_month_count = len(
                 {
@@ -258,6 +288,10 @@ def build_inbound_snapshots(
                     f"요청 {month_count}개월 중 {available_month_count}개월의 공식 통계만 있습니다."
                 )
                 quality_flags = ("incomplete_period",)
+            if visitor_change_reason:
+                reason = " ".join(part for part in (reason, visitor_change_reason) if part)
+                if availability == Availability.AVAILABLE:
+                    availability = Availability.PARTIAL
             input_rows = [
                 *current_rows,
                 *previous_rows,
@@ -341,7 +375,8 @@ def build_inbound_snapshots(
                         "국가별 도착 운항편 수는 있으나 여객 수는 원천에서 제공하지 않습니다."
                         if current_flights
                         else "월간 국가별 항공 관측이 없습니다."
-                    ),
+                    )
+                    + (f" {flight_change_reason}" if flight_change_reason else ""),
                 },
                 "flight_schedule": {
                     "availability": "available" if schedule else "unavailable",
@@ -382,12 +417,10 @@ def build_inbound_snapshots(
                     data={
                         "country": country_iso,
                         "visitors": current_total,
-                        "visitor_change_rate": _change_rate(current_total, previous_total),
+                        "visitor_change_rate": visitor_change,
                         "visitor_completeness_ratio": round(completeness, 6),
                         "arriving_flights": arriving_flights,
-                        "flight_change_rate": _change_rate(
-                            arriving_flights, previous_arriving_flights
-                        ),
+                        "flight_change_rate": flight_change,
                         "passengers": None,
                         "flight_schedule": (
                             {

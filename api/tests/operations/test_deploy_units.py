@@ -18,7 +18,8 @@ def test_scheduler_unit_follows_the_api_and_runs_the_unchanged_runtime() -> None
     unit = _unit(DEPLOY / "systemd/eden-scheduler.service")
     assert unit["Unit"]["PartOf"] == "eden-api.service"
     assert "eden-api.service" in unit["Unit"]["After"].split()
-    assert "mariadb.service" in unit["Unit"]["Requires"].split()
+    for dependency in ("After", "Wants", "Requires"):
+        assert "mariadb.service" not in unit["Unit"].get(dependency, "").split()
     assert unit["Unit"]["StartLimitIntervalSec"] == "0"
     service = unit["Service"]
     assert service["ExecStart"].endswith("python -m app.scheduler --metrics-port 8001")

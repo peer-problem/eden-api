@@ -7,9 +7,8 @@
 # too (stop before the API, start after it). Its own failures do not touch the API.
 [Unit]
 Description=EDEN scheduler (collection, publication, retention)
-After=network-online.target mariadb.service eden-api.service
+After=network-online.target eden-api.service
 Wants=network-online.target
-Requires=mariadb.service
 PartOf=eden-api.service
 StartLimitIntervalSec=0
 

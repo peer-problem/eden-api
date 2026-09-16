@@ -678,6 +678,77 @@ def pipeline(monkeypatch: pytest.MonkeyPatch) -> Iterator[Pipeline]:
         yield Pipeline(factory, client, adapter, run_id)
 
 
+def test_inbound_absent_requested_currency_is_unavailable(pipeline: Pipeline) -> None:
+    response = pipeline.client.get(
+        "/v1/markets/inbound",
+        params={"countries": "JP", "period": "3m", "include": "fx", "currency": "EUR"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["meta"]["availability"] == "unavailable"
+    assert body["meta"]["reason"]
+    market = body["data"]["markets"][0]
+    assert market["fx"] is None
+    assert market["source_availability"]["fx"]["availability"] == "unavailable"
+
+
+def test_inbound_mixed_requested_blocks_are_partial(pipeline: Pipeline) -> None:
+    response = pipeline.client.get(
+        "/v1/markets/inbound",
+        params=[("countries", "JP"), ("period", "3m"), ("include", "fx"),
+                ("include", "visitors"), ("currency", "EUR")],
+    )
+    assert response.status_code == 200
+    assert response.json()["meta"]["availability"] == "partial"
+
+
+def test_inbound_flight_schedule_response_has_requested_basis_period(pipeline: Pipeline) -> None:
+    today = datetime.now(SEOUL).date()
+    with pipeline.session_factory.begin() as session:
+        schedule = session.scalar(
+            select(FlightObservation).where(FlightObservation.grain == "7d_schedule")
+        )
+        schedule.schedule = {
+            "forecast_days": 7,
+            "daily": [
+                {"date": (today + timedelta(days=offset)).isoformat(), "flights": 4,
+                 "routes": {"NRT": 4}}
+                for offset in range(7)
+            ],
+        }
+    build_inbound_snapshots(pipeline.session_factory)
+    response = pipeline.client.get(
+        "/v1/markets/inbound",
+        params={"countries": "JP", "include": "flight_schedule", "forecast_days": 2},
+    )
+    assert response.status_code == 200
+    schedule = response.json()["data"]["markets"][0]["flight_schedule"]
+    assert schedule["basis_period"] == {
+        "start": today.isoformat(), "end": (today + timedelta(days=1)).isoformat(),
+    }
+    assert schedule["flights"] == 8
+    assert response.json()["meta"]["availability"] == "available"
+
+
+def test_inbound_expired_schedule_is_unavailable(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.readmodels.repository as repository_module
+
+    future = datetime.now(SEOUL) + timedelta(days=30)
+    monkeypatch.setattr(repository_module, "kst_now", lambda: future)
+    response = pipeline.client.get(
+        "/v1/markets/inbound", params={"countries": "JP", "include": "flight_schedule"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["meta"]["availability"] == "unavailable"
+    schedule = body["data"]["markets"][0]["flight_schedule"]
+    assert schedule["flights"] is None
+    assert schedule["availability"] == "unavailable"
+    assert schedule["basis_period"]["start"] == future.date().isoformat()
+
+
 def test_fixture_source_reaches_raw_normalized_snapshot_and_forecast_api(
     pipeline: Pipeline,
 ) -> None:

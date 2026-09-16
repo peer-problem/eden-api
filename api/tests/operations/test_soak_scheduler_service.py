@@ -44,7 +44,6 @@ def test_scheduler_service_is_monitored_but_not_required() -> None:
 def test_collect_sample_reports_standalone_scheduler(monkeypatch, tmp_path: Path) -> None:
     states = {
         "eden-api": {"active_state": "active", "restarts": 0},
-        "mariadb": {"active_state": "active", "restarts": 0},
         "nginx": {"active_state": "active", "restarts": 0},
         "eden-scheduler": {"active_state": "active", "restarts": 1},
     }
@@ -72,7 +71,6 @@ def _sample(sampled_at: datetime, *, scheduler_state: str, scheduler_restarts: i
         "scheduler_enabled": scheduler_state == "active",
         "services": {
             "eden-api": {"active_state": "active", "restarts": 0},
-            "mariadb": {"active_state": "active", "restarts": 0},
             "nginx": {"active_state": "active", "restarts": 0},
             "eden-scheduler": {
                 "active_state": scheduler_state,
@@ -117,3 +115,62 @@ def test_scheduler_service_restart_counts_as_service_restart() -> None:
 
     assert "service_restart" in result["violations"]
     assert "scheduler_disabled" not in result["violations"]
+
+
+@pytest.mark.parametrize("legacy_mariadb", [False, True])
+def test_remote_database_needs_no_local_service(legacy_mariadb: bool) -> None:
+    started = datetime(2026, 9, 16, tzinfo=UTC)
+    samples = [
+        _sample(started + timedelta(minutes=5 * index), scheduler_state="active",
+                scheduler_restarts=0)
+        for index in range(2)
+    ]
+    if legacy_mariadb:
+        for index, sample in enumerate(samples):
+            sample["services"]["mariadb"] = {
+                "active_state": "inactive", "restarts": index,
+            }
+
+    result = evaluate_samples(
+        samples, now=started + timedelta(minutes=5), required_seconds=300,
+        require_scheduler_enabled=True,
+    )
+
+    assert result["status"] == "passed"
+    assert result["violations"] == []
+    assert "mariadb" not in MONITORED_SERVICES
+
+
+@pytest.mark.parametrize("service", ["eden-api", "nginx"])
+@pytest.mark.parametrize("missing", [False, True])
+def test_remote_database_still_requires_local_api_and_proxy(service: str, missing: bool) -> None:
+    started = datetime(2026, 9, 16, tzinfo=UTC)
+    sample = _sample(started, scheduler_state="active", scheduler_restarts=0)
+    if missing:
+        del sample["services"][service]
+    else:
+        sample["services"][service]["active_state"] = "inactive"
+
+    result = evaluate_samples([sample], now=started)
+
+    assert result["status"] == "failed"
+    assert "service_inactive" in result["violations"]
+
+
+@pytest.mark.parametrize(
+    "field,value,violation",
+    [
+        ("readiness", False, "readiness_failure"),
+        ("database_disconnects", 1, "database_disconnect"),
+        ("scheduler_enabled", False, "scheduler_disabled"),
+    ],
+)
+def test_remote_database_preserves_health_checks(field, value, violation) -> None:
+    started = datetime(2026, 9, 16, tzinfo=UTC)
+    sample = _sample(started, scheduler_state="active", scheduler_restarts=0)
+    sample[field] = value
+
+    result = evaluate_samples([sample], now=started, require_scheduler_enabled=True)
+
+    assert result["status"] == "failed"
+    assert violation in result["violations"]

@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
+from io import BytesIO
 from time import monotonic
 from typing import Any
 
@@ -141,14 +142,30 @@ def _json_safe(value: Any) -> Any:
     raise TypeError(f"Snapshot JSON contains unsupported value: {type(value).__name__}")
 
 
-def _canonical_json_bytes(value: Any) -> bytes:
-    return json.dumps(
-        value,
+def _canonical_json_chunks(value: Any) -> Iterator[bytes]:
+    encoder = json.JSONEncoder(
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,
-    ).encode("utf-8")
+    )
+    # Hash and compress incrementally instead of retaining a complete JSON string
+    # and its UTF-8 copy alongside the normalized object graph.
+    pending = bytearray()
+    for fragment in encoder.iterencode(value):
+        encoded = fragment.encode("utf-8")
+        if len(encoded) >= 64 * 1024:
+            if pending:
+                yield bytes(pending)
+                pending.clear()
+            yield encoded
+            continue
+        pending.extend(encoded)
+        if len(pending) >= 64 * 1024:
+            yield bytes(pending)
+            pending.clear()
+    if pending:
+        yield bytes(pending)
 
 
 def encode_payload(
@@ -158,19 +175,32 @@ def encode_payload(
 ) -> EncodedPayload:
     if max_uncompressed_bytes < 1:
         raise ValueError("max_uncompressed_bytes must be positive")
-    serialized = _canonical_json_bytes(_json_safe(data))
-    if len(serialized) > max_uncompressed_bytes:
-        raise SnapshotPayloadTooLarge(
-            f"Snapshot payload is {len(serialized)} bytes; limit is {max_uncompressed_bytes}"
-        )
-    payload_hash = hashlib.sha256(serialized).hexdigest()
-    compressed = zlib.compress(serialized, level=6)
+    return _encode_json_safe_payload(_json_safe(data), max_uncompressed_bytes)
+
+
+def _encode_json_safe_payload(data: Any, max_uncompressed_bytes: int) -> EncodedPayload:
+    digest = hashlib.sha256()
+    compressor = zlib.compressobj(level=6)
+    output = BytesIO()
+    uncompressed_bytes = 0
+    for chunk in _canonical_json_chunks(data):
+        uncompressed_bytes += len(chunk)
+        if uncompressed_bytes > max_uncompressed_bytes:
+            raise SnapshotPayloadTooLarge(
+                f"Snapshot payload is at least {uncompressed_bytes} bytes; "
+                f"limit is {max_uncompressed_bytes}"
+            )
+        digest.update(chunk)
+        output.write(compressor.compress(chunk))
+    output.write(compressor.flush())
+    payload_hash = digest.hexdigest()
+    compressed = output.getvalue()
     return EncodedPayload(
         payload_id=f"payload_{payload_hash[:56]}",
         payload_hash=payload_hash,
         encoding=PAYLOAD_ENCODING,
         payload_blob=compressed,
-        uncompressed_bytes=len(serialized),
+        uncompressed_bytes=uncompressed_bytes,
         compressed_bytes=len(compressed),
     )
 
@@ -207,22 +237,24 @@ def decode_payload(
 
     decompressor = zlib.decompressobj()
     try:
-        decoded = decompressor.decompress(payload_blob, max_uncompressed_bytes + 1)
-        if len(decoded) > max_uncompressed_bytes or decompressor.unconsumed_tail:
-            raise SnapshotPayloadTooLarge("Decompressed snapshot exceeds the configured limit")
-        decoded += decompressor.flush(max_uncompressed_bytes + 1 - len(decoded))
+        decoded = decompressor.decompress(payload_blob, uncompressed_bytes + 1)
     except zlib.error as exc:
         raise SnapshotPayloadError("Snapshot payload is not valid zlib data") from exc
     if len(decoded) > max_uncompressed_bytes:
         raise SnapshotPayloadTooLarge("Decompressed snapshot exceeds the configured limit")
+    if len(decoded) != uncompressed_bytes or decompressor.unconsumed_tail:
+        raise SnapshotPayloadError("Uncompressed snapshot size does not match its metadata")
     if not decompressor.eof or decompressor.unused_data:
         raise SnapshotPayloadError("Snapshot payload contains an incomplete or trailing stream")
-    if len(decoded) != uncompressed_bytes:
-        raise SnapshotPayloadError("Uncompressed snapshot size does not match its metadata")
+    # EOF means the complete stream has already been decoded. flush(length)
+    # reserves that initial buffer even for an empty result, so flushing with the
+    # 64 MiB ceiling made tiny payload reads allocate the full ceiling as well.
     if expected_hash is not None and hashlib.sha256(decoded).hexdigest() != expected_hash:
         raise SnapshotPayloadError("Snapshot payload hash mismatch")
     try:
-        value = json.loads(decoded.decode("utf-8"))
+        decoded_text = decoded.decode("utf-8")
+        del decoded
+        value = json.loads(decoded_text)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SnapshotPayloadError("Snapshot payload is not valid UTF-8 JSON") from exc
     if value is not None and not isinstance(value, (dict, list)):
@@ -269,11 +301,11 @@ def prepare_snapshot(candidate: SnapshotCandidate) -> PreparedSnapshot:
         "availability": candidate.availability.value,
         "quality_flags": sorted(set(candidate.quality_flags)),
     }
-    version = hashlib.sha256(_canonical_json_bytes(version_document)).hexdigest()
-    payload = encode_payload(
-        data,
-        max_uncompressed_bytes=publish_payload_size_limit(candidate.endpoint),
-    )
+    payload = _encode_json_safe_payload(data, publish_payload_size_limit(candidate.endpoint))
+    version_hash = hashlib.sha256()
+    for chunk in _canonical_json_chunks(version_document):
+        version_hash.update(chunk)
+    version = version_hash.hexdigest()
     snapshot_id = f"snap_{version[:59]}"
     return PreparedSnapshot(
         snapshot_id=snapshot_id,
@@ -652,16 +684,14 @@ def _restore_previous_with_lock(
             if payload is None:
                 continue
             try:
-                decoded = decode_payload(
+                decode_payload(
                     payload.payload_blob,
                     encoding=payload.encoding,
                     uncompressed_bytes=payload.uncompressed_bytes,
                     compressed_bytes=payload.compressed_bytes,
                     max_uncompressed_bytes=payload_size_limit(endpoint),
+                    expected_hash=payload.payload_hash,
                 )
-                decoded_hash = hashlib.sha256(_canonical_json_bytes(decoded)).hexdigest()
-                if decoded_hash != payload.payload_hash:
-                    continue
             except SnapshotPayloadError:
                 continue
             restored = candidate
@@ -778,8 +808,11 @@ def _retention_session(factory, snapshot_id):
     bind = factory.kw.get("bind")
     with bind.connect() as connection, factory(bind=connection) as session:
         with session.begin():
-            snapshot = session.get(ReadModelSnapshot, snapshot_id)
-            key_hash = snapshot.lookup_key_hash if snapshot else None
+            key_hash = session.scalar(
+                select(ReadModelSnapshot.lookup_key_hash).where(
+                    ReadModelSnapshot.snapshot_id == snapshot_id
+                )
+            )
         lock_name = f"eden:publish:{key_hash[:45]}" if key_hash else None
         acquired = bool(lock_name and SnapshotPublisher._acquire_lock(session, lock_name, 0))
         try:
@@ -822,16 +855,15 @@ def retain_snapshots(
             older_than=older_than,
             limit=snapshot_batch_size,
         )
-        provenance_rows = len(
-            tuple(
-                session.scalars(
-                    select(ProvenanceEdge.provenance_id)
-                    .where(
-                        ProvenanceEdge.output_type == "read_model_snapshot",
-                        ProvenanceEdge.output_id.in_(candidate_ids),
-                    )
-                    .limit(provenance_delete_limit if dry_run else provenance_batch_size)
+        provenance_rows = session.scalar(
+            select(func.count()).select_from(
+                select(ProvenanceEdge.provenance_id)
+                .where(
+                    ProvenanceEdge.output_type == "read_model_snapshot",
+                    ProvenanceEdge.output_id.in_(candidate_ids),
                 )
+                .limit(provenance_delete_limit if dry_run else provenance_batch_size)
+                .subquery()
             )
         )
     if dry_run or not candidate_ids:

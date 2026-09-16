@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from app.api.v1.schemas import VisitorForecastData
 from app.domain.enums import Availability
 from app.products.forecast_views import build_forecast_view
@@ -167,7 +169,7 @@ def test_forecast_missing_requested_adjustments_are_null_and_partial() -> None:
     assert reason == "일부 날짜에서 요청한 참고 원천이 없습니다."
 
 
-def test_forecast_base_selection_is_deterministic_for_the_same_rows() -> None:
+def test_area_forecast_does_not_choose_an_arbitrary_attraction() -> None:
     rows = [
         {
             "input_id": 2,
@@ -204,7 +206,56 @@ def test_forecast_base_selection_is_deterministic_for_the_same_rows() -> None:
     )
 
     assert forward == reverse
-    assert forward[0]["daily"][0]["source_concentration_rate"] == 20.0
+    assert forward[0]["daily"][0]["source_concentration_rate"] is None
+    assert forward[0]["daily"][0]["method"] is None
+    assert forward[1] == Availability.UNAVAILABLE
+
+    named, _, _ = build_forecast_view(
+        {"area_code": "11", "inputs": rows},
+        {**scope, "place_name": "B"},
+        today=date(2026, 8, 29),
+    )
+    assert named["daily"][0]["source_concentration_rate"] == 80.0
+    assert named["daily"][0]["method"] == "official"
+
+
+@pytest.mark.parametrize(
+    ("place_id", "place_name", "expected_score"),
+    [(None, None, 40.0), (None, "광화문", None), ("place_a", None, None)],
+)
+def test_area_forecast_requires_unlinked_and_unnamed_official_data(
+    place_id: str | None, place_name: str | None, expected_score: float | None
+) -> None:
+    product = {
+        "area_code": "11",
+        "inputs": [{
+            "source_id": "SRC_KTO_VISITOR_FORECAST",
+            "forecast_date": "2026-08-29",
+            "place_id": place_id,
+            "source_forecast": {"place_name": place_name, "concentration_rate": 40.0},
+        }],
+    }
+
+    data, _, _ = build_forecast_view(product, {"days": 1}, today=date(2026, 8, 29))
+
+    assert data["daily"][0]["source_concentration_rate"] == expected_score
+    assert data["daily"][0]["method"] == ("official" if expected_score is not None else None)
+
+
+def test_area_forecast_preserves_official_rows_without_place_fields() -> None:
+    product = {
+        "area_code": "11",
+        "inputs": [{
+            "source_id": "SRC_KTO_VISITOR_FORECAST",
+            "forecast_date": "2026-08-29",
+            "source_forecast": {"concentration_rate": 40.0},
+        }],
+    }
+
+    data, _, _ = build_forecast_view(product, {"days": 1}, today=date(2026, 8, 29))
+
+    assert data["daily"][0]["source_concentration_rate"] == 40.0
+    assert data["daily"][0]["method"] == "official"
 
 
 def test_forecast_uses_the_requested_precollected_weather_grid() -> None:
@@ -253,8 +304,15 @@ def test_forecast_uses_the_requested_precollected_weather_grid() -> None:
 def test_weekday_proxy_midrank_never_invents_people_or_confidence():
     from datetime import timedelta
 
+    class CountedVisits(list):
+        iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return super().__iter__()
+
     today = date(2026, 9, 11)
-    visits = [
+    visits = CountedVisits([
         {
             "period_start": (today - timedelta(days=30 + offset)).isoformat(),
             "grain": "day",
@@ -263,9 +321,16 @@ def test_weekday_proxy_midrank_never_invents_people_or_confidence():
             "visitor_count": 100,
         }
         for offset in range(28)
-    ]
+    ])
+    attraction = {
+        "source_id": "SRC_KTO_VISITOR_FORECAST",
+        "forecast_date": today.isoformat(),
+        "source_forecast": {"place_name": "광화문", "concentration_rate": 80.0},
+    }
     data, status, _ = build_forecast_view(
-        {"area_code": "11", "visits": visits}, {"days": 30}, today=today
+        {"area_code": "11", "visits": visits, "inputs": [attraction]},
+        {"days": 30},
+        today=today,
     )
     assert status == Availability.PARTIAL
     assert len(data["daily"]) == 30
@@ -277,6 +342,7 @@ def test_weekday_proxy_midrank_never_invents_people_or_confidence():
         assert row["sample_count"] == 28
     assert "7일 이후" in data["daily"][7]["basis"]
     assert data["daily"][0]["weather"] is None
+    assert visits.iterations == 1
     VisitorForecastData.model_validate(data)
 
 

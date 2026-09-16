@@ -2,12 +2,35 @@ from __future__ import annotations
 
 import sys
 from datetime import UTC, datetime, timedelta
+from subprocess import CompletedProcess
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import app.operations.phase1_soak as phase1_soak
 from app.api.v1.routes import InboundSocialSource, TrendSocialSource
 from app.observability.soak import PHASE1_SOAK_REQUIRED_SECONDS, evaluate_samples
+
+
+def test_database_disconnects_include_api_and_scheduler_journals(monkeypatch: Any) -> None:
+    active_since = "2026-09-16 00:00:00 UTC"
+    journals = {
+        "eden-api": "request completed\nOperationalError: lost connection\n",
+        "eden-scheduler": "job completed\nServer has gone away\nConnection refused\n",
+    }
+
+    def run(command, **kwargs):
+        if command[0] == "/usr/bin/systemctl":
+            return CompletedProcess(command, 0, stdout=active_since + "\n")
+        assert f"--since={active_since}" in command
+        output = "".join(
+            journals[arg.removeprefix("--unit=")]
+            for arg in command
+            if arg.startswith("--unit=")
+        )
+        return CompletedProcess(command, 0, stdout=output)
+
+    monkeypatch.setattr(phase1_soak.subprocess, "run", run)
+    assert phase1_soak.recent_database_disconnects() == 3
 
 
 def test_public_probes_only_request_supported_social_sources(monkeypatch: Any) -> None:

@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from collections import OrderedDict
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from itertools import chain
 from math import asin, cos, radians, sin, sqrt
+from sys import getsizeof
 from threading import Lock
 from typing import Protocol
 
@@ -12,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.domain.enums import Availability, SourceStatus, SpatialResolution
+from app.domain.time import kst_now
 from app.products.forecast_views import build_forecast_view
 from app.products.recommendation_views import build_recommendation_view
 from app.products.regional_views import (
@@ -103,6 +106,32 @@ PLACE_LANGUAGE_SOURCES = {
     "zh-CN": "SRC_TOUR_ZH_CN",
 }
 PAYLOAD_CACHE_MAX_BYTES = 16 * 1024 * 1024
+PAYLOAD_CACHE_MAX_ENTRIES = 128
+
+
+def _payload_memory_bytes(data: object, limit: int) -> int:
+    """Charge decoded objects, including containers, without copying their children."""
+    seen: set[int] = set()
+    pending = [iter((data,))]
+    total = 0
+    while pending:
+        try:
+            value = next(pending[-1])
+        except StopIteration:
+            pending.pop()
+            continue
+        identity = id(value)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        total += getsizeof(value)
+        if total > limit:
+            return total
+        if isinstance(value, dict):
+            pending.append(iter(chain(value.keys(), value.values())))
+        elif isinstance(value, list):
+            pending.append(iter(value))
+    return total
 
 
 def _request_source_ids(endpoint: str, scope: dict[str, object]) -> tuple[str, ...]:
@@ -317,60 +346,63 @@ def _selected_max_age(
 def _project_flight_schedule(
     value: object,
     forecast_days: int,
+    *,
+    today: date | None = None,
 ) -> dict[str, object] | None:
     if not isinstance(value, dict):
         return None
+    start = today or kst_now().date()
+    end = start + timedelta(days=forecast_days - 1)
+    result: dict[str, object] = {
+        "forecast_days": forecast_days,
+        "basis_period": {"start": start.isoformat(), "end": end.isoformat()},
+        "flights": None,
+        "change_rate": None,
+        "major_routes": [],
+        "availability": "unavailable",
+        "reason": "요청 기간의 날짜별 운항 일정이 없습니다.",
+    }
     daily = value.get("daily")
     if not isinstance(daily, list):
-        if forecast_days != value.get("forecast_days"):
-            return {
-                "forecast_days": forecast_days,
-                "flights": None,
-                "change_rate": None,
-                "major_routes": [],
-                "availability": "unavailable",
-                "reason": "선택한 기간으로 집계할 일별 운항 일정이 없습니다.",
-            }
-        return {
-            "forecast_days": forecast_days,
-            "flights": value.get("flights"),
-            "change_rate": value.get("change_rate"),
-            "major_routes": value.get("major_routes") or [],
-            "availability": value.get("availability", "available"),
-            "reason": value.get("reason"),
-        }
+        # Undated legacy totals cannot establish coverage of today's horizon.
+        return result
 
-    selected = sorted(
-        (row for row in daily if isinstance(row, dict)),
-        key=lambda row: str(row.get("date", "")),
-    )[:forecast_days]
+    selected: dict[date, dict[str, object]] = {}
+    for row in daily:
+        if not isinstance(row, dict):
+            continue
+        try:
+            day = date.fromisoformat(str(row.get("date", "")))
+        except ValueError:
+            continue
+        flights = row.get("flights")
+        if start <= day <= end and type(flights) is int and flights >= 0:
+            selected[day] = row
+    if not selected:
+        return result
     route_counts: dict[str, int] = {}
-    for row in selected:
+    for row in selected.values():
         routes = row.get("routes")
         if not isinstance(routes, dict):
             continue
         for origin, count in routes.items():
-            if isinstance(count, int) and count >= 0:
+            if type(count) is int and count >= 0:
                 route_counts[str(origin)] = route_counts.get(str(origin), 0) + count
-    major_routes = [
-        {"origin": origin, "destination": "ICN", "flights": flights}
-        for origin, flights in sorted(
-            route_counts.items(),
-            key=lambda item: (-item[1], item[0]),
-        )[:10]
-    ]
-    return {
-        "forecast_days": forecast_days,
-        "flights": sum(
-            row["flights"]
-            for row in selected
-            if isinstance(row.get("flights"), int) and row["flights"] >= 0
+    result.update(
+        flights=sum(row["flights"] for row in selected.values()),
+        major_routes=[
+            {"origin": origin, "destination": "ICN", "flights": flights}
+            for origin, flights in sorted(
+                route_counts.items(), key=lambda item: (-item[1], item[0])
+            )[:10]
+        ],
+        availability="available" if len(selected) == forecast_days else "partial",
+        reason=(
+            None if len(selected) == forecast_days
+            else f"요청 {forecast_days}일 중 {len(selected)}일의 운항 일정만 있습니다."
         ),
-        "change_rate": value.get("change_rate"),
-        "major_routes": major_routes,
-        "availability": "available",
-        "reason": None,
-    }
+    )
+    return result
 
 
 class MariaDBReadRepository:
@@ -393,12 +425,21 @@ class MariaDBReadRepository:
     def _store_payload(self, payload_id: str, data: object, size: int) -> None:
         if size < 0 or size > PAYLOAD_CACHE_MAX_BYTES:
             return
+        # JSON byte length can undercount live Python objects by several times.
+        # Include a conservative allowance for the key and LRU bookkeeping.
+        size = _payload_memory_bytes(data, PAYLOAD_CACHE_MAX_BYTES) + getsizeof(payload_id) + 256
+        if size > PAYLOAD_CACHE_MAX_BYTES:
+            return
         with self._payload_cache_lock:
             existing = self._payload_cache.pop(payload_id, None)
             if existing is not None:
                 self._payload_cache_bytes -= existing[1]
             while (
-                self._payload_cache and self._payload_cache_bytes + size > PAYLOAD_CACHE_MAX_BYTES
+                self._payload_cache
+                and (
+                    self._payload_cache_bytes + size > PAYLOAD_CACHE_MAX_BYTES
+                    or len(self._payload_cache) >= PAYLOAD_CACHE_MAX_ENTRIES
+                )
             ):
                 _evicted_id, (_evicted_data, evicted_size) = self._payload_cache.popitem(last=False)
                 self._payload_cache_bytes -= evicted_size
@@ -1217,6 +1258,8 @@ class MariaDBReadRepository:
             Availability.AVAILABLE
             if block_states and all(state == Availability.AVAILABLE for state in block_states)
             else Availability.PARTIAL
+            if any(state != Availability.UNAVAILABLE for state in block_states)
+            else Availability.UNAVAILABLE
         )
         return ReadResult(
             data={"period": period, "markets": markets},
@@ -1224,6 +1267,8 @@ class MariaDBReadRepository:
             reason=(
                 None
                 if availability == Availability.AVAILABLE
+                else "요청한 모든 방한시장 데이터 제품을 제공할 수 없습니다."
+                if availability == Availability.UNAVAILABLE
                 else "요청한 일부 방한시장 데이터 제품을 아직 제공할 수 없습니다."
             ),
             as_of=_selected_snapshot_as_of(snapshots, source_ids),

@@ -143,6 +143,7 @@ def test_product_family_lock_skip_does_not_claim_or_build(monkeypatch) -> None:
 def test_snapshot_retention_is_report_only_without_explicit_enable(monkeypatch) -> None:
     factory = SimpleNamespace(kw={"bind": FakeEngine()})
     settings = SimpleNamespace(
+        ENVIRONMENT="test",
         DEAD_LETTER_API_P95_PAUSE_SECONDS=1.0,
         DEAD_LETTER_MEMORY_PAUSE_PERCENT=85.0,
         SNAPSHOT_RETENTION_DAYS=7,
@@ -159,6 +160,8 @@ def test_snapshot_retention_is_report_only_without_explicit_enable(monkeypatch) 
         deleted_payloads=0,
     )
     monkeypatch.setattr(runtime, "MariaDBAdvisoryLock", AcquiredLock)
+    monkeypatch.setattr(runtime, "recent_api_p95_seconds", lambda: 0.1)
+    monkeypatch.setattr(runtime, "system_memory_used_percent", lambda: 20.0)
     monkeypatch.setattr(
         runtime,
         "retain_snapshots",

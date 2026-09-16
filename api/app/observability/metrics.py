@@ -5,7 +5,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import wraps
 from threading import Lock
-from time import perf_counter
+from time import monotonic, perf_counter
 from typing import ParamSpec, TypeVar
 
 from prometheus_client import Counter, Gauge, Histogram
@@ -35,7 +35,7 @@ HTTP_RESPONSE_BYTES = Histogram(
 )
 API_RECENT_P95 = Gauge(
     "eden_api_recent_p95_seconds",
-    "Recent in-process public API p95 used by the dead-letter pressure gate.",
+    "Public API p95 over the last five minutes, or NaN with fewer than 20 samples.",
 )
 API_AVAILABILITY = Counter(
     "eden_api_responses_total",
@@ -200,8 +200,9 @@ DB_POOL_EVENTS = Counter(
     ("event",),
 )
 
-_RECENT_API_DURATIONS: deque[float] = deque(maxlen=1000)
+_RECENT_API_DURATIONS: deque[tuple[float, float]] = deque(maxlen=1000)
 _RECENT_API_LOCK = Lock()
+_API_SAMPLE_MAX_AGE_SECONDS = 300.0
 
 _RUN_STATUSES = frozenset({"succeeded", "partial", "failed", "skipped_locked"})
 _JOB_TYPES = frozenset(
@@ -238,18 +239,27 @@ def record_http_request(method: str, endpoint: str, status_code: int, duration: 
     HTTP_DURATION.labels(method, endpoint).observe(duration)
     if endpoint.startswith("/v1/"):
         with _RECENT_API_LOCK:
-            _RECENT_API_DURATIONS.append(max(0.0, duration))
-        if (p95 := recent_api_p95_seconds()) is not None:
-            API_RECENT_P95.set(p95)
+            _RECENT_API_DURATIONS.append((monotonic(), max(0.0, duration)))
 
 
 def recent_api_p95_seconds(*, minimum_samples: int = 20) -> float | None:
     with _RECENT_API_LOCK:
-        values = sorted(_RECENT_API_DURATIONS)
+        cutoff = monotonic() - _API_SAMPLE_MAX_AGE_SECONDS
+        while _RECENT_API_DURATIONS and _RECENT_API_DURATIONS[0][0] <= cutoff:
+            _RECENT_API_DURATIONS.popleft()
+        values = sorted(duration for _, duration in _RECENT_API_DURATIONS)
     if len(values) < minimum_samples:
         return None
     index = max(0, (95 * len(values) + 99) // 100 - 1)
     return values[index]
+
+
+def _api_p95_gauge_value() -> float:
+    value = recent_api_p95_seconds()
+    return value if value is not None else float("nan")
+
+
+API_RECENT_P95.set_function(_api_p95_gauge_value)
 
 
 def record_http_response_size(method: str, endpoint: str, response_bytes: int) -> None:

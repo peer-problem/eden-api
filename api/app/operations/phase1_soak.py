@@ -250,6 +250,7 @@ def recent_database_disconnects() -> int:
         (
             "/usr/bin/journalctl",
             "--unit=eden-api",
+            "--unit=eden-scheduler",
             f"--since={since}",
             "--output=cat",
             "--no-pager",

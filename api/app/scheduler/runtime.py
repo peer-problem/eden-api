@@ -19,6 +19,7 @@ from app.ingestion.service import IngestionService
 from app.llm.alerts import AlertEnrichmentBatchResult, enrich_pending_alert_revisions
 from app.normalization.dead_letters import reprocess_dead_letters
 from app.normalization.registry import normalize_run
+from app.observability.api_latency import read_api_latency
 from app.observability.metrics import (
     observe_scheduler_job,
     recent_api_p95_seconds,
@@ -909,7 +910,13 @@ def _dead_letter_pause_reason(
 ) -> str | None:
     if capacity_gate is not None and (reason := capacity_gate.source_pause_reason()):
         return reason
-    api_p95 = recent_api_p95_seconds()
+    if settings.ENVIRONMENT == "production":
+        latency = read_api_latency()
+        if not latency.available:
+            return "api_metrics_unavailable"
+        api_p95 = latency.p95_seconds
+    else:
+        api_p95 = recent_api_p95_seconds()
     if api_p95 is not None and api_p95 >= settings.DEAD_LETTER_API_P95_PAUSE_SECONDS:
         return "api_latency_pressure"
     memory_percent = system_memory_used_percent()

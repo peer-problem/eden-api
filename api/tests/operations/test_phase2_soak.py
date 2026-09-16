@@ -38,7 +38,7 @@ def _sample(
         "retention_enabled": retention_enabled,
         "services": {
             service: {"active_state": "active", "restarts": 0}
-            for service in ("eden-api", "mariadb", "nginx")
+            for service in ("eden-api", "nginx")
         },
         "memory": {
             "available_bytes": 512 * 1024 * 1024,

@@ -58,7 +58,11 @@ def _base_forecast(rows: list[dict[str, Any]], place_name: str | None) -> dict[s
         for row in rows
         if row.get("source_id") == "SRC_KTO_VISITOR_FORECAST"
         and isinstance(row.get("source_forecast"), dict)
-        and (place_name is None or row["source_forecast"].get("place_name") == place_name)
+        and (
+            row["source_forecast"].get("place_name") == place_name
+            if place_name is not None
+            else not row.get("place_id") and not row["source_forecast"].get("place_name")
+        )
     ]
     if not candidates:
         return None
@@ -101,8 +105,7 @@ def _weather_value(rows: list[dict[str, Any]], scope: dict[str, Any]) -> dict[st
     )
 
 
-def historical_weekday_proxy(visits: list[dict[str, Any]], target: date, today: date):
-    """Percentile reference, never a predicted visitor count or confidence."""
+def _historical_daily_values(visits: list[dict[str, Any]], today: date) -> dict[date, int]:
     grouped = defaultdict(list)
     for row in visits:
         observed = _date(str(row["period_start"]))
@@ -112,11 +115,15 @@ def historical_weekday_proxy(visits: list[dict[str, Any]], target: date, today: 
             and today - timedelta(days=89) <= observed <= today
         ):
             grouped[observed].append(row)
-    values = {
+    return {
         day: total
         for day, rows in grouped.items()
         if (total := _visitor_totals(rows)["all"]) is not None and total >= 0
     }
+
+
+def _weekday_proxy(values: dict[date, int], target: date, today: date):
+    """Percentile reference, never a predicted visitor count or confidence."""
     if len(values) < 28 or (today - max(values)).days > 60:
         return None
     same_weekday = [value for day, value in values.items() if day.weekday() == target.weekday()]
@@ -146,6 +153,10 @@ def historical_weekday_proxy(visits: list[dict[str, Any]], target: date, today: 
     }
 
 
+def historical_weekday_proxy(visits: list[dict[str, Any]], target: date, today: date):
+    return _weekday_proxy(_historical_daily_values(visits, today), target, today)
+
+
 def build_forecast_view(
     product: dict[str, Any],
     scope: dict[str, Any],
@@ -169,6 +180,7 @@ def build_forecast_view(
     available_days = 0
     complete_days = 0
     source_ids: set[str] = set()
+    historical_values: dict[date, int] | None = None
     for offset in range(days):
         target = today + timedelta(days=offset)
         rows = by_date.get(target, [])
@@ -204,11 +216,11 @@ def build_forecast_view(
         concentration = base.get("concentration_rate") if base else None
         expected = base.get("expected_visitors") if base else None
         has_official = concentration is not None or expected is not None
-        proxy = (
-            historical_weekday_proxy(product.get("visits", []), target, today)
-            if not has_official and place_name is None
-            else None
-        )
+        proxy = None
+        if not has_official and place_name is None:
+            if historical_values is None:
+                historical_values = _historical_daily_values(product.get("visits", []), today)
+            proxy = _weekday_proxy(historical_values, target, today)
         demand_score = concentration if has_official else proxy["demand_score"] if proxy else None
         adjusted_visitors = expected
         confidence = None

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from collections import deque
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -12,6 +13,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from app.domain.enums import Availability
+from app.observability import metrics
 from app.observability.logging import JsonFormatter
 from app.observability.metrics import (
     instrument_database_engine,
@@ -34,6 +36,30 @@ from app.products.snapshots import SnapshotCandidate, SnapshotPublishBusy, Snaps
 def _sample(name: str, labels: dict[str, str] | None = None) -> float:
     value = REGISTRY.get_sample_value(name, labels or {})
     return float(value or 0)
+
+
+def test_recent_api_latency_expires_samples_and_bounds_memory(monkeypatch) -> None:
+    samples = deque(maxlen=1000)
+    monkeypatch.setattr(metrics, "_RECENT_API_DURATIONS", samples)
+    monkeypatch.setattr(metrics, "monotonic", lambda: 1000.0)
+    for _ in range(2000):
+        metrics.record_http_request("GET", "/v1/trends", 200, 2.0)
+
+    assert len(samples) == 1000
+    assert metrics.recent_api_p95_seconds() == 2.0
+    assert _sample("eden_api_recent_p95_seconds") == 2.0
+
+    monkeypatch.setattr(metrics, "monotonic", lambda: 1300.0)
+    assert metrics.recent_api_p95_seconds() is None
+    assert not samples
+    assert str(REGISTRY.get_sample_value("eden_api_recent_p95_seconds")) == "nan"
+
+    for _ in range(19):
+        metrics.record_http_request("GET", "/v1/trends", 200, 0.1)
+    assert metrics.recent_api_p95_seconds() is None
+    assert metrics.recent_api_p95_seconds(minimum_samples=1) == 0.1
+    metrics.record_http_request("GET", "/v1/trends", 200, 0.1)
+    assert _sample("eden_api_recent_p95_seconds") == 0.1
 
 
 def test_source_metrics_capture_fetch_run_and_freshness() -> None:

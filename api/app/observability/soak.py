@@ -21,9 +21,9 @@ SOAK_MAX_API_P95_MILLISECONDS = 500.0
 SOAK_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 SOAK_MAX_DERIVED_DAILY_GROWTH_BYTES = 100 * 1024 * 1024
 SOAK_MAX_DATABASE_CONNECTION_UTILIZATION = 0.9
+# MariaDB runs remotely; readiness and database evidence track its health.
 REQUIRED_SERVICES = (
     "eden-api",
-    "mariadb",
     "nginx",
 )
 # The scheduler may run inside eden-api or as its own service. Its restarts and memory
