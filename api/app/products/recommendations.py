@@ -95,13 +95,24 @@ def build_recommendation_snapshot(
         if not places:
             return RecommendationProductResult(0, 0)
         place_ids = [place.eden_place_id for place in places]
+        # Retired KTO_TATS rows keep their relation history; read it for the
+        # TourAPI place they now point at.
+        canonical_by_alias = {
+            alias_id: canonical_id
+            for alias_id, canonical_id in session.execute(
+                select(Place.eden_place_id, Place.canonical_place_id).where(
+                    Place.canonical_place_id.in_(place_ids)
+                )
+            ).all()
+        }
+        relation_source_ids = [*place_ids, *canonical_by_alias]
         latest_relation_observed = (
             select(
                 PlaceRelation.from_place_id.label("from_place_id"),
                 func.max(PlaceRelation.observed_at).label("observed_at"),
             )
             .where(
-                PlaceRelation.from_place_id.in_(place_ids),
+                PlaceRelation.from_place_id.in_(relation_source_ids),
                 PlaceRelation.relation_type == "related",
             )
             .group_by(PlaceRelation.from_place_id)
@@ -116,7 +127,7 @@ def build_recommendation_snapshot(
                     & (latest_relation_observed.c.observed_at == PlaceRelation.observed_at),
                 )
                 .where(
-                    PlaceRelation.from_place_id.in_(place_ids),
+                    PlaceRelation.from_place_id.in_(relation_source_ids),
                     PlaceRelation.relation_type == "related",
                 )
                 .order_by(
@@ -126,7 +137,24 @@ def build_recommendation_snapshot(
                 )
             ).all()
         )
-        localization_place_ids = sorted({*place_ids, *(row.to_place_id for row in relations)})
+        target_ids = {row.to_place_id for row in relations}
+        canonical_by_alias.update(
+            {
+                alias_id: canonical_id
+                for alias_id, canonical_id in session.execute(
+                    select(Place.eden_place_id, Place.canonical_place_id).where(
+                        Place.eden_place_id.in_(target_ids),
+                        Place.canonical_place_id.is_not(None),
+                    )
+                ).all()
+            }
+        )
+        localization_place_ids = sorted(
+            {
+                *place_ids,
+                *(canonical_by_alias.get(row.to_place_id, row.to_place_id) for row in relations),
+            }
+        )
         localizations = list(
             session.scalars(
                 select(PlaceLocalization)
@@ -205,9 +233,12 @@ def build_recommendation_snapshot(
         by_place_sources.setdefault(row.eden_place_id, []).append(row)
     latest_relations: dict[str, list[PlaceRelation]] = {}
     for row in relations:
-        current = latest_relations.setdefault(row.from_place_id, [])
+        owner_id = canonical_by_alias.get(row.from_place_id, row.from_place_id)
+        current = latest_relations.setdefault(owner_id, [])
         if not current or row.observed_at == current[0].observed_at:
             current.append(row)
+        elif row.observed_at > current[0].observed_at:
+            current[:] = [row]
     latest_demand: dict[str, RegionalDemandObservation] = {}
     for row in demand_rows:
         latest_demand.setdefault(row.area_id, row)
@@ -276,14 +307,18 @@ def build_recommendation_snapshot(
                 "crowd_by_season": crowd_by_area.get(place.area_id, {}),
                 "related_places": [
                     {
-                        "content_id": row.to_place_id,
-                        "title": title_by_place.get(row.to_place_id),
+                        "content_id": canonical_by_alias.get(row.to_place_id, row.to_place_id),
+                        "title": title_by_place.get(
+                            canonical_by_alias.get(row.to_place_id, row.to_place_id)
+                        ),
                         "relation_type": "related",
                         "score": row.score,
                         "score_as_of": _aware(row.source_updated_at).isoformat(),
                     }
                     for row in related
-                    if title_by_place.get(row.to_place_id) is not None and row.score is not None
+                    if title_by_place.get(canonical_by_alias.get(row.to_place_id, row.to_place_id))
+                    is not None
+                    and row.score is not None
                 ],
                 "sources": sorted(
                     {

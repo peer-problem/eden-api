@@ -70,3 +70,19 @@ def test_excluded_source_watermark_does_not_age_the_response() -> None:
         (snapshot,),
         ("SRC_KTO_VISITOR_FORECAST",),
     ) == datetime(2026, 8, 29, tzinfo=UTC)
+
+
+def test_trend_area_requests_list_the_official_resource_demand_source() -> None:
+    assert _request_source_ids("trends", {"social_sources": ["youtube"]}) == ("SRC_YOUTUBE",)
+    assert _request_source_ids("trends", {"area_code": "eden_area_seoul"}) == (
+        "SRC_KTO_RESOURCE_DEMAND",
+        "SRC_YOUTUBE",
+    )
+    assert _request_source_ids("trends", {"keyword": "제주 여행"}) == (
+        "SRC_NAVER_TREND",
+        "SRC_YOUTUBE",
+    )
+    # explicit social requests are answered from those samples only
+    assert _request_source_ids(
+        "trends", {"social_sources": ["youtube"], "keyword": "제주 여행", "area_code": "x"}
+    ) == ("SRC_YOUTUBE",)

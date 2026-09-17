@@ -13,6 +13,10 @@ PUBLIC_DATA_OPERATIONS_PER_RUN = 5
 # One TourAPI province catalog page is up to 1,000 rows (about 650 KB); five
 # provinces exceeded the 2 MiB run byte budget and starved the last one.
 TOUR_KO_AREAS_PER_RUN = 3
+# detailCommon2 answers about 4 KB per place and is the only operation that
+# carries the overview text. A run that has essential places without an
+# overview collects these instead of the province catalogs.
+TOUR_KO_DETAILS_PER_RUN = 60
 # Retries share the per-run request budget with the batch itself. Reserve
 # room so one transient failure cannot starve the last operation of a batch.
 PUBLIC_DATA_REQUEST_HEADROOM = 2
@@ -52,6 +56,44 @@ SOCIAL_MARKET_TARGETS = tuple(
     for index in range(3)
     for country, keywords in SOCIAL_KEYWORDS.items()
 )
+
+# NAVER search trends only answer Korean queries; the market keywords above
+# return no data there. Track domestic travel interest per province instead.
+NAVER_KEYWORDS = tuple(
+    f"{name} 여행"
+    for name in (
+        "한국",
+        "서울",
+        "부산",
+        "대구",
+        "인천",
+        "광주",
+        "대전",
+        "울산",
+        "세종",
+        "경기",
+        "강원",
+        "충북",
+        "충남",
+        "전북",
+        "전남",
+        "경북",
+        "경남",
+        "제주",
+    )
+)
+NAVER_KEYWORDS_PER_RUN = 5
+
+
+def naver_targets(day_ordinal: int) -> list[dict[str, str]]:
+    """Five Korean keywords per daily run, rotating through the whole list."""
+    batch_count = -(-len(NAVER_KEYWORDS) // NAVER_KEYWORDS_PER_RUN)
+    start = (day_ordinal % batch_count) * NAVER_KEYWORDS_PER_RUN
+    return [
+        {"country": "KR", "keyword": keyword}
+        for keyword in NAVER_KEYWORDS[start : start + NAVER_KEYWORDS_PER_RUN]
+    ]
+
 
 SOCIAL_SCOPE_SOURCES = {
     "SRC_NAVER_TREND",
@@ -356,12 +398,12 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
         "rotation_seconds": 24 * 3600,
         "operations": [
             {
-                "operation": "getTotalNumberOfFlight",
-                "external_key": f"airport-country:month=$month_minus_{months}",
+                "operation": operation,
+                "external_key": f"{key_prefix}:month=$month_minus_{months}",
                 "params": {
                     "from_month": f"$month_minus_{months}",
                     "to_month": f"$month_minus_{months}",
-                    "pax_cargo": "Y",
+                    **extra_params,
                 },
                 "watermark": {"param": "to_month", "format": "%Y%m"},
                 "response_type_param": "type",
@@ -369,6 +411,12 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "pagination_params": False,
             }
             # Retain existing history, but refresh only the two latest source months.
+            # The same service publishes flights and passengers (arrPassenger)
+            # through separate operations; both feed one monthly observation.
+            for operation, key_prefix, extra_params in (
+                ("getTotalNumberOfFlight", "airport-country", {"pax_cargo": "Y"}),
+                ("getTotalNumberOfPassenger", "airport-country-passengers", {}),
+            )
             for months in range(1, 3)
         ],
     },
@@ -529,9 +577,26 @@ def public_data_refresh_scope(
     return scope
 
 
+def tour_detail_operations(content_ids: list[str]) -> list[dict[str, Any]]:
+    """Build bounded TourAPI detail requests for places whose overview is unknown."""
+    return [
+        {
+            "operation": "detailCommon2",
+            "external_key": f"detailCommon2:content={content_id}",
+            "params": {"MobileOS": "ETC", "MobileApp": "EDEN", "contentId": content_id},
+            "watermark": {"response_field": "modifiedtime", "format": "%Y%m%d%H%M%S"},
+            "max_pages": 1,
+            "paginate": False,
+            # A detail row must not pass through the province catalog selection.
+            "detail": True,
+        }
+        for content_id in content_ids[:TOUR_KO_DETAILS_PER_RUN]
+    ]
+
+
 def scheduler_batch_size(source_id: str) -> int:
     """Operations the scheduler hands one run of a province-rotating source."""
-    return TOUR_KO_AREAS_PER_RUN if source_id == "SRC_TOUR_KO" else KMA_OPERATIONS_PER_RUN
+    return TOUR_KO_AREAS_PER_RUN if source_id.startswith("SRC_TOUR_") else KMA_OPERATIONS_PER_RUN
 
 
 def rotating_batch(operations: list[Any], cursor: int, batch_size: int) -> list[Any]:
@@ -573,8 +638,16 @@ def semas_place_operations(
 def social_refresh_scope(source_id: str) -> dict[str, Any]:
     if source_id not in SOCIAL_SCOPE_SOURCES:
         return {}
+    if source_id == "SRC_NAVER_TREND":
+        from datetime import date
+
+        return {
+            "targets": naver_targets(date.today().toordinal()),
+            "lookback_days": 90,
+            "scope_semantics": "Korean domestic search interest; not a market signal",
+        }
     return {
         "targets": deepcopy(list(SOCIAL_MARKET_TARGETS)),
-        "lookback_days": 90 if source_id == "SRC_NAVER_TREND" else 7,
+        "lookback_days": 7,
         "scope_semantics": "query-language market proxy; not user geolocation",
     }

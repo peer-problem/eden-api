@@ -144,6 +144,14 @@ def _request_source_ids(endpoint: str, scope: dict[str, object]) -> tuple[str, .
             for name in names
             if isinstance(name, str) and name in TREND_SOCIAL_SOURCES
         )
+        if not isinstance(requested, list):
+            keyword = str(scope.get("keyword") or "")
+            if scope.get("area_code"):
+                # Area filters are answered by the official KTO resource demand index.
+                source_ids.add("SRC_KTO_RESOURCE_DEMAND")
+            if any("\uac00" <= char <= "\ud7a3" for char in keyword):
+                # Korean keywords are answered by NAVER search trends too.
+                source_ids.add("SRC_NAVER_TREND")
         return tuple(sorted(source_ids))
     if endpoint == "region_insights":
         selected = scope.get("include")
@@ -790,14 +798,17 @@ class MariaDBReadRepository:
             ).all()
         ]
 
+        from app.normalization.place_crosswalk import alias_place_ids
+
+        alias_ids = alias_place_ids(session, place_id)
         hub_data = None
         hub_row = None
         if "hub" in include:
             hub_row = session.scalar(
                 select(PlaceRelation)
                 .where(
-                    PlaceRelation.from_place_id == place_id,
-                    PlaceRelation.to_place_id == place_id,
+                    PlaceRelation.from_place_id.in_(alias_ids),
+                    PlaceRelation.to_place_id.in_(alias_ids),
                     PlaceRelation.relation_type == "hub",
                 )
                 .order_by(PlaceRelation.observed_at.desc(), PlaceRelation.rank)
@@ -820,7 +831,7 @@ class MariaDBReadRepository:
         if "related" in include:
             latest_relation_at = session.scalar(
                 select(func.max(PlaceRelation.observed_at)).where(
-                    PlaceRelation.from_place_id == place_id,
+                    PlaceRelation.from_place_id.in_(alias_ids),
                     PlaceRelation.relation_type == "related",
                 )
             )
@@ -829,7 +840,7 @@ class MariaDBReadRepository:
                     session.scalars(
                         select(PlaceRelation)
                         .where(
-                            PlaceRelation.from_place_id == place_id,
+                            PlaceRelation.from_place_id.in_(alias_ids),
                             PlaceRelation.relation_type == "related",
                             PlaceRelation.observed_at == latest_relation_at,
                             PlaceRelation.score.is_not(None),
@@ -840,10 +851,13 @@ class MariaDBReadRepository:
                 )
                 related_data = []
                 for relation in relation_rows:
+                    target_id = _canonical_place_id(session, relation.to_place_id) or (
+                        relation.to_place_id
+                    )
                     title = session.scalar(
                         select(PlaceLocalization.title)
                         .where(
-                            PlaceLocalization.eden_place_id == relation.to_place_id,
+                            PlaceLocalization.eden_place_id == target_id,
                             PlaceLocalization.language.in_((requested_language, "ko")),
                         )
                         .order_by((PlaceLocalization.language == requested_language).desc())
@@ -853,7 +867,7 @@ class MariaDBReadRepository:
                         continue
                     related_data.append(
                         {
-                            "content_id": relation.to_place_id,
+                            "content_id": target_id,
                             "title": title,
                             "relation_type": relation.relation_type,
                             "score": float(relation.score),
@@ -976,7 +990,7 @@ class MariaDBReadRepository:
                 "availability": "available" if has_location else "unavailable",
                 "reason": None if has_location else "관광지 좌표가 없습니다.",
             },
-            "overview": selected.overview,
+            "overview": selected.overview or None,
             "hub": hub_data,
             "related_places": related_data,
             "nearby_shops": nearby_data[: int(scope.get("shops_limit", 5))]

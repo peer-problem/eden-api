@@ -169,7 +169,7 @@ def test_forecast_missing_requested_adjustments_are_null_and_partial() -> None:
     assert reason == "일부 날짜에서 요청한 참고 원천이 없습니다."
 
 
-def test_area_forecast_does_not_choose_an_arbitrary_attraction() -> None:
+def test_area_forecast_averages_its_attractions_deterministically() -> None:
     rows = [
         {
             "input_id": 2,
@@ -206,9 +206,15 @@ def test_area_forecast_does_not_choose_an_arbitrary_attraction() -> None:
     )
 
     assert forward == reverse
-    assert forward[0]["daily"][0]["source_concentration_rate"] is None
-    assert forward[0]["daily"][0]["method"] is None
-    assert forward[1] == Availability.UNAVAILABLE
+    # An area request averages its attractions instead of picking one of them.
+    day = forward[0]["daily"][0]
+    assert day["source_concentration_rate"] == 50.0
+    assert day["demand_score"] == 50.0
+    assert day["method"] == "official"
+    assert day["sample_count"] == 2
+    assert day["basis"] == "지역 내 관광지 2곳의 공식 집중률 평균"
+    assert day["expected_visitors"] is None
+    assert forward[1] == Availability.PARTIAL  # reference sources are not covered
 
     named, _, _ = build_forecast_view(
         {"area_code": "11", "inputs": rows},
@@ -221,9 +227,9 @@ def test_area_forecast_does_not_choose_an_arbitrary_attraction() -> None:
 
 @pytest.mark.parametrize(
     ("place_id", "place_name", "expected_score"),
-    [(None, None, 40.0), (None, "광화문", None), ("place_a", None, None)],
+    [(None, None, 40.0), (None, "광화문", 40.0), ("place_a", None, 40.0)],
 )
-def test_area_forecast_requires_unlinked_and_unnamed_official_data(
+def test_area_forecast_uses_area_rows_or_the_attraction_mean(
     place_id: str | None, place_name: str | None, expected_score: float | None
 ) -> None:
     product = {
@@ -322,13 +328,8 @@ def test_weekday_proxy_midrank_never_invents_people_or_confidence():
         }
         for offset in range(28)
     ])
-    attraction = {
-        "source_id": "SRC_KTO_VISITOR_FORECAST",
-        "forecast_date": today.isoformat(),
-        "source_forecast": {"place_name": "광화문", "concentration_rate": 80.0},
-    }
     data, status, _ = build_forecast_view(
-        {"area_code": "11", "visits": visits, "inputs": [attraction]},
+        {"area_code": "11", "visits": visits, "inputs": []},
         {"days": 30},
         today=today,
     )

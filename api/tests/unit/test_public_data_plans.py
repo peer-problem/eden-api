@@ -213,9 +213,11 @@ def test_batched_sources_reserve_request_headroom_for_retries() -> None:
         _batched_request_budget("SRC_KMA_FORECAST", configured)
         == KMA_OPERATIONS_PER_RUN + PUBLIC_DATA_REQUEST_HEADROOM
     )
+    from app.sources.plans import TOUR_KO_DETAILS_PER_RUN
+
     assert (
         _batched_request_budget("SRC_TOUR_KO", configured)
-        == TOUR_KO_AREAS_PER_RUN * 2 + PUBLIC_DATA_REQUEST_HEADROOM
+        == max(TOUR_KO_AREAS_PER_RUN * 2, TOUR_KO_DETAILS_PER_RUN) + PUBLIC_DATA_REQUEST_HEADROOM
     )
     assert _batched_request_budget("SRC_KMA_FORECAST", 40) == 40
     assert _batched_request_budget("SRC_FESTIVAL", configured) == configured
@@ -247,3 +249,66 @@ def test_embassy_notice_budget_covers_the_waiting_room_and_five_boards() -> None
         assert adapter.client.max_requests == EMBASSY_NOTICE_REQUEST_BUDGET >= 13 + 5 * 3
     finally:
         adapter.client.close()
+
+
+def test_tour_detail_operations_are_bounded_and_marked_as_details() -> None:
+    from app.sources.plans import TOUR_KO_DETAILS_PER_RUN, tour_detail_operations
+
+    content_ids = [str(index) for index in range(TOUR_KO_DETAILS_PER_RUN + 5)]
+    operations = tour_detail_operations(content_ids)
+
+    assert len(operations) == TOUR_KO_DETAILS_PER_RUN
+    first = operations[0]
+    assert first["operation"] == "detailCommon2"
+    assert first["external_key"] == "detailCommon2:content=0"
+    assert first["params"] == {"MobileOS": "ETC", "MobileApp": "EDEN", "contentId": "0"}
+    assert first["watermark"] == {"response_field": "modifiedtime", "format": "%Y%m%d%H%M%S"}
+    assert first["detail"] is True and first["paginate"] is False and first["max_pages"] == 1
+
+
+def test_language_catalogs_share_the_tourapi_batch_and_budget() -> None:
+    from app.sources.plans import scheduler_batch_size
+    from app.sources.registry import _batched_request_budget
+
+    for source_id in ("SRC_TOUR_EN", "SRC_TOUR_JA", "SRC_TOUR_ZH_CN"):
+        assert scheduler_batch_size(source_id) == scheduler_batch_size("SRC_TOUR_KO")
+        assert _batched_request_budget(source_id, 5) == _batched_request_budget("SRC_TOUR_KO", 5)
+
+
+def test_airport_country_scope_collects_flights_and_passengers_for_two_months() -> None:
+    scope = public_data_refresh_scope("SRC_AIRPORT_COUNTRY")
+    operations = scope["operations"]
+
+    assert [op["operation"] for op in operations] == [
+        "getTotalNumberOfFlight",
+        "getTotalNumberOfFlight",
+        "getTotalNumberOfPassenger",
+        "getTotalNumberOfPassenger",
+    ]
+    assert len({op["external_key"] for op in operations}) == 4
+    passenger = operations[2]
+    assert passenger["external_key"] == "airport-country-passengers:month=$month_minus_1"
+    assert passenger["params"] == {
+        "from_month": "$month_minus_1",
+        "to_month": "$month_minus_1",
+    }
+    assert passenger["watermark"] == {"param": "to_month", "format": "%Y%m"}
+    assert len(operations) <= scope["max_operations_per_run"]
+
+
+def test_naver_scope_rotates_korean_province_keywords_five_per_run() -> None:
+    from app.sources.plans import NAVER_KEYWORDS, NAVER_KEYWORDS_PER_RUN, naver_targets
+
+    assert NAVER_KEYWORDS_PER_RUN == 5
+    assert all(keyword.endswith(" 여행") for keyword in NAVER_KEYWORDS)
+    seen: list[str] = []
+    for day in range(4):
+        batch = naver_targets(day)
+        assert 1 <= len(batch) <= NAVER_KEYWORDS_PER_RUN
+        assert all(target["country"] == "KR" for target in batch)
+        seen.extend(target["keyword"] for target in batch)
+    assert seen == list(NAVER_KEYWORDS)
+    assert naver_targets(4) == naver_targets(0)
+    scope = social_refresh_scope("SRC_NAVER_TREND")
+    assert scope["lookback_days"] == 90
+    assert len(scope["targets"]) <= NAVER_KEYWORDS_PER_RUN

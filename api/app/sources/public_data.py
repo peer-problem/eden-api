@@ -493,7 +493,7 @@ class PublicDataAdapter(SourceAdapter):
                 else:
                     authoritative_watermarks.append(source_updated_at)
                     watermark_basis = "authoritative_source_period"
-                if scope.get("essential_catalog"):
+                if scope.get("essential_catalog") and not request.get("detail"):
                     from app.sources.essential import balanced_catalog_rows
 
                     source_rows = public_data_items(parsed)

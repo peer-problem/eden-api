@@ -13,7 +13,7 @@
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white">
   <img alt="MariaDB" src="https://img.shields.io/badge/MariaDB-003545?style=flat-square&logo=mariadb&logoColor=white">
-  <img alt="API v0.2.0" src="https://img.shields.io/badge/API-v0.2.0-516B56?style=flat-square">
+  <img alt="API v0.3.0" src="https://img.shields.io/badge/API-v0.3.0-516B56?style=flat-square">
 </p>
 
 <p align="center">
@@ -37,9 +37,9 @@ EDEN connects regional codes and place identifiers across tourism data sources a
 
 | Feature | Available information |
 | --- | --- |
-| Travel trends | Video counts and views for collected YouTube travel keywords |
+| Travel trends | YouTube search samples for market keywords, NAVER search ratios for Korean travel keywords, and the official KTO resource demand index by attraction and area |
 | Regional insights | Regional visitor indicators and comparisons with earlier periods |
-| Place details | Names, locations, available translations, nearby shops, and related places |
+| Place details | Names, overview, locations, available translations, hub ranking, nearby shops, and related places |
 | Visitor outlook | Reference demand indices based on past observations, with available weather context |
 | Visitor history | Daily, weekly, or monthly visitor indicators |
 | Inbound markets | Visitor, flight, and exchange-rate indicators for Japan, China, Taiwan, the US, and the Philippines |
@@ -128,8 +128,8 @@ Some declared fields have no verified source today. They are always `null` (or `
 | `/v1/regions/{area_code}/insights` | `demand.avg_stay_nights`, `diversity.age_index` | The official regional statistics publish no such dimension |
 | `/v1/visitors/timeseries` | `concentration_rate`, `summary.peak_concentration_rate` | The visitor statistics do not publish concentration |
 | `/v1/forecasts/visitors` | `expected_visitors`, `confidence`, `adjustment_factors` | No source forecasts headcounts or confidence; the reference index is not scaled into people |
-| `/v1/markets/inbound` | `passengers`, `social_interest.youtube.score` | Airport statistics publish flight counts only; a search sample is not a country signal |
-| `/v1/trends` | `destination_searches`, `search_ratio`, `sns_mentions` | No connected source; NAVER and the other social platforms need external approval |
+| `/v1/markets/inbound` | `social_interest.youtube.score` | A search sample is not a country signal |
+| `/v1/trends` | `destination_searches`, `sns_mentions` | No absolute search-count source; the other social platforms need external approval. `search_ratio` comes from NAVER for Korean province travel keywords only |
 | `/v1/recommendations/destinations` | `estimated_budget_krw`, `budget_krw`, `travel_window.days`, `party_size`, `constraints.accessibility_required`, `constraints.max_travel_minutes` | No verified cost, stay, capacity, accessibility or travel-time source |
 
 ### Understanding the Indicators
@@ -139,7 +139,24 @@ Some declared fields have no verified source today. They are always `null` (or `
 - **Recommendation inputs** that cannot be applied appear in `unapplied_inputs`, with reasons. Season only affects crowd calculations when supporting observations exist.
 - **Notice translations and summaries** are returned when available. Original notices remain accessible when a translation is missing.
 
-Availability depends on source permissions and collection coverage. Persistent storage of NAVER results is disabled. The API does not fabricate metrics for unsupported social platforms.
+Availability depends on source permissions and collection coverage. NAVER search ratios are stored for the Korean travel keywords listed under Data Coverage; other social platforms are not collected, and the API does not fabricate metrics for them.
+
+## Data Coverage and Refresh
+
+What a client can rely on today (deployment 2026-09-17). Sources publish with a lag, and some place fields are still being filled by rotating collection; check `meta.freshness` and `meta.sources` rather than assuming a date.
+
+| Endpoint | Works today | Cadence and lag | Not answered |
+| --- | --- | --- | --- |
+| `GET /v1/trends` | Keywords that are collected: market keywords (`Korea travel`, `Seoul travel`, `Jeju travel` and their JP/CN/TW translations, per `country`), Korean province travel keywords (`서울 여행` … `제주 여행`, `한국 여행`), and Korean attraction names with `area_code` | YouTube and NAVER daily; KTO resource demand monthly | Free-text keywords outside that list return `unavailable`; `destination_searches` and `sns_mentions` are always `null` |
+| `GET /v1/regions/{area_code}/insights` | Province (sido) codes; `period` 7d/30d/90d; add `compare=previous_period` to get `visitors.change_rate` and `comparison` | Daily visitors publish about 30 days late; demand and diversity are monthly, about two months late | Sigungu codes answer with the parent province (`requested_area_code` set, `partial`); `avg_stay_nights`, `age_index` always `null` |
+| `GET /v1/visitors/timeseries` | Province codes; day/week/month; 7d/30d/90d/12m | Same daily visitor source | `attraction_name` has no source (`unavailable`); `concentration_rate` always `null` |
+| `GET /v1/forecasts/visitors` | Sigungu codes get the official KTO concentration forecast averaged over the area's attractions (`method: official`, `sample_count`); province codes get the historical weekday reference index; weather, festivals and holidays per day | Forecast horizon 30 days; weather refreshed every 3 hours for one grid per province; festivals weekly; holidays monthly | `expected_visitors`, `confidence`, `adjustment_factors` always `null`; `nx`/`ny` other than the province grid are `unavailable` |
+| `GET /v1/markets/inbound` | `JP`, `CN`, `TW`, `US`, `PH`; `period` 3m/6m/12m/24m; `include` blocks visitors, flights, flight_schedule, fx, social_interest; `forecast_days` up to 7 | Visitors monthly (about two months late); flights and passengers monthly; 7-day schedule daily; FX daily | `social_interest.youtube.score` is always `null` by design; only YouTube is collected among social sources |
+| `GET /v1/markets/{country}/alerts` | Korean originals with source links; `types`, `since`, `limit` | Sources refresh every 12 hours | `language=en` returns the Korean original with `fallback: true` (no translation); `source_scope=local` has no collector; `summary` is `null` |
+| `GET /v1/places/{content_id}` | Korean title, category, address, coordinates; `overview`, `en`/`ja`/`zh-CN` titles, `hub`, `related_places`, `nearby_shops` as collection fills them | Overview 60 places per day, translations province by province every six days, hub and related places daily, nearby shops 20 places every six hours | `zh-TW` has no source; places whose KTO name does not match a TourAPI entry keep empty `hub`/`related_places` |
+| `POST /v1/recommendations/destinations` | `target_country`, `themes`, `area_code`, `limit`; `constraints.avoid_crowds: true` applies `travel_window.season` to crowd ranking | Feature snapshot refreshed with the product cycle | `budget_krw`, `travel_window.days`, `party_size` are echoed in `unapplied_inputs`; `accessibility_required`, `max_travel_minutes`, `constraints.extra` make the request `unavailable`; `estimated_budget_krw` always `null` |
+
+Two request options the current dashboard does not send but the API supports: `compare=previous_period` on regional insights and `constraints.avoid_crowds` on recommendations.
 
 ## How It Works
 
@@ -149,7 +166,7 @@ External sources -> Collection and normalization -> Published MariaDB data -> Fa
 
 Public requests only read published database snapshots. They do not trigger external collection or LLM calls. The recommendation POST is also a read operation.
 
-Collection uses one source worker, request budgets and resource limits. Monthly regional demand and diversity sources are checked weekly. Monthly flight refreshes cover the two most recent months while existing history remains stored. Cleanup keeps the current snapshot and two recent retired versions, preserving their referenced facts and source evidence. Superseded catalog errors and sources outside the maintained scope are quarantined without deleting their raw evidence. API usage statistics are not written to the database.
+Collection uses one source worker, request budgets and resource limits. Monthly regional demand and diversity sources are checked weekly. Monthly flight refreshes cover the two most recent months while existing history remains stored. Cleanup keeps the current snapshot and two recent retired versions, preserving their referenced facts and source evidence. Superseded catalog errors and sources outside the maintained scope are quarantined without deleting their raw evidence. The API records pilot usage rows (daily counts per pilot key) and nothing else about requests.
 
 `SCHEDULER_ENABLED=false` pauses collection, refresh and automatic cleanup. In production the scheduler runs as its own process (`python -m app.scheduler`, systemd unit `eden-scheduler`) with the same jobs, intervals and locks, while the API process serves requests with the scheduler disabled; the API still records pilot usage with the ingestion account. The unit files and one-time installation steps are in [deploy/README.md](deploy/README.md). `ALERT_ENRICHMENT_BATCH_SIZE=0` independently disables paid translation jobs; original official notices remain available. The deployment currently uses this zero translation budget. Fields that no current source can fill and deferred decisions are listed in [KNOWN_GAPS.md](KNOWN_GAPS.md).
 
@@ -224,6 +241,6 @@ Deployment generates production configuration from the root `.env`. It verifies 
 
 Schema changes require a separate request. Database backup and restore commands are disabled. Public API documentation is served at `/docs`; internal readiness is available on loopback at `/internal/readiness`.
 
-The alert enrichment worker requires migration `20260911_0009`, which persists retry counts and deadlines. Each revision gets at most three attempts with exponential backoff, allowing later notices to proceed while failed notices wait. Normal deployment applies this additive migration without running the separately gated Phase 1 contract migration. Databases that have already completed that contract advance to the merge revision `20260911_0010`.
+The production database is at migration `20260911_0009` (alert enrichment retry state). Deployment does not run migrations; apply new ones with `../.ops/run.sh migrate` before deploying code that needs them. The Phase 1 storage-contract migration `20260829_0007` is gated behind the soak evidence described in the root README and has not been applied; databases that complete it advance to the merge revision `20260911_0010`.
 
 </details>

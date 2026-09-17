@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import String, and_, cast, func, select, tuple_
+from sqlalchemy import String, and_, cast, func, select, tuple_, update
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -129,6 +129,14 @@ def _upsert_place(
     namespace: str,
 ) -> str:
     now = datetime.now(UTC).replace(tzinfo=None)
+    if namespace == "KTO_TATS":
+        from app.normalization.place_crosswalk import attach_place_alias, match_tour_place
+
+        twin_id = match_tour_place(session, title, area_id, lat, lng)
+        if twin_id is not None:
+            # The hub/related row names a TourAPI place already served publicly;
+            # relations attach there instead of to a separate TATS-only row.
+            return attach_place_alias(session, source_id, external_id, twin_id, raw.raw_record_id)
     place_id = _existing_place_id(session, source_id, external_id, lat, lng, namespace)
     existing_place = session.get(Place, place_id)
     incoming_area = session.get(Area, area_id)
@@ -205,7 +213,8 @@ def _upsert_place(
             .on_duplicate_key_update(
                 title=title[:500],
                 address=address[:1000] if address else None,
-                overview=overview,
+                # Catalog rows carry no overview; keep the detail-sourced text.
+                overview=func.coalesce(overview, PlaceLocalization.overview),
                 is_fallback=False,
                 updated_at=now,
             )
@@ -415,6 +424,49 @@ def _write_tour_replay_provenance(
         session.execute(upsert.on_duplicate_key_update(provenance_id=ProvenanceEdge.provenance_id))
 
 
+TOUR_DETAIL_KEY_PREFIX = "detailCommon2:"
+
+
+def _apply_tour_details(
+    session: Session,
+    raw: RawRecord,
+    source_id: str,
+    language: str,
+    rows: list[dict[str, Any]],
+) -> int:
+    """Store the overview of already known places; details never mint places."""
+    normalized = 0
+    now = datetime.now(UTC).replace(tzinfo=None)
+    for row in rows:
+        try:
+            with session.begin_nested():
+                external_id = _text(row, "contentid", required=True) or ""
+                place_id = session.scalar(
+                    select(PlaceSourceMap.eden_place_id).where(
+                        PlaceSourceMap.source_id == source_id,
+                        PlaceSourceMap.external_content_id == external_id,
+                    )
+                )
+                if place_id is None:
+                    raise ValueError(f"detail for unknown {source_id} content {external_id}")
+                localization_id = _existing_localization_id(session, place_id, language)
+                if localization_id is None:
+                    raise ValueError(f"detail for place {place_id} without {language} text")
+                # An empty string records that the source has no overview, so the
+                # place is not requested again on the next detail run.
+                overview = _text(row, "overview") or ""
+                session.execute(
+                    update(PlaceLocalization)
+                    .where(PlaceLocalization.id == localization_id)
+                    .values(overview=overview, updated_at=now)
+                )
+                _place_provenance(session, place_id, localization_id, raw.raw_record_id)
+            normalized += 1
+        except Exception as exc:
+            _add_dead_letter(session, raw, "tour_detail_row_schema", exc)
+    return normalized
+
+
 def normalize_tour_catalog_run(
     source_id: str,
     session_factory: sessionmaker[Session],
@@ -428,6 +480,10 @@ def normalize_tour_catalog_run(
                 rows = _strict_public_data_items(_document(raw))
             except Exception as exc:
                 _add_dead_letter(session, raw, "tour_catalog_schema", exc)
+                session.commit()
+                continue
+            if str(getattr(raw, "external_key", "") or "").startswith(TOUR_DETAIL_KEY_PREFIX):
+                normalized += _apply_tour_details(session, raw, source_id, language, rows)
                 session.commit()
                 continue
             successfully_provenanced_ids = (

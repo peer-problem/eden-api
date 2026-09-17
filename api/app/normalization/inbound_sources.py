@@ -106,6 +106,20 @@ def _nonnegative_integer(row: dict[str, Any], *names: str, required: bool = Fals
     return int(value)
 
 
+def merge_airport_metrics(
+    flights: int | None,
+    passengers: int | None,
+    existing: FlightObservation | None,
+) -> tuple[int | None, int | None]:
+    """Flights and passengers arrive from separate operations; keep the other fact."""
+    if existing is None:
+        return flights, passengers
+    return (
+        flights if flights is not None else existing.arriving_flights,
+        passengers if passengers is not None else existing.passengers,
+    )
+
+
 def airport_country_metrics(row: dict[str, Any]) -> tuple[int | None, int | None]:
     """Return flight and passenger facts without substituting one for the other."""
     flights = _nonnegative_integer(row, "arrFlight")
@@ -226,6 +240,15 @@ def normalize_airport_country_run(session_factory: sessionmaker[Session], run_id
                             continue
                         raise
                     with session.begin_nested():
+                        existing = session.scalar(
+                            select(FlightObservation).where(
+                                FlightObservation.source_id == AIRPORT_COUNTRY_SOURCE,
+                                FlightObservation.country_id == country_id,
+                                FlightObservation.period_start == period,
+                                FlightObservation.grain == "month",
+                            )
+                        )
+                        flights, passengers = merge_airport_metrics(flights, passengers, existing)
                         values = {
                             "country_id": country_id,
                             "period_start": period,

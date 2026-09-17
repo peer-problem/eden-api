@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from statistics import median
+from statistics import mean, median
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -53,17 +53,40 @@ def _weather_block(
 
 
 def _base_forecast(rows: list[dict[str, Any]], place_name: str | None) -> dict[str, Any] | None:
-    candidates = [
+    official = [
         row
         for row in rows
         if row.get("source_id") == "SRC_KTO_VISITOR_FORECAST"
         and isinstance(row.get("source_forecast"), dict)
-        and (
-            row["source_forecast"].get("place_name") == place_name
-            if place_name is not None
-            else not row.get("place_id") and not row["source_forecast"].get("place_name")
-        )
     ]
+    if place_name is not None:
+        candidates = [
+            row for row in official if row["source_forecast"].get("place_name") == place_name
+        ]
+    else:
+        candidates = [
+            row
+            for row in official
+            if not row.get("place_id") and not row["source_forecast"].get("place_name")
+        ]
+        if not candidates:
+            # The official forecast is published per attraction. An area request
+            # gets the mean of its attractions' rates and says how many were
+            # averaged, never one arbitrary attraction's value.
+            rates = [
+                float(row["source_forecast"]["concentration_rate"])
+                for row in official
+                if row["source_forecast"].get("concentration_rate") is not None
+            ]
+            if not rates:
+                return None
+            return {
+                "place_name": None,
+                "concentration_rate": round(mean(rates), 4),
+                "expected_visitors": None,
+                "sample_count": len(rates),
+                "basis": f"지역 내 관광지 {len(rates)}곳의 공식 집중률 평균",
+            }
     if not candidates:
         return None
     selected = min(
@@ -284,8 +307,20 @@ def build_forecast_view(
                 "adjustment_factors": factors,
                 "method": "official" if has_official else proxy["method"] if proxy else None,
                 "basis_period": proxy["basis_period"] if proxy else None,
-                "sample_count": proxy["sample_count"] if proxy else None,
-                "basis": proxy["basis"] if proxy else None,
+                "sample_count": (
+                    base.get("sample_count")
+                    if has_official and base
+                    else proxy["sample_count"]
+                    if proxy
+                    else None
+                ),
+                "basis": (
+                    base.get("basis")
+                    if has_official and base
+                    else proxy["basis"]
+                    if proxy
+                    else None
+                ),
                 "availability": day_availability,
                 "reason": day_reason,
             }

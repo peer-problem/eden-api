@@ -42,13 +42,18 @@ def _batched_request_budget(source_id: str, configured: int) -> int:
         PUBLIC_DATA_REQUEST_HEADROOM,
         SEMAS_PLACES_PER_RUN,
         TOUR_KO_AREAS_PER_RUN,
+        TOUR_KO_DETAILS_PER_RUN,
     )
 
     if source_id == "SRC_KMA_FORECAST":
         return max(configured, KMA_OPERATIONS_PER_RUN + PUBLIC_DATA_REQUEST_HEADROOM)
-    if source_id == "SRC_TOUR_KO":
-        # Province catalogs can span two pages each.
-        return max(configured, TOUR_KO_AREAS_PER_RUN * 2 + PUBLIC_DATA_REQUEST_HEADROOM)
+    if source_id.startswith("SRC_TOUR_"):
+        # Province catalogs can span two pages each; a detail run is one
+        # request per place.
+        return max(
+            configured,
+            max(TOUR_KO_AREAS_PER_RUN * 2, TOUR_KO_DETAILS_PER_RUN) + PUBLIC_DATA_REQUEST_HEADROOM,
+        )
     if source_id == "SRC_SEMAS_SHOPS":
         return max(configured, SEMAS_PLACES_PER_RUN + PUBLIC_DATA_REQUEST_HEADROOM)
     return configured
