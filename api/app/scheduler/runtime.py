@@ -310,7 +310,37 @@ def _runtime_scope(
                 return scope
             operations = scope.get("operations", [])
             if source_id == "SRC_TOUR_KO":
+                from app.sources.plans import TOUR_KO_DETAILS_PER_RUN, tour_detail_operations
+
                 selected_ids = essential_place_ids(session)
+                missing_overview = list(
+                    session.scalars(
+                        select(PlaceSourceMap.external_content_id)
+                        .join(
+                            PlaceLocalization,
+                            (PlaceLocalization.eden_place_id == PlaceSourceMap.eden_place_id)
+                            & (PlaceLocalization.language == "ko"),
+                        )
+                        .where(
+                            PlaceSourceMap.source_id == source_id,
+                            PlaceSourceMap.eden_place_id.in_(selected_ids),
+                            PlaceLocalization.overview.is_(None),
+                        )
+                        .order_by(PlaceSourceMap.eden_place_id)
+                        .limit(TOUR_KO_DETAILS_PER_RUN)
+                    ).all()
+                )
+                if missing_overview:
+                    # Overviews come only from detailCommon2. Serve them before
+                    # the next catalog rotation and keep the rotation cursor.
+                    scope.update(
+                        operations=tour_detail_operations(missing_overview),
+                        rotate_operations=False,
+                        essential_catalog=False,
+                        detail_run=True,
+                        next_cursor=cursor,
+                    )
+                    return scope
                 maps = session.execute(
                     select(PlaceSourceMap.external_content_id, Area.administrative_code)
                     .join(Place, Place.eden_place_id == PlaceSourceMap.eden_place_id)

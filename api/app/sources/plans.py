@@ -13,6 +13,10 @@ PUBLIC_DATA_OPERATIONS_PER_RUN = 5
 # One TourAPI province catalog page is up to 1,000 rows (about 650 KB); five
 # provinces exceeded the 2 MiB run byte budget and starved the last one.
 TOUR_KO_AREAS_PER_RUN = 3
+# detailCommon2 answers about 4 KB per place and is the only operation that
+# carries the overview text. A run that has essential places without an
+# overview collects these instead of the province catalogs.
+TOUR_KO_DETAILS_PER_RUN = 60
 # Retries share the per-run request budget with the batch itself. Reserve
 # room so one transient failure cannot starve the last operation of a batch.
 PUBLIC_DATA_REQUEST_HEADROOM = 2
@@ -527,6 +531,23 @@ def public_data_refresh_scope(
     if dynamic:
         scope["operations"] = dynamic
     return scope
+
+
+def tour_detail_operations(content_ids: list[str]) -> list[dict[str, Any]]:
+    """Build bounded TourAPI detail requests for places whose overview is unknown."""
+    return [
+        {
+            "operation": "detailCommon2",
+            "external_key": f"detailCommon2:content={content_id}",
+            "params": {"MobileOS": "ETC", "MobileApp": "EDEN", "contentId": content_id},
+            "watermark": {"response_field": "modifiedtime", "format": "%Y%m%d%H%M%S"},
+            "max_pages": 1,
+            "paginate": False,
+            # A detail row must not pass through the province catalog selection.
+            "detail": True,
+        }
+        for content_id in content_ids[:TOUR_KO_DETAILS_PER_RUN]
+    ]
 
 
 def scheduler_batch_size(source_id: str) -> int:

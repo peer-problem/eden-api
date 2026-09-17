@@ -213,9 +213,11 @@ def test_batched_sources_reserve_request_headroom_for_retries() -> None:
         _batched_request_budget("SRC_KMA_FORECAST", configured)
         == KMA_OPERATIONS_PER_RUN + PUBLIC_DATA_REQUEST_HEADROOM
     )
+    from app.sources.plans import TOUR_KO_DETAILS_PER_RUN
+
     assert (
         _batched_request_budget("SRC_TOUR_KO", configured)
-        == TOUR_KO_AREAS_PER_RUN * 2 + PUBLIC_DATA_REQUEST_HEADROOM
+        == max(TOUR_KO_AREAS_PER_RUN * 2, TOUR_KO_DETAILS_PER_RUN) + PUBLIC_DATA_REQUEST_HEADROOM
     )
     assert _batched_request_budget("SRC_KMA_FORECAST", 40) == 40
     assert _batched_request_budget("SRC_FESTIVAL", configured) == configured
@@ -247,3 +249,18 @@ def test_embassy_notice_budget_covers_the_waiting_room_and_five_boards() -> None
         assert adapter.client.max_requests == EMBASSY_NOTICE_REQUEST_BUDGET >= 13 + 5 * 3
     finally:
         adapter.client.close()
+
+
+def test_tour_detail_operations_are_bounded_and_marked_as_details() -> None:
+    from app.sources.plans import TOUR_KO_DETAILS_PER_RUN, tour_detail_operations
+
+    content_ids = [str(index) for index in range(TOUR_KO_DETAILS_PER_RUN + 5)]
+    operations = tour_detail_operations(content_ids)
+
+    assert len(operations) == TOUR_KO_DETAILS_PER_RUN
+    first = operations[0]
+    assert first["operation"] == "detailCommon2"
+    assert first["external_key"] == "detailCommon2:content=0"
+    assert first["params"] == {"MobileOS": "ETC", "MobileApp": "EDEN", "contentId": "0"}
+    assert first["watermark"] == {"response_field": "modifiedtime", "format": "%Y%m%d%H%M%S"}
+    assert first["detail"] is True and first["paginate"] is False and first["max_pages"] == 1

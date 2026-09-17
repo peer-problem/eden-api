@@ -190,3 +190,49 @@ def test_planned_page_rotation_is_available_and_does_not_repeat_only_page_one() 
     assert len({item.external_key for item in result.items}) == 2
     assert any("rotating_page_batch" in error for error in result.partial_errors)
     assert not any("pagination_limit_exceeded" in error for error in result.partial_errors)
+
+
+def test_detail_operations_bypass_the_essential_catalog_selection() -> None:
+    from app.sources.plans import tour_detail_operations
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/detailCommon2")
+        assert request.url.params.get("contentId") == "126508"
+        payload = {
+            "response": {
+                "header": {"resultCode": "0000", "resultMsg": "OK"},
+                "body": {
+                    "totalCount": 1,
+                    "items": {
+                        "item": [
+                            {
+                                "contentid": "126508",
+                                "title": "경복궁",
+                                "overview": "조선 왕조의 법궁",
+                                "modifiedtime": "20260520091252",
+                            }
+                        ]
+                    },
+                },
+            }
+        }
+        return httpx.Response(200, json=payload)
+
+    adapter = _adapter(handler)
+    result = adapter.fetch(
+        {
+            "essential_catalog": True,
+            "allowed_content_ids": {"1": ["999"]},
+            "operations": tour_detail_operations(["126508"]),
+        }
+    )
+
+    assert result.status is SourceStatus.AVAILABLE
+    assert len(result.items) == 1
+    item = result.items[0]
+    assert item.external_key == "detailCommon2:content=126508:1"
+    from app.sources.public_data import public_data_items
+
+    rows = public_data_items(item.body["response"])
+    assert rows[0]["overview"] == "조선 왕조의 법궁"
+    assert item.body["response"].get("scope") != "bounded_province_catalog"

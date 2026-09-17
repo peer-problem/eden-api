@@ -976,7 +976,7 @@ class MariaDBReadRepository:
                 "availability": "available" if has_location else "unavailable",
                 "reason": None if has_location else "관광지 좌표가 없습니다.",
             },
-            "overview": selected.overview,
+            "overview": selected.overview or None,
             "hub": hub_data,
             "related_places": related_data,
             "nearby_shops": nearby_data[: int(scope.get("shops_limit", 5))]

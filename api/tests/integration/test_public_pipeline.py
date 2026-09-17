@@ -1904,3 +1904,51 @@ def test_inbound_flights_block_is_available_without_passenger_counts(pipeline: P
     assert market["arriving_flights"] is not None
     assert market["passengers"] is None
     assert market["source_availability"]["flights"] == {"availability": "available", "reason": None}
+
+
+def test_tour_scope_collects_missing_overviews_before_rotating_catalogs(
+    pipeline: Pipeline,
+) -> None:
+    from app.scheduler import runtime
+    from app.sources.plans import TOUR_KO_AREAS_PER_RUN
+
+    with pipeline.session_factory.begin() as session:
+        korean = session.scalar(
+            select(PlaceLocalization).where(
+                PlaceLocalization.eden_place_id == PLACE_ID, PlaceLocalization.language == "ko"
+            )
+        )
+        korean.overview = None
+
+    scope = runtime._runtime_scope("SRC_TOUR_KO", {}, pipeline.session_factory)
+    assert scope["detail_run"] is True
+    assert [op["operation"] for op in scope["operations"]] == ["detailCommon2"]
+    assert scope["operations"][0]["params"]["contentId"] == "tour-1"
+    assert scope["next_cursor"] == 0
+
+    with pipeline.session_factory.begin() as session:
+        korean = session.scalar(
+            select(PlaceLocalization).where(
+                PlaceLocalization.eden_place_id == PLACE_ID, PlaceLocalization.language == "ko"
+            )
+        )
+        korean.overview = ""  # the source answered without an overview: do not ask again
+
+    scope = runtime._runtime_scope("SRC_TOUR_KO", {}, pipeline.session_factory)
+    assert "detail_run" not in scope
+    assert all(op["operation"] == "areaBasedList2" for op in scope["operations"])
+    assert len(scope["operations"]) == min(TOUR_KO_AREAS_PER_RUN, 17)
+
+
+def test_empty_source_overview_is_served_as_not_provided(pipeline: Pipeline) -> None:
+    with pipeline.session_factory.begin() as session:
+        korean = session.scalar(
+            select(PlaceLocalization).where(
+                PlaceLocalization.eden_place_id == PLACE_ID, PlaceLocalization.language == "ko"
+            )
+        )
+        korean.overview = ""
+
+    response = pipeline.client.get(f"/v1/places/{PLACE_ID}")
+    assert response.status_code == 200
+    assert response.json()["data"]["overview"] is None

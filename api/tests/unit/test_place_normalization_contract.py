@@ -140,3 +140,105 @@ def test_retired_tour_area_does_not_overwrite_verified_active_place_area(monkeyp
     )
     insert = next(statement for statement in statements if statement.table.name == "place")
     assert insert.compile().params["area_id"] == "active-area"
+
+
+class _RecordingSession:
+    """Fake session that answers scalars in order and records executed statements."""
+
+    def __init__(self, scalars: tuple[object, ...]) -> None:
+        self.info: dict[str, Any] = {}
+        self.statements: list[Any] = []
+        self._scalars = iter(scalars)
+
+    def scalar(self, _statement: object) -> object:
+        return next(self._scalars)
+
+    def execute(self, statement: object) -> None:
+        self.statements.append(statement)
+
+    def begin_nested(self):
+        from contextlib import nullcontext
+
+        return nullcontext()
+
+
+def _mysql_sql(statement: object) -> str:
+    from sqlalchemy.dialects import mysql
+
+    return str(statement.compile(dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}))
+
+
+def test_tour_detail_rows_update_only_the_overview_of_known_places(monkeypatch) -> None:
+    letters: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        places,
+        "_add_dead_letter",
+        lambda _session, _raw, code, exc: letters.append((code, str(exc))),
+    )
+    # known place: source map -> place id, localization id; unknown place: no map
+    session = _RecordingSession(("eden_place_ko", 7, None))
+    raw = SimpleNamespace(raw_record_id=91)
+    rows = [
+        {"contentid": "126508", "title": "경복궁", "overview": "조선 왕조의 법궁"},
+        {"contentid": "999", "title": "모르는 곳", "overview": "..."},
+    ]
+
+    normalized = places._apply_tour_details(session, raw, "SRC_TOUR_KO", "ko", rows)
+
+    assert normalized == 1
+    sql = [_mysql_sql(statement) for statement in session.statements]
+    assert any(
+        text.startswith("UPDATE place_localization SET overview='조선 왕조의 법궁'")
+        and "WHERE place_localization.id = 7" in text
+        for text in sql
+    )
+    assert not any(text.startswith("INSERT INTO place ") for text in sql)
+    assert sum("INSERT INTO provenance_edge" in text for text in sql) == 2
+    assert letters == [("tour_detail_row_schema", "detail for unknown SRC_TOUR_KO content 999")]
+
+
+def test_tour_detail_without_overview_stores_an_empty_marker() -> None:
+    session = _RecordingSession(("eden_place_ko", 7))
+    rows = [{"contentid": "126508", "title": "경복궁"}]
+
+    assert places._apply_tour_details(
+        session, SimpleNamespace(raw_record_id=92), "SRC_TOUR_KO", "ko", rows
+    ) == 1
+    assert any(
+        "SET overview=''" in _mysql_sql(statement) for statement in session.statements
+    )
+
+
+def test_catalog_rows_keep_an_existing_overview() -> None:
+    class Session(_RecordingSession):
+        def get(self, _model: object, _identifier: object) -> None:
+            return None
+
+        def flush(self) -> None:
+            return None
+
+    # place map hit, localization id known, provenance timestamp lookups
+    session = Session(("eden_place_ko", 7, None, None))
+    places._upsert_place(
+        session=session,
+        raw=SimpleNamespace(raw_record_id=93, source_updated_at=None),
+        source_id="SRC_TOUR_KO",
+        external_id="126508",
+        area_id="area-11",
+        title="경복궁",
+        language="ko",
+        category="A02010100",
+        lat=None,
+        lng=None,
+        address=None,
+        overview=None,
+        namespace="KTO_CONTENT",
+    )
+
+    localization_upserts = [
+        _mysql_sql(statement)
+        for statement in session.statements
+        if "INSERT INTO place_localization" in _mysql_sql(statement)
+    ]
+    assert localization_upserts
+    assert "overview = coalesce(NULL, place_localization.overview)" in localization_upserts[0]
