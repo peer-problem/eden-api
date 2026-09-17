@@ -360,12 +360,12 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
         "rotation_seconds": 24 * 3600,
         "operations": [
             {
-                "operation": "getTotalNumberOfFlight",
-                "external_key": f"airport-country:month=$month_minus_{months}",
+                "operation": operation,
+                "external_key": f"{key_prefix}:month=$month_minus_{months}",
                 "params": {
                     "from_month": f"$month_minus_{months}",
                     "to_month": f"$month_minus_{months}",
-                    "pax_cargo": "Y",
+                    **extra_params,
                 },
                 "watermark": {"param": "to_month", "format": "%Y%m"},
                 "response_type_param": "type",
@@ -373,6 +373,12 @@ PUBLIC_DATA_REFRESH_SCOPES: dict[str, dict[str, Any]] = {
                 "pagination_params": False,
             }
             # Retain existing history, but refresh only the two latest source months.
+            # The same service publishes flights and passengers (arrPassenger)
+            # through separate operations; both feed one monthly observation.
+            for operation, key_prefix, extra_params in (
+                ("getTotalNumberOfFlight", "airport-country", {"pax_cargo": "Y"}),
+                ("getTotalNumberOfPassenger", "airport-country-passengers", {}),
+            )
             for months in range(1, 3)
         ],
     },

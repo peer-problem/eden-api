@@ -2218,3 +2218,25 @@ def test_recommendations_credit_relations_recorded_on_retired_aliases(
     )
     assert [row["content_id"] for row in feature["related_places"]] == [RELATED_PLACE_ID]
     assert feature["related_places"][0]["title"] == "국립민속박물관"
+
+
+def test_inbound_publishes_collected_passenger_counts(pipeline: Pipeline) -> None:
+    with pipeline.session_factory.begin() as session:
+        rows = session.scalars(
+            select(FlightObservation).where(
+                FlightObservation.source_id == "SRC_AIRPORT_COUNTRY",
+                FlightObservation.grain == "month",
+            )
+        ).all()
+        assert rows
+        for row in rows:
+            row.passengers = 1_000
+    build_inbound_snapshots(pipeline.session_factory)
+
+    response = pipeline.client.get(
+        "/v1/markets/inbound", params={"countries": "JP", "period": "3m", "include": "flights"}
+    )
+    assert response.status_code == 200
+    market = response.json()["data"]["markets"][0]
+    assert market["passengers"] == 3_000
+    assert market["source_availability"]["flights"]["availability"] == "available"

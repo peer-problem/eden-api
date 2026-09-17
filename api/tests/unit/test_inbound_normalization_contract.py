@@ -224,3 +224,15 @@ def test_bok_normalizer_keeps_good_fx_rows_after_bad_row(
         datetime(2026, 9, 10),
     }
     assert all(row["source_updated_at"] == row["rate_date"] for row in params)
+
+
+def test_airport_operations_merge_into_one_monthly_observation() -> None:
+    existing = SimpleNamespace(arriving_flights=641, passengers=None)
+
+    assert inbound_sources.merge_airport_metrics(None, 46_273, existing) == (641, 46_273)
+    assert inbound_sources.merge_airport_metrics(650, None, existing) == (650, None)
+    assert inbound_sources.merge_airport_metrics(650, 47_000, existing) == (650, 47_000)
+    assert inbound_sources.merge_airport_metrics(None, 46_273, None) == (None, 46_273)
+    assert inbound_sources.airport_country_metrics(
+        {"country": "일본", "arrPassenger": "46,273", "depPassenger": "44,016"}
+    ) == (None, 46_273)

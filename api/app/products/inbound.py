@@ -260,6 +260,7 @@ def build_inbound_snapshots(
             social_rows = [row for row in social_population_rows if row.country_id == country_id]
             current_total = _sum_optional([row.visitor_count for row in current_rows])
             arriving_flights = _sum_optional([row.arriving_flights for row in current_flights])
+            passengers = _sum_optional([row.passengers for row in current_flights])
             visitor_change, visitor_change_reason = _monthly_change_rate(
                 current_rows, previous_rows, month_count, "visitor_count"
             )
@@ -369,8 +370,8 @@ def build_inbound_snapshots(
                     "availability": availability.value,
                     "reason": reason,
                 },
-                # passengers has no source (the airport statistics publish flight
-                # counts only) and stays null without degrading the block.
+                # passengers comes from the same airport statistics service; a
+                # month collected before that operation existed stays null.
                 "flights": {
                     "availability": (
                         "unavailable"
@@ -428,7 +429,7 @@ def build_inbound_snapshots(
                         "visitor_completeness_ratio": round(completeness, 6),
                         "arriving_flights": arriving_flights,
                         "flight_change_rate": flight_change,
-                        "passengers": None,
+                        "passengers": passengers,
                         "flight_schedule": (
                             {
                                 **(schedule.schedule or {}),

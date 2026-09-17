@@ -273,3 +273,24 @@ def test_language_catalogs_share_the_tourapi_batch_and_budget() -> None:
     for source_id in ("SRC_TOUR_EN", "SRC_TOUR_JA", "SRC_TOUR_ZH_CN"):
         assert scheduler_batch_size(source_id) == scheduler_batch_size("SRC_TOUR_KO")
         assert _batched_request_budget(source_id, 5) == _batched_request_budget("SRC_TOUR_KO", 5)
+
+
+def test_airport_country_scope_collects_flights_and_passengers_for_two_months() -> None:
+    scope = public_data_refresh_scope("SRC_AIRPORT_COUNTRY")
+    operations = scope["operations"]
+
+    assert [op["operation"] for op in operations] == [
+        "getTotalNumberOfFlight",
+        "getTotalNumberOfFlight",
+        "getTotalNumberOfPassenger",
+        "getTotalNumberOfPassenger",
+    ]
+    assert len({op["external_key"] for op in operations}) == 4
+    passenger = operations[2]
+    assert passenger["external_key"] == "airport-country-passengers:month=$month_minus_1"
+    assert passenger["params"] == {
+        "from_month": "$month_minus_1",
+        "to_month": "$month_minus_1",
+    }
+    assert passenger["watermark"] == {"param": "to_month", "format": "%Y%m"}
+    assert len(operations) <= scope["max_operations_per_run"]

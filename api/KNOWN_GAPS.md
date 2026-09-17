@@ -21,11 +21,19 @@
 | regions/insights | `demand.avg_stay_nights`, `diversity.age_index` | KTO 원천에 대응 지표 없음, 정규화가 None 고정 (insights는 이 때문에 항상 partial) |
 | visitors/timeseries | `concentration_rate`, `attraction_name` 경로 | 작성 경로 없음, `SRC_TOURISM_ADMISSION`은 HTTP 전용이라 어댑터가 unavailable |
 | forecasts/visitors | `expected_visitors`, `confidence`, `adjustment_factors` | 원천 없음, `formulas.adjusted_forecast`는 호출되지 않음 |
-| markets/inbound | `passengers`, `social_interest.youtube.score` | 공항공사 월별 자료에 여객 수 없음(DB 245행 모두 null), YouTube는 설계상 국가 신호에서 제외 |
+| markets/inbound | `social_interest.youtube.score` | YouTube는 설계상 국가 신호에서 제외. `passengers`는 2026-09-17 인천공항 국가별 여객 오퍼레이션(getTotalNumberOfPassenger)을 추가해 수집한다 |
 | markets/{country}/alerts | `source_scope=local`, `status=inactive`, `source_type=foreign_affairs` | 현지 기관 수집기 없음, 비활성 문서는 삭제되므로 도달 불가 |
 | recommendations | `estimated_budget_krw`, `budget_krw`, `days`, `party_size`, 접근성·이동시간 조건 | 검증 원천 없음 |
 
 **결정(2026-09-16):** 위 필드는 "미제공"으로 문서화하고(README "Fields That Are Not Provided", OpenAPI 필드 설명) 가용성 판정에서 제외한다. 필드와 응답 구조는 그대로 두어 대시보드와 클라이언트는 영향을 받지 않는다. 그 결과 insights·inbound·recommendations는 원천이 있는 필드가 모두 채워지면 `available`로 응답한다. 원천이 생기면 해당 필드를 채우고 이 목록에서 빼면 된다.
+
+## B 항목 원천 조사 결과 (2026-09-17)
+
+- **passengers**: 인천공항 국가별 항공통계 서비스(B551177/AviationStatsByCountry)의 `getTotalNumberOfPassenger`가 국가별 월간 도착·출발 여객 수를 제공한다(2026-07 기준 57개국, 라이브 확인). 같은 서비스 키로 되며 수집을 추가했다.
+- **avg_stay_nights, age_index**: 관광공사 데이터랩 공개 API(AreaTarDemDsService, AreaTarDivService)는 관광체류강도·관광소비강도·관광객 다양성·소비 다양성·국제적 다양성 지수만 준다. 숙박일수와 연령 구성은 데이터랩 웹에만 있고 오픈 API에는 없다. 원천 없음 유지.
+- **estimated_budget_krw**: 관광지 단위 비용 원천은 없다. 지역 단위 관광소비강도 지수(이미 수집)만 있다. 원천 없음 유지.
+- **concentration_rate(시계열), expected_visitors, confidence**: 공개 원천 없음.
+- **destination_searches, search_ratio**: NAVER 데이터랩(상대 검색 비율만 제공)을 켜면 `search_ratio`는 채워진다. 절대 검색 수는 어떤 원천도 주지 않는다.
 
 ## 데이터 품질로 격리된 항목
 
