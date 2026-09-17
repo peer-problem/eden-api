@@ -8,6 +8,23 @@
 | API 문서 | https://api.edenapi.org/docs | 운영 VPS |
 | OpenAPI | https://api.edenapi.org/openapi.json | 운영 VPS |
 
+## API 완성도 현황 (2026-09-17)
+
+공개 엔드포인트 8개를 "설계한 데이터를 실제로 수집·조합·가공해서 내는가" 기준으로 점검한 결과입니다. 응답에 하드코딩된 값은 없습니다. 아래 "미제공"은 어떤 공개 원천도 그 값을 주지 않아 항상 `null`인 필드이며, 가용성 판정에서 제외되어 있습니다. 목록과 사유는 [api/README.md의 Fields That Are Not Provided](api/README.md#fields-that-are-not-provided), 보류한 결정은 [api/KNOWN_GAPS.md](api/KNOWN_GAPS.md)에 있습니다.
+
+| 엔드포인트 | 상태 | 제공하는 것 | 미제공 / 제한 |
+| --- | --- | --- | --- |
+| `GET /v1/trends` | 완성 (수집 범위 안에서) | YouTube 검색 표본(5개 시장 × 3 키워드), KTO 관광자원 수요 지수(한국어 관광지명·지역 필터), NAVER 검색 트렌드(지역 여행 키워드 18개, 2026-09-17 활성화) | 사전 수집된 키워드만 응답. `destination_searches`, `sns_mentions`(Instagram·Facebook·Reddit은 외부 승인 필요) |
+| `GET /v1/regions/{area_code}/insights` | 완성 (시도 단위) | 일별 방문자(내·외국인, 원천 발표 지연 약 30일), 관광 체류·소비 강도, 국적 다양성, `compare=previous_period`로 증감률 | 시군구 코드는 시도 자료로 대체. `avg_stay_nights`, `age_index`는 원천 없음 |
+| `GET /v1/visitors/timeseries` | 완성 (시도 단위, 일·주·월) | 방문자 시계열과 요약 | `concentration_rate`는 원천 없음. `attraction_name`(관광지별)은 원천이 없어 항상 unavailable |
+| `GET /v1/forecasts/visitors` | 완성 | 시군구: 관광지별 KTO 공식 집중률의 평균(`sample_count` 표시). 시도: 과거 동일 요일 참고 지수. 기상청 단기예보, 축제, 공휴일 | `expected_visitors`, `confidence`는 원천 없음 |
+| `GET /v1/markets/inbound` | 완성 | 월별 방한객(발표 지연 약 2개월), 국가별 도착 운항편·여객 수(2026-09-17 추가), 7일 운항 일정, 환율, 관광수지, YouTube 관심도 | `social_interest.youtube.score`는 설계상 국가 신호로 쓰지 않음. Instagram·Facebook·Reddit 없음 |
+| `GET /v1/markets/{country}/alerts` | 완성 (한국어) | K-ETA 공지, KTO 시장 동향, 5개 공관 안전 공지(원문·링크) | 번역·요약은 하지 않기로 결정. `language=en`은 한국어 원문을 `fallback=true`로 반환 |
+| `GET /v1/places/{content_id}` | 완성, 수집 채우는 중 | 한국어 제목·분류·주소·좌표, 소개문, 영어·일본어·중국어(간체) 제목·주소, 중심 관광지 순위, 연관 관광지, 주변 상권 | 2026-09-17 배포 후 소개문(약 8일), 번역(약 6일), 허브·연관 매핑(이름·좌표가 일치하는 곳만), 주변 상권(약 1주)이 순환 수집으로 채워짐. 중국어 번체(TW)는 원천 없음 |
+| `POST /v1/recommendations/destinations` | 완성 | 테마·지역 수요·계절 혼잡도 점수, 근거, 연관 관광지 | `estimated_budget_krw`, `budget_krw`, `days`, `party_size`, 접근성·이동시간 조건은 원천 없음(입력은 `unapplied_inputs`로 알림) |
+
+수집 원천 36개 중 26개가 켜져 있습니다. 꺼진 10개(Instagram·Facebook·Reddit·X·TikTok·Weibo·Douyin·Xiaohongshu·LINE·관광지 입장객)는 어댑터가 없거나 외부 승인이 필요합니다.
+
 ## 디렉터리
 
 ```text
