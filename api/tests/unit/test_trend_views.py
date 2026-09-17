@@ -190,3 +190,88 @@ def test_trend_view_filters_excluded_observations_from_stale_snapshots() -> None
     assert data["sources"] == ["SRC_YOUTUBE"]
     assert data["series"][0]["youtube_views"] == 30
     assert all(row["source_id"] != "SRC_TIKTOK" for row in data["source_metrics"])
+
+
+def test_official_resource_demand_answers_korean_keywords_and_area_filters() -> None:
+    product = {
+        "observations": [
+            {
+                "source_id": "SRC_KTO_RESOURCE_DEMAND",
+                "keyword": "경복궁",
+                "country": None,
+                "area_id": "eden_area_seoul",
+                "bucket_start": "2026-06-01T00:00:00+00:00",
+                "source_score": 60.0,
+            },
+            {
+                "source_id": "SRC_KTO_RESOURCE_DEMAND",
+                "keyword": "경복궁",
+                "country": None,
+                "area_id": "eden_area_seoul",
+                "bucket_start": "2026-07-01T00:00:00+00:00",
+                "source_score": 80.0,
+            },
+            {
+                "source_id": "SRC_KTO_RESOURCE_DEMAND",
+                "keyword": "해운대",
+                "country": None,
+                "area_id": "eden_area_busan",
+                "bucket_start": "2026-07-01T00:00:00+00:00",
+                "source_score": 90.0,
+            },
+        ]
+    }
+    scope = {
+        "keyword": "경복궁",
+        "country": "all",
+        "area_code": "eden_area_seoul",
+        "social_sources": None,
+        "period": "90d",
+        "time_unit": "month",
+    }
+
+    data, availability, reason = build_trend_view(product, scope)
+
+    assert data is not None
+    assert reason is None and availability == Availability.AVAILABLE
+    assert data["sources"] == ["SRC_KTO_RESOURCE_DEMAND"]
+    assert data["interest_index"] == 70.0
+    assert [point["interest_index"] for point in data["series"]] == [60.0, 80.0]
+    assert set(data["source_availability"]) == {"SRC_KTO_RESOURCE_DEMAND"}
+
+    # an explicit social request keeps reporting that sample as missing
+    explicit, explicit_availability, _ = build_trend_view(
+        product, {**scope, "social_sources": ["youtube"]}
+    )
+    assert explicit_availability == Availability.PARTIAL
+    assert explicit["source_availability"]["SRC_YOUTUBE"]["availability"] == "unavailable"
+
+    other_area = build_trend_view(product, {**scope, "area_code": "eden_area_busan"})
+    assert other_area[0] is None and other_area[1] == Availability.UNAVAILABLE
+
+
+def test_youtube_only_responses_do_not_list_the_official_index_without_observations() -> None:
+    product = {
+        "observations": [
+            {
+                "source_id": "SRC_YOUTUBE",
+                "keyword": "Seoul travel",
+                "country": "US",
+                "bucket_start": "2026-08-29T00:00:00+00:00",
+                "view_count": 30,
+            }
+        ]
+    }
+    scope = {
+        "keyword": "Seoul travel",
+        "country": "US",
+        "area_code": None,
+        "social_sources": ["youtube"],
+        "period": "7d",
+        "time_unit": "day",
+    }
+
+    data, _, _ = build_trend_view(product, scope)
+
+    assert data is not None
+    assert set(data["source_availability"]) == {"SRC_YOUTUBE"}

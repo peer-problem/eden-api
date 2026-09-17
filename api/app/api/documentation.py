@@ -234,7 +234,10 @@ FIELD_DESCRIPTIONS = {
         "참고 지수로 인원을 만들지 않습니다."
     ),
     "confidence": "검증된 신뢰도만 허용합니다. 현재 신뢰도 원천이 없어 항상 null.",
-    "method": ("official은 공식 전망. historical_weekday_proxy는 방문 관측에 기반한 참고 지수."),
+    "method": (
+        "official은 공식 전망(지역 요청은 지역 내 관광지들의 공식 집중률 평균이며 sample_count에 "
+        "관광지 수를 표시). historical_weekday_proxy는 방문 관측에 기반한 참고 지수."
+    ),
     "sample_count": "참고 전망의 분포에 사용한 유효 일별 관측 수. 같은 날짜는 한 번 셉니다.",
     "basis": "같은 요일 표본 수와 전체 중앙값 대체 여부 및 장기 연장 설명.",
     "posts": "검색 표본의 게시물 또는 영상 관측 수. 날짜별 합계는 고유 게시물 수가 아닙니다.",

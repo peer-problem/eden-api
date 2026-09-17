@@ -18,7 +18,10 @@ from app.sources.social import REQUESTABLE_SOCIAL_SOURCES
 
 PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90}
 SOURCE_NAMES = REQUESTABLE_SOCIAL_SOURCES
-ALWAYS_INCLUDED_SOURCES = {"SRC_NAVER_TREND", "SRC_KTO_RESOURCE_DEMAND"}
+# Official KTO resource demand indexes are keyed by attraction name and area, so
+# they answer Korean keywords and area filters that the social samples cannot.
+# They join a response whenever they have observations for the request.
+ALWAYS_INCLUDED_SOURCES = {"SRC_KTO_RESOURCE_DEMAND"}
 RISING_MIN_OBSERVATIONS_PER_WINDOW = 2
 
 
@@ -207,14 +210,17 @@ def build_trend_view(
     if not isinstance(observations, list):
         return None, Availability.UNAVAILABLE, "게시된 social signal 관측이 없습니다."
     requested_sources = set(scope.get("social_sources") or ["youtube"])
-    selected_source_ids = {SOURCE_NAMES[name] for name in requested_sources if name in SOURCE_NAMES}
+    requested_source_ids = {
+        SOURCE_NAMES[name] for name in requested_sources if name in SOURCE_NAMES
+    }
+    allowed_source_ids = requested_source_ids | ALWAYS_INCLUDED_SOURCES
     keyword = normalize_keyword(str(scope["keyword"]))
     candidates = [
         row
         for row in observations
         if isinstance(row, dict)
         and normalize_keyword(str(row.get("keyword", ""))).casefold() == keyword.casefold()
-        and row.get("source_id") in selected_source_ids
+        and row.get("source_id") in allowed_source_ids
         and (scope.get("country") == "all" or row.get("country") == scope.get("country"))
         and (scope.get("area_code") is None or row.get("area_id") == scope.get("area_code"))
     ]
@@ -225,6 +231,14 @@ def build_trend_view(
     rows = [row for row in candidates if _timestamp(row["bucket_start"]) >= cutoff]
     if not rows:
         return None, Availability.UNAVAILABLE, "요청 기간의 social signal이 없습니다."
+    observed_source_ids = {str(row.get("source_id")) for row in rows}
+    selected_source_ids = requested_source_ids | (ALWAYS_INCLUDED_SOURCES & observed_source_ids)
+    if scope.get("social_sources") is None:
+        # Nobody asked for a specific social sample: report the sources that
+        # answered instead of degrading the response for the default one.
+        selected_source_ids = {
+            source_id for source_id in selected_source_ids if source_id in observed_source_ids
+        } or selected_source_ids
 
     bucket_scores, source_scores = _source_bucket_scores(rows, scope["time_unit"])
     grouped_time: dict[datetime, list[dict[str, Any]]] = defaultdict(list)

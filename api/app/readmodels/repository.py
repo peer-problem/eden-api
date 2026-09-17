@@ -144,6 +144,9 @@ def _request_source_ids(endpoint: str, scope: dict[str, object]) -> tuple[str, .
             for name in names
             if isinstance(name, str) and name in TREND_SOCIAL_SOURCES
         )
+        if scope.get("area_code"):
+            # Area filters are answered by the official KTO resource demand index.
+            source_ids.add("SRC_KTO_RESOURCE_DEMAND")
         return tuple(sorted(source_ids))
     if endpoint == "region_insights":
         selected = scope.get("include")
