@@ -113,6 +113,23 @@ def preserve_collection_cursor(
     return {**seeded_evidence, "collection_cursor": cursor}
 
 
+def source_enabled_by_code(source_id: str) -> bool:
+    return source_id not in EXCLUDED_SOCIAL_SOURCE_IDS | DISABLED_SOURCES
+
+
+def sync_source_enablement(session: Session) -> dict[str, bool]:
+    """Align registry.enabled with the code's source scope; return what changed."""
+    changed: dict[str, bool] = {}
+    now = datetime.now(UTC).replace(tzinfo=None)
+    for source in session.scalars(select(SourceRegistry)).all():
+        expected = source_enabled_by_code(source.source_id)
+        if bool(source.enabled) != expected:
+            source.enabled = expected
+            source.updated_at = now
+            changed[source.source_id] = expected
+    return changed
+
+
 def seed_reference_data(session: Session) -> None:
     now = datetime.now(UTC)
     active_areas = session.execute(
@@ -241,8 +258,9 @@ def seed_reference_data(session: Session) -> None:
                 "created_at",
             }
         }
-        if source.source_id in EXCLUDED_SOCIAL_SOURCE_IDS | DISABLED_SOURCES:
-            source_update["enabled"] = False
+        # Enablement is a code decision (DISABLED_SOURCES); keep the registry in
+        # step in both directions so a re-enabled source actually gets scheduled.
+        source_update["enabled"] = values["enabled"]
         session.execute(
             insert(SourceRegistry).values(**values).on_duplicate_key_update(**source_update)
         )

@@ -23,14 +23,13 @@ DISABLED_SOURCES = frozenset(
         "SRC_DOUYIN",
         "SRC_XIAOHONGSHU",
         "SRC_LINE",
-        "SRC_TOUR_EN",
-        "SRC_TOUR_JA",
-        "SRC_TOUR_ZH_CN",
-        "SRC_KTO_PLACE_HUB",
-        "SRC_KTO_PLACE_RELATED",
         "SRC_TOURISM_ADMISSION",
     }
 )
+# TourAPI language catalogs and KTO hub/related places were paused on
+# 2026-09-11 and re-enabled on 2026-09-17 (team decision): the place detail
+# and recommendation endpoints declare translations, hubs and related places.
+TOUR_LANGUAGE_SOURCES = ("SRC_TOUR_KO", "SRC_TOUR_EN", "SRC_TOUR_JA", "SRC_TOUR_ZH_CN")
 EXPANSION_SOURCES = frozenset(
     {
         "SRC_TOUR_KO",
@@ -46,6 +45,11 @@ DAY = 86400
 SOURCE_INTERVALS = {
     "SRC_MOIS_ADMIN_CODES": 30 * DAY,
     "SRC_TOUR_KO": DAY,  # Three provinces per batch, nationwide within six days.
+    "SRC_TOUR_EN": DAY,  # Same rotation; only essential places already known in Korean.
+    "SRC_TOUR_JA": DAY,
+    "SRC_TOUR_ZH_CN": DAY,
+    "SRC_KTO_PLACE_HUB": DAY,  # Five sigungu per batch, monthly hub rankings.
+    "SRC_KTO_PLACE_RELATED": DAY,  # Five hub places per batch.
     "SRC_YOUTUBE": DAY,
     "SRC_KMA_FORECAST": 3 * 3600,
     "SRC_SEMAS_SHOPS": 6 * 3600,  # Twenty places per batch, ~480 within a week.

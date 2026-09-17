@@ -264,3 +264,12 @@ def test_tour_detail_operations_are_bounded_and_marked_as_details() -> None:
     assert first["params"] == {"MobileOS": "ETC", "MobileApp": "EDEN", "contentId": "0"}
     assert first["watermark"] == {"response_field": "modifiedtime", "format": "%Y%m%d%H%M%S"}
     assert first["detail"] is True and first["paginate"] is False and first["max_pages"] == 1
+
+
+def test_language_catalogs_share_the_tourapi_batch_and_budget() -> None:
+    from app.sources.plans import scheduler_batch_size
+    from app.sources.registry import _batched_request_budget
+
+    for source_id in ("SRC_TOUR_EN", "SRC_TOUR_JA", "SRC_TOUR_ZH_CN"):
+        assert scheduler_batch_size(source_id) == scheduler_batch_size("SRC_TOUR_KO")
+        assert _batched_request_budget(source_id, 5) == _batched_request_budget("SRC_TOUR_KO", 5)

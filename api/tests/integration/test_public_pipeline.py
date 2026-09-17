@@ -1952,3 +1952,43 @@ def test_empty_source_overview_is_served_as_not_provided(pipeline: Pipeline) -> 
     response = pipeline.client.get(f"/v1/places/{PLACE_ID}")
     assert response.status_code == 200
     assert response.json()["data"]["overview"] is None
+
+
+def test_scheduler_start_syncs_registry_enablement_with_the_code(pipeline: Pipeline) -> None:
+    from app.reference import sync_source_enablement
+
+    with pipeline.session_factory.begin() as session:
+        session.get(SourceRegistry, "SRC_TOUR_JA").enabled = False
+        session.get(SourceRegistry, "SRC_KTO_PLACE_HUB").enabled = False
+
+    with pipeline.session_factory.begin() as session:
+        changed = sync_source_enablement(session)
+    # the fixture seeds every endpoint source as enabled; code-disabled ones flip off
+    assert changed["SRC_TOUR_JA"] is True and changed["SRC_KTO_PLACE_HUB"] is True
+    assert changed["SRC_NAVER_TREND"] is False
+
+    with pipeline.session_factory() as session:
+        assert session.get(SourceRegistry, "SRC_TOUR_JA").enabled is True
+        assert sync_source_enablement(session) == {}
+
+
+def test_language_catalog_scope_translates_only_the_korean_essential_places(
+    pipeline: Pipeline,
+) -> None:
+    from app.scheduler import runtime
+
+    with pipeline.session_factory.begin() as session:
+        korean = session.scalar(
+            select(PlaceLocalization).where(
+                PlaceLocalization.eden_place_id == PLACE_ID, PlaceLocalization.language == "ko"
+            )
+        )
+        korean.overview = None  # would trigger a detail run for the Korean catalog only
+
+    scope = runtime._runtime_scope("SRC_TOUR_JA", {}, pipeline.session_factory)
+
+    assert "detail_run" not in scope
+    assert scope["new_places_limit"] == 0
+    assert all(op["operation"] == "areaBasedList2" for op in scope["operations"])
+    assert scope["allowed_content_ids"]["1"] == ["tour-1"]
+    assert all(not ids for code, ids in scope["allowed_content_ids"].items() if code != "1")

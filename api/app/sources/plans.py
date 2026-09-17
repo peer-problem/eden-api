@@ -552,7 +552,7 @@ def tour_detail_operations(content_ids: list[str]) -> list[dict[str, Any]]:
 
 def scheduler_batch_size(source_id: str) -> int:
     """Operations the scheduler hands one run of a province-rotating source."""
-    return TOUR_KO_AREAS_PER_RUN if source_id == "SRC_TOUR_KO" else KMA_OPERATIONS_PER_RUN
+    return TOUR_KO_AREAS_PER_RUN if source_id.startswith("SRC_TOUR_") else KMA_OPERATIONS_PER_RUN
 
 
 def rotating_batch(operations: list[Any], cursor: int, batch_size: int) -> list[Any]:

@@ -246,7 +246,9 @@ def _runtime_scope(
         from app.sources.plans import social_refresh_scope
 
         return social_refresh_scope(source_id)
-    if source_id in {"SRC_KMA_FORECAST", "SRC_TOUR_KO", "SRC_KTO_REGIONAL_VISITORS"}:
+    from app.sources.essential import TOUR_LANGUAGE_SOURCES
+
+    if source_id in {"SRC_KMA_FORECAST", "SRC_KTO_REGIONAL_VISITORS", *TOUR_LANGUAGE_SOURCES}:
         from app.repositories.models import RegionalVisitObservation
         from app.sources.plans import public_data_refresh_scope
 
@@ -309,11 +311,13 @@ def _runtime_scope(
                     ).strftime("%Y%m%d")
                 return scope
             operations = scope.get("operations", [])
-            if source_id == "SRC_TOUR_KO":
+            if source_id in TOUR_LANGUAGE_SOURCES:
                 from app.sources.plans import TOUR_KO_DETAILS_PER_RUN, tour_detail_operations
 
                 selected_ids = essential_place_ids(session)
-                missing_overview = list(
+                # Overviews are collected in Korean only; language catalogs
+                # translate the essential places selected from the Korean catalog.
+                missing_overview = [] if source_id != "SRC_TOUR_KO" else list(
                     session.scalars(
                         select(PlaceSourceMap.external_content_id)
                         .join(
@@ -346,7 +350,9 @@ def _runtime_scope(
                     .join(Place, Place.eden_place_id == PlaceSourceMap.eden_place_id)
                     .join(Area, Area.eden_area_id == Place.area_id)
                     .where(
-                        Place.eden_place_id.in_(selected_ids), PlaceSourceMap.source_id == source_id
+                        Place.eden_place_id.in_(selected_ids),
+                        # TourAPI content ids are shared across its language services.
+                        PlaceSourceMap.source_id == "SRC_TOUR_KO",
                     )
                 ).all()
                 from app.sources.plans import KTO_TOURAPI_AREA_TO_MOIS_PREFIX
@@ -368,7 +374,8 @@ def _runtime_scope(
                     )
                 )
                 scope["allowed_content_ids"] = allowed
-                scope["new_places_limit"] = 30
+                # Only the Korean catalog may add places; translations attach to them.
+                scope["new_places_limit"] = 30 if source_id == "SRC_TOUR_KO" else 0
             from app.sources.plans import rotating_batch, scheduler_batch_size
 
             batch = rotating_batch(operations, cursor, scheduler_batch_size(source_id))
@@ -1095,6 +1102,26 @@ def run_alert_enrichment(
         connection.close()
 
 
+def _sync_source_enablement(factory: sessionmaker[Session]) -> dict[str, bool]:
+    """Keep registry.enabled equal to the code's source scope before jobs are registered."""
+    from app.reference import sync_source_enablement
+
+    try:
+        with factory() as session:
+            changes = sync_source_enablement(session)
+            if changes:
+                session.commit()
+    except Exception:
+        logger.exception("source_enablement_sync_failed", extra={"job_type": "source"})
+        return {}
+    if changes:
+        logger.info(
+            "source_enablement_synced",
+            extra={"changes": changes, "job_type": "source"},
+        )
+    return changes
+
+
 def start_scheduler(settings: Settings, factory: sessionmaker[Session]) -> SchedulerRuntime | None:
     engine: Engine = factory.kw["bind"]
     leader_connection = _open_leader_connection(engine)
@@ -1105,6 +1132,7 @@ def start_scheduler(settings: Settings, factory: sessionmaker[Session]) -> Sched
         leader_connection.close()
         return None
     IngestionService(factory).recover_abandoned_runs()
+    _sync_source_enablement(factory)
     scheduler = BackgroundScheduler(
         timezone=settings.EDEN_TIMEZONE,
         executors={
