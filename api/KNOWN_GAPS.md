@@ -42,4 +42,5 @@
 
 ## 운영 참고
 
-- 6055a3e에서 soak 필수 서비스와 `eden-scheduler.service` 의존성에서 `mariadb.service`를 뺐다. 운영 VPS의 MariaDB는 같은 호스트에 있으므로 부팅 순서는 `Restart=always`가 흡수하지만, soak 증거는 더 이상 MariaDB 재시작을 잡지 않는다.
+- 6055a3e에서 soak 필수 서비스와 `eden-scheduler.service` 의존성에서 `mariadb.service`를 뺐다. 2026-09-17에 옮긴 새 VPS도 MariaDB가 같은 호스트에 있다. 부팅 순서는 `Restart=always`가 흡수하지만 soak 증거는 더 이상 MariaDB 재시작을 잡지 않는다.
+- 2026-09-17 배포(release `20260917T014213Z`) 직후 확인: 다시 켠 원천 5개 실행 성공, 허브·연관 매핑 첫 배치 870곳. NAVER·소개문·여객 수·대사관 공지는 각 원천의 다음 실행(같은 날 오후·저녁) 이후 채워진다.

@@ -8,7 +8,7 @@
 | API 문서 | https://api.edenapi.org/docs | 운영 VPS |
 | OpenAPI | https://api.edenapi.org/openapi.json | 운영 VPS |
 
-## API 완성도 현황 (2026-09-17)
+## API 완성도 현황 (2026-09-17, API v0.3.0)
 
 공개 엔드포인트 8개를 "설계한 데이터를 실제로 수집·조합·가공해서 내는가" 기준으로 점검한 결과입니다. 응답에 하드코딩된 값은 없습니다. 아래 "미제공"은 어떤 공개 원천도 그 값을 주지 않아 항상 `null`인 필드이며, 가용성 판정에서 제외되어 있습니다. 목록과 사유는 [api/README.md의 Fields That Are Not Provided](api/README.md#fields-that-are-not-provided), 보류한 결정은 [api/KNOWN_GAPS.md](api/KNOWN_GAPS.md)에 있습니다.
 
@@ -31,7 +31,7 @@
 .agents/       작업 기록과 로컬 자료, Git 제외
 .ops/          run.sh와 deploy.sh, Git 제외
 dashboard/    React + TypeScript + Vite
-api/          FastAPI 코드, 마이그레이션, 테스트, Python 의존성
+api/          FastAPI 코드, 마이그레이션, 테스트, Python 의존성 (README, CHANGELOG, KNOWN_GAPS 포함)
 .env           공통 환경 설정 원본, Git 제외
 .gitignore
 README.md
