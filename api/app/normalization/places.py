@@ -129,6 +129,14 @@ def _upsert_place(
     namespace: str,
 ) -> str:
     now = datetime.now(UTC).replace(tzinfo=None)
+    if namespace == "KTO_TATS":
+        from app.normalization.place_crosswalk import attach_place_alias, match_tour_place
+
+        twin_id = match_tour_place(session, title, area_id, lat, lng)
+        if twin_id is not None:
+            # The hub/related row names a TourAPI place already served publicly;
+            # relations attach there instead of to a separate TATS-only row.
+            return attach_place_alias(session, source_id, external_id, twin_id, raw.raw_record_id)
     place_id = _existing_place_id(session, source_id, external_id, lat, lng, namespace)
     existing_place = session.get(Place, place_id)
     incoming_area = session.get(Area, area_id)

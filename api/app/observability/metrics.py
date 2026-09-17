@@ -206,7 +206,15 @@ _API_SAMPLE_MAX_AGE_SECONDS = 300.0
 
 _RUN_STATUSES = frozenset({"succeeded", "partial", "failed", "skipped_locked"})
 _JOB_TYPES = frozenset(
-    {"source", "product", "dead_letter", "snapshot_retention", "capacity", "alert"}
+    {
+        "source",
+        "product",
+        "dead_letter",
+        "snapshot_retention",
+        "capacity",
+        "alert",
+        "place_crosswalk",
+    }
 )
 _LOCK_TYPES = frozenset({"job", "heavy_write"})
 _QUERY_OPERATIONS = frozenset(

@@ -4,7 +4,7 @@
 
 ## 팀 결정이 필요한 항목
 
-- **관광지 원천 5개 재활성화** (`SRC_TOUR_EN`, `SRC_TOUR_JA`, `SRC_TOUR_ZH_CN`, `SRC_KTO_PLACE_HUB`, `SRC_KTO_PLACE_RELATED`): 2026-09-11 범위 결정으로 `DISABLED_SOURCES`에 있다. DB에는 언어별 번역 약 9천 건과 관계 32만 행이 남아 있어 있는 관광지는 그대로 조회된다. 허브·연관은 KTO_TATS 아이디 체계라 TourAPI(KTO_CONTENT) 관광지와 잇는 매핑 코드 없이는 켜도 `hub`, `related_places`가 채워지지 않는다.
+- ~~**관광지 원천 5개 재활성화**~~: 2026-09-17 결정으로 다시 켰고, KTO_TATS↔TourAPI 매핑(`app/normalization/place_crosswalk.py`)을 구현했다. 이름이 같은 시도 안에서 유일하지 않거나 좌표가 1km 넘게 어긋나는 행은 매핑하지 않으므로 일부 관광지는 `hub`, `related_places`가 계속 비어 있을 수 있다. 매핑률은 배포 후 운영 DB에서 확인한다.
 - ~~**관광지 소개문(`overview`)**~~: 2026-09-17 결정으로 구현했다. essential 관광지의 소개문을 detailCommon2로 한 실행에 60곳씩 수집한다(무료 쿼터 1,000/일 안).
 - **공지 번역·요약**: `ALERT_ENRICHMENT_BATCH_SIZE=0`으로 유료 LLM 보강이 꺼져 있다. 켜면 시간당 2건, 하루 최대 48건 처리한다.
 - **시군구 방문 전망**: 6055a3e 이후 지역 요청은 특정 관광지의 집중률을 지역 값으로 쓰지 않는다. KTO 예측 행은 모두 관광지 단위라 시군구 요청은 공식 예측 없이 `unavailable`이 되고, 시도 요청은 과거 동일 요일 참고값을 쓴다. 시군구 단위 공식 값을 내려면 관광지 집중률의 집계 규칙(예: 평균)을 제품으로 정해야 한다.

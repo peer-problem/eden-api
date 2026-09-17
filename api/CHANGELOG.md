@@ -2,6 +2,7 @@
 
 ## 미배포
 
+- KTO 중심 관광지·연관 관광지가 TourAPI 관광지에 붙지 않아 관광지 상세의 `hub`, `related_places`와 추천의 `related_places`가 항상 비어 있던 문제를 고쳤다. 두 KTO 원천은 TATS 코드로, 상세 API는 TourAPI content id로 관광지를 식별하는데, 같은 시도 안에서 정규화한 한국어 이름이 유일하게 일치하고 좌표가 있으면 1km 안에서 일치할 때만 같은 관광지로 본다(좌표만으로는 합치지 않는다). 새로 수집되는 허브·연관 행은 TourAPI 관광지에 바로 붙고, 이미 만들어진 TATS 관광지 행은 스케줄러 잡(`eden:place:crosswalk`, 6시간마다 최대 3,000건)이 canonical로 이어 붙이며 읽기 경로는 이어 붙인 행의 관계를 함께 조회한다.
 - 2026-09-11에 껐던 관광지 원천 5개(TourAPI 영어·일본어·중국어 간체, KTO 중심 관광지, KTO 연관 관광지)를 다시 켰다. 언어별 카탈로그는 한국어 카탈로그로 고른 essential 관광지의 번역만 붙이고 새 관광지를 만들지 않는다(시도 3개씩 순환, 새 관광지 한도 0). 레지스트리의 enabled는 코드의 원천 범위를 따르며 스케줄러가 시작할 때 맞춘다.
 - 관광지 상세의 `overview`가 항상 null이던 문제를 고쳤다. TourAPI 목록(areaBasedList2)에는 소개문이 없으므로, essential 관광지 중 소개문이 없는 곳이 있으면 TourAPI 실행이 시도 목록 대신 상세(detailCommon2)를 한 실행에 60곳씩 수집해 한국어 소개문을 채운다. 원천에 소개문이 없는 관광지는 빈 값으로 표시해 다시 요청하지 않으며 API에서는 null로 낸다. 목록 갱신이 저장된 소개문을 지우지 않는다.
 - 원천이 없어 영구 null인 필드(지역 인사이트의 avg_stay_nights·age_index, 방한시장의 passengers, 추천의 estimated_budget_krw) 때문에 세 엔드포인트가 항상 partial이던 판정을 바꿨다. 이 필드들은 "미제공"으로 문서화하고 가용성 판정에서 제외하며, 응답 구조와 값(null)은 그대로다. 미제공 필드 목록은 README의 "Fields That Are Not Provided"에 있다.

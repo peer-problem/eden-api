@@ -1992,3 +1992,229 @@ def test_language_catalog_scope_translates_only_the_korean_essential_places(
     assert all(op["operation"] == "areaBasedList2" for op in scope["operations"])
     assert scope["allowed_content_ids"]["1"] == ["tour-1"]
     assert all(not ids for code, ids in scope["allowed_content_ids"].items() if code != "1")
+
+
+def _tourapi_map_for_museum(session: Session) -> None:
+    """The fixture museum has no TourAPI identity; give it one for crosswalk tests."""
+    now = datetime.now(UTC).replace(tzinfo=None)
+    session.add(
+        PlaceSourceMap(
+            source_id="SRC_TOUR_KO",
+            external_content_id="tour-2",
+            eden_place_id=RELATED_PLACE_ID,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    session.flush()
+
+
+def _minted_tats_place(
+    session: Session,
+    external_id: str,
+    title: str,
+    *,
+    area_id: str = AREA_ID,
+    lat: Decimal | None = None,
+    lng: Decimal | None = None,
+    source_id: str = "SRC_KTO_PLACE_HUB",
+) -> str:
+    from app.normalization.place_crosswalk import tats_place_id
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    place_id = tats_place_id(external_id)
+    session.add(
+        Place(
+            eden_place_id=place_id,
+            area_id=area_id,
+            category=None,
+            lat=lat,
+            lng=lng,
+            merge_status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    session.add(
+        PlaceSourceMap(
+            source_id=source_id,
+            external_content_id=external_id,
+            eden_place_id=place_id,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    session.add(
+        PlaceLocalization(
+            eden_place_id=place_id,
+            language="ko",
+            title=title,
+            address=None,
+            overview=None,
+            is_fallback=False,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    session.flush()
+    return place_id
+
+
+def test_crosswalk_matches_a_tats_row_to_its_tourapi_place_only_when_sure(
+    pipeline: Pipeline,
+) -> None:
+    from app.normalization.place_crosswalk import match_tour_place
+
+    with pipeline.session_factory() as session:
+        assert match_tour_place(session, "경복궁", AREA_ID, None, None) == PLACE_ID
+        assert match_tour_place(session, " 경복궁 ", AREA_ID, None, None) == PLACE_ID
+        # coordinates on both sides must agree
+        near = match_tour_place(session, "경복궁", AREA_ID, Decimal("37.5800"), Decimal("126.9775"))
+        far = match_tour_place(session, "경복궁", AREA_ID, Decimal("35.1000"), Decimal("129.0000"))
+        assert near == PLACE_ID and far is None
+        assert match_tour_place(session, "없는관광지", AREA_ID, None, None) is None
+        assert match_tour_place(session, "", AREA_ID, None, None) is None
+
+
+def test_hub_and_related_rows_attach_to_the_tourapi_place(pipeline: Pipeline) -> None:
+    from types import SimpleNamespace
+
+    from app.normalization.place_crosswalk import alias_place_ids, tats_place_id
+    from app.normalization.places import _upsert_place
+
+    with pipeline.session_factory.begin() as session:
+        # A hub row for 경복궁 arrives with the TATS code T-1.
+        place_id = _upsert_place(
+            session,
+            SimpleNamespace(raw_record_id=None, source_updated_at=None),
+            "SRC_KTO_PLACE_HUB",
+            "T-1",
+            AREA_ID,
+            "경복궁",
+            "ko",
+            "자연관광",
+            Decimal("37.5796"),
+            Decimal("126.9770"),
+            None,
+            None,
+            "KTO_TATS",
+        )
+        assert place_id == PLACE_ID
+        mapping = session.scalar(
+            select(PlaceSourceMap).where(
+                PlaceSourceMap.source_id == "SRC_KTO_PLACE_HUB",
+                PlaceSourceMap.external_content_id == "T-1",
+            )
+        )
+        assert mapping.eden_place_id == PLACE_ID
+        assert session.get(Place, tats_place_id("T-1")) is None  # never minted
+        place = session.get(Place, PLACE_ID)
+        assert place.category == "A02010100"  # TourAPI attributes untouched
+
+    with pipeline.session_factory() as session:
+        assert alias_place_ids(session, PLACE_ID) == [PLACE_ID]
+
+
+def test_backfill_retires_minted_tats_rows_and_reads_serve_their_relations(
+    pipeline: Pipeline,
+) -> None:
+    from app.normalization.place_crosswalk import (
+        alias_place_ids,
+        crosswalk_tats_places,
+        tats_place_id,
+    )
+
+    audit = datetime.now(UTC).replace(tzinfo=None)
+    with pipeline.session_factory.begin() as session:
+        _tourapi_map_for_museum(session)
+        palace_alias = _minted_tats_place(session, "T-palace", "경복궁")
+        museum_alias = _minted_tats_place(
+            session, "T-museum", "국립민속박물관", source_id="SRC_KTO_PLACE_RELATED"
+        )
+        unknown_alias = _minted_tats_place(session, "T-unknown", "이름없는곳")
+        session.add(
+            PlaceRelation(
+                from_place_id=palace_alias,
+                to_place_id=palace_alias,
+                relation_type="hub",
+                rank=1,
+                score=None,
+                **_fact_audit("SRC_KTO_PLACE_HUB", audit),
+            )
+        )
+        session.add(
+            PlaceRelation(
+                from_place_id=palace_alias,
+                to_place_id=museum_alias,
+                relation_type="related",
+                rank=1,
+                score=Decimal("100.0000"),
+                **_fact_audit("SRC_KTO_PLACE_RELATED", audit),
+            )
+        )
+
+    with pipeline.session_factory.begin() as session:
+        result = crosswalk_tats_places(session)
+    assert result == {"examined": 3, "matched": 2}
+
+    with pipeline.session_factory() as session:
+        assert alias_place_ids(session, PLACE_ID) == [PLACE_ID, palace_alias]
+        retired = session.get(Place, palace_alias)
+        assert retired.merge_status == "merged" and retired.canonical_place_id == PLACE_ID
+        assert session.get(Place, museum_alias).canonical_place_id == RELATED_PLACE_ID
+        assert session.get(Place, unknown_alias).canonical_place_id is None
+        assert session.get(Place, tats_place_id("T-unknown")).merge_status == "active"
+        # a second pass finds nothing left to examine among matched rows
+        assert crosswalk_tats_places(session) == {"examined": 1, "matched": 0}
+
+    response = pipeline.client.get(f"/v1/places/{PLACE_ID}", params={"include": ["hub", "related"]})
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["hub"] == {"is_hub": True, "rank": 1, "score_as_of": data["hub"]["score_as_of"]}
+    assert [row["content_id"] for row in data["related_places"]] == [RELATED_PLACE_ID]
+    assert data["related_places"][0]["title"] == "국립민속박물관"
+
+    # the retired TATS id resolves to the TourAPI place
+    alias_response = pipeline.client.get(f"/v1/places/{palace_alias}")
+    assert alias_response.status_code == 200
+    assert alias_response.json()["data"]["content_id"] == PLACE_ID
+
+
+def test_recommendations_credit_relations_recorded_on_retired_aliases(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.normalization.place_crosswalk import crosswalk_tats_places
+    from app.products import recommendations
+
+    audit = datetime.now(UTC).replace(tzinfo=None)
+    with pipeline.session_factory.begin() as session:
+        _tourapi_map_for_museum(session)
+        palace_alias = _minted_tats_place(session, "T-palace-2", "경복궁")
+        museum_alias = _minted_tats_place(
+            session, "T-museum-2", "국립민속박물관", source_id="SRC_KTO_PLACE_RELATED"
+        )
+        session.add(
+            PlaceRelation(
+                from_place_id=palace_alias,
+                to_place_id=museum_alias,
+                relation_type="related",
+                rank=1,
+                score=Decimal("100.0000"),
+                **_fact_audit("SRC_KTO_PLACE_RELATED", audit + timedelta(days=1)),
+            )
+        )
+        crosswalk_tats_places(session)
+
+    candidates = []
+    monkeypatch.setattr(
+        recommendations.SnapshotPublisher,
+        "publish",
+        lambda _self, candidate: candidates.append(candidate),
+    )
+    recommendations.build_recommendation_snapshot(pipeline.session_factory)
+
+    feature = next(
+        feature for feature in candidates[0].data["features"] if feature["place_id"] == PLACE_ID
+    )
+    assert [row["content_id"] for row in feature["related_places"]] == [RELATED_PLACE_ID]
+    assert feature["related_places"][0]["title"] == "국립민속박물관"

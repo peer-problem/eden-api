@@ -1057,6 +1057,47 @@ def run_snapshot_retention(
         connection.close()
 
 
+PLACE_CROSSWALK_BATCH = 3000
+PLACE_CROSSWALK_MAX_SECONDS = 40.0
+
+
+@observe_scheduler_job("place_crosswalk")
+def run_place_crosswalk(
+    settings: Settings, factory: sessionmaker[Session]
+) -> dict[str, int] | None:
+    """Attach KTO hub/related rows minted before the crosswalk to their TourAPI places."""
+    from app.normalization.place_crosswalk import crosswalk_tats_places
+
+    engine: Engine = factory.kw["bind"]
+    connection = _open_job_lock_connection(engine)
+    try:
+        with MariaDBAdvisoryLock(connection, "eden:place:crosswalk") as lock:
+            if not lock.acquired:
+                return None
+            deadline = perf_counter() + PLACE_CROSSWALK_MAX_SECONDS
+            with factory() as session:
+                result = crosswalk_tats_places(
+                    session,
+                    limit=PLACE_CROSSWALK_BATCH,
+                    deadline=deadline,
+                    clock=perf_counter,
+                )
+                session.commit()
+            logger.info(
+                "place_crosswalk_batch",
+                extra={**result, "job_type": "place_crosswalk", "outcome": "completed"},
+            )
+            return result
+    except Exception:
+        logger.exception(
+            "place_crosswalk_failed",
+            extra={"job_type": "place_crosswalk", "outcome": "failed"},
+        )
+        return None
+    finally:
+        connection.close()
+
+
 @observe_scheduler_job("alert")
 def run_alert_enrichment(
     settings: Settings,
@@ -1210,6 +1251,16 @@ def start_scheduler(settings: Settings, factory: sessionmaker[Session]) -> Sched
         args=[settings, factory],
         id="eden:snapshot:retention",
         next_run_time=now + timedelta(seconds=120),
+        replace_existing=True,
+        executor="product",
+    )
+    scheduler.add_job(
+        run_place_crosswalk,
+        "interval",
+        seconds=6 * 3600,
+        args=[settings, factory],
+        id="eden:place:crosswalk",
+        next_run_time=now + timedelta(seconds=300),
         replace_existing=True,
         executor="product",
     )
