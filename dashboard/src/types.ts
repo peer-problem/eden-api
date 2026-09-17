@@ -60,6 +60,12 @@ export interface Insights {
     place_category_counts: Record<string, number>;
     scope: string;
   } | null;
+  comparison?: {
+    type: 'previous_period' | 'previous_year';
+    baseline_start: string;
+    baseline_end: string;
+    change_rate: number | null;
+  } | null;
 }
 export interface SeriesPoint {
   period_start: string;
@@ -76,13 +82,21 @@ export interface Timeseries {
 }
 export interface ForecastDay extends Block {
   date: string;
+  source_concentration_rate: number | null;
   demand_score: number | null;
   expected_visitors: number | null;
   method: string | null;
   basis_period: { start: string; end: string } | null;
   sample_count: number | null;
   basis: string | null;
-  weather: { temperature_c: number | null; condition: string | null } | null;
+  weather: (Block & {
+    temperature_c: number | null;
+    precipitation_probability_pct: number | null;
+    condition: string | null;
+    grid_source: string;
+  }) | null;
+  festivals: string[] | null;
+  holiday: boolean | null;
 }
 export interface Forecast {
   daily: ForecastDay[];
@@ -95,6 +109,22 @@ export interface Market {
   visitor_change_rate: number | null;
   arriving_flights: number | null;
   passengers: number | null;
+  flight_schedule: (Block & {
+    forecast_days: number;
+    basis_period: { start: string; end: string } | null;
+    flights: number | null;
+    change_rate: number | null;
+    major_routes: { origin: string; destination: string; flights: number }[];
+  }) | null;
+  tourism_balance_usd: number | null;
+  tourism_balance_scope: 'KR_total' | null;
+  tourism_balance_period: string | null;
+  social_interest: Record<string, Block & {
+    semantics: string | null;
+    posts: number | null;
+    views: number | null;
+    score: number | null;
+  }> | null;
   inbound_score: number | null;
   fx:
     | (Block & {
@@ -115,6 +145,7 @@ export interface Notice {
   title: string;
   title_original: string;
   summary: string | null;
+  translation_model: string | null;
   fallback: boolean;
   published_at: string;
   source_name: string;
@@ -135,10 +166,13 @@ export interface Trend {
     observed_at: string | null;
     posts: number | null;
     views: number | null;
+    search_ratio: number | null;
     score: number | null;
   })[];
+  source_availability: Record<string, Block>;
   series: {
     timestamp: string;
+    search_ratio: number | null;
     youtube_views: number | null;
     interest_index: number | null;
   }[];
@@ -160,6 +194,7 @@ export interface Recommendation {
 }
 export interface Recommendations {
   recommendations: Recommendation[];
+  applied_constraints: Record<string, unknown>;
   unapplied_inputs: { field: string; reason: string; value: unknown }[];
 }
 export interface Place {
@@ -168,6 +203,7 @@ export interface Place {
   category: string | null;
   address: string | null;
   overview: string | null;
+  hub: { is_hub: boolean; rank: number | null; score_as_of: string | null } | null;
   location: { lat: number; lng: number } | null;
   language: string;
   requested_language: string;
@@ -177,6 +213,6 @@ export interface Place {
     | { shop_id: string; name: string; category: string; distance_m: number }[]
     | null;
   related_places:
-    | { content_id: string; title: string; relation_type: string }[]
+    | { content_id: string; title: string; relation_type: string; score: number; score_as_of: string }[]
     | null;
 }

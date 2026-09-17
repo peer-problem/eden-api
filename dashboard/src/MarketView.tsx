@@ -131,16 +131,18 @@ export default function MarketView({
                 <td>{number(m.passengers)}</td>
                 <td>
                   {number(m.fx?.krw_rate)}
-                  <span className="cell-detail">
-                    {m.fx?.currency} · {date(m.fx?.rate_date)}
-                  </span>
+                  {m.fx && (
+                    <span className="cell-detail">
+                      {m.fx.currency} / {date(m.fx.rate_date)}
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
           </DataTable>
         </State>
         <p className="section-note">
-          방문·항공·환율의 기준일은 다를 수 있습니다. 국가를 선택하면 지표별
+          방문, 항공, 환율의 기준일은 다를 수 있습니다. 국가를 선택하면 지표별
           출처를 확인할 수 있습니다.
         </p>
       </Section>
@@ -202,7 +204,12 @@ function Notices({
                   {item.title}
                 </a>
               </h3>
-              {item.summary && <p>{item.summary}</p>}
+              {item.summary && (
+                <details>
+                  <summary>{item.translation_model ? '저장된 AI 요약 보기' : '요약 보기'}</summary>
+                  <p>{item.summary}</p>
+                </details>
+              )}
               {item.fallback && (
                 <span className="muted">원문 제공 · {item.language}</span>
               )}

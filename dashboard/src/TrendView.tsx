@@ -1,7 +1,7 @@
 import { Button, HTMLSelect, InputGroup } from '@blueprintjs/core';
 import { useEffect, useState } from 'react';
 import { useResource } from './api';
-import { countries, date, number } from './data';
+import { countries, date, number, regions } from './data';
 import type { Trend } from './types';
 import {
   DataTable,
@@ -25,14 +25,23 @@ export default function TrendView({ params, update, showSources }: ViewProps) {
   const period = ['7d', '30d', '90d'].includes(params.get('trendPeriod') || '')
     ? params.get('trendPeriod')!
     : '30d';
+  const officialKeyword = ['관광서비스수요', '문화자연자원 수요'].includes(keyword);
+  const area = regions.some((r) => r.code === params.get('trendArea'))
+    ? params.get('trendArea')!
+    : 'all';
   const query = new URLSearchParams({
     keyword,
-    country,
+    country: officialKeyword ? 'all' : country,
     period,
-    social_sources: 'youtube',
   });
+  if (officialKeyword && area !== 'all') query.set('area_code', area);
   const resource = useResource<Trend>(`/trends?${query}`);
   const data = resource.response?.data;
+  const hasSearchRatio = data?.series.some((point) => point.search_ratio != null);
+  const hasYoutubeViews = data?.series.some((point) => point.youtube_views != null);
+  const hasPosts = data?.source_metrics.some((source) => source.posts != null);
+  const hasViews = data?.source_metrics.some((source) => source.views != null);
+  const hasSourceRatio = data?.source_metrics.some((source) => source.search_ratio != null);
   return (
     <>
       <form
@@ -45,6 +54,17 @@ export default function TrendView({ params, update, showSources }: ViewProps) {
           }
         }}
       >
+        <HTMLSelect
+          aria-label="수집된 키워드"
+          value={['Korea travel', '관광서비스수요', '문화자연자원 수요'].includes(keyword) ? keyword : ''}
+          onChange={(e) => update({ keyword: e.target.value, trendArea: '' })}
+          options={[
+            { label: '수집 키워드 선택', value: '', disabled: true },
+            { label: 'Korea travel (YouTube)', value: 'Korea travel' },
+            { label: '관광 서비스 수요 (KTO)', value: '관광서비스수요' },
+            { label: '문화 자연 자원 수요 (KTO)', value: '문화자연자원 수요' },
+          ]}
+        />
         <InputGroup
           aria-label="관광 키워드"
           leftIcon="search"
@@ -54,12 +74,21 @@ export default function TrendView({ params, update, showSources }: ViewProps) {
           placeholder="관광 키워드 입력"
           className="keyword-input"
         />
-        <Picker
-          label="검색 지역"
-          value={country}
-          options={[{ code: 'all', name: '전체 검색 지역' }, ...countries]}
-          onChange={(trendCountry) => update({ trendCountry })}
-        />
+        {officialKeyword ? (
+          <Picker
+            label="관광 지수 지역"
+            value={area}
+            options={[{ code: 'all', name: '전국' }, ...regions]}
+            onChange={(trendArea) => update({ trendArea })}
+          />
+        ) : (
+          <Picker
+            label="검색 지역"
+            value={country}
+            options={[{ code: 'all', name: '전체 검색 지역' }, ...countries]}
+            onChange={(trendCountry) => update({ trendCountry })}
+          />
+        )}
         <HTMLSelect
           aria-label="트렌드 기간"
           value={period}
@@ -81,28 +110,30 @@ export default function TrendView({ params, update, showSources }: ViewProps) {
         </Button>
       </form>
       <p className="section-note">
-        YouTube 검색 결과의 수집 표본입니다. 검색 지역은 시청자의 국적을
-        의미하지 않습니다.
+        {officialKeyword
+          ? 'KTO 관광자원 수요 지수입니다. 지역과 관측 기준일은 응답 출처를 확인하세요.'
+          : '게시된 검색 관측을 조회합니다. YouTube 검색 지역은 시청자의 국적을 의미하지 않으며 NAVER 검색 비율은 절대 검색 횟수가 아닙니다.'}
       </p>
       <State resource={resource}>
         <div className="metric-strip two-metrics">
           <Metric
             label="관심도 지수"
             value={data?.interest_index}
-            detail="제공된 산식 기준 · 0–100"
+            detail="제공된 산식 기준 / 0–100"
           />
           <Metric label="이전 기간 대비" value={data?.change_rate} unit="%" />
         </div>
-        <Section title={`“${keyword}” · 수집 출처`}>
+        <Section title={`“${keyword}” 수집 출처`}>
           <DataTable
             label="키워드 출처별 지표"
-            headers={['출처', '게시물', '조회 수', '점수', '관측일', '상태']}
+            headers={['출처', ...(hasPosts ? ['게시물'] : []), ...(hasViews ? ['조회 수'] : []), ...(hasSourceRatio ? ['검색 비율'] : []), '점수', '관측일', '상태']}
           >
             {data?.source_metrics.map((s) => (
               <tr key={s.source_id}>
                 <td className="mono">{s.source_id}</td>
-                <td>{number(s.posts)}</td>
-                <td>{number(s.views)}</td>
+                {hasPosts && <td>{number(s.posts)}</td>}
+                {hasViews && <td>{number(s.views)}</td>}
+                {hasSourceRatio && <td>{number(s.search_ratio)}</td>}
                 <td>{number(s.score)}</td>
                 <td>{date(s.observed_at)}</td>
                 <td>
@@ -115,24 +146,25 @@ export default function TrendView({ params, update, showSources }: ViewProps) {
             ))}
           </DataTable>
         </Section>
-        <Section title="YouTube 조회 수 추이">
+        <Section title={hasSearchRatio ? '검색 비율 추이' : hasYoutubeViews ? 'YouTube 조회 수 추이' : '관심도 추이'}>
           <LineChart
-            label="수집된 YouTube 조회 수"
-            unit="회"
+            label={hasSearchRatio ? '수집된 검색 비율' : hasYoutubeViews ? '수집된 YouTube 조회 수' : '관심도 지수'}
+            unit={hasYoutubeViews && !hasSearchRatio ? '회' : ''}
             points={(data?.series ?? []).map((p) => ({
               date: p.timestamp,
-              value: p.youtube_views,
+              value: hasSearchRatio ? p.search_ratio : hasYoutubeViews ? p.youtube_views : p.interest_index,
             }))}
           />
           {Boolean(data?.series.length) && (
             <DataTable
-              label="일별 키워드 자료"
-              headers={['기준일', '조회 수', '관심도 지수']}
+              label="키워드 관측 자료"
+              headers={['기준일', ...(hasYoutubeViews ? ['조회 수'] : []), ...(hasSearchRatio ? ['검색 비율'] : []), '관심도 지수']}
             >
               {data?.series.map((p) => (
                 <tr key={p.timestamp}>
                   <td>{date(p.timestamp)}</td>
-                  <td>{number(p.youtube_views)}</td>
+                  {hasYoutubeViews && <td>{number(p.youtube_views)}</td>}
+                  {hasSearchRatio && <td>{number(p.search_ratio)}</td>}
                   <td>{number(p.interest_index)}</td>
                 </tr>
               ))}

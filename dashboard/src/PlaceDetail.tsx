@@ -79,6 +79,18 @@ export default function PlaceDetail({
             </p>
           </section>
         )}
+        {!place?.overview && (
+          <p className="inline-note">현재 게시된 장소 소개문이 없습니다.</p>
+        )}
+        {place?.hub?.is_hub && (
+          <section className="inspector-section">
+            <h3>중심 관광지</h3>
+            <Properties rows={[
+              ['지역 내 순위', number(place.hub.rank)],
+              ['점수 기준일', place.hub.score_as_of ? place.hub.score_as_of.slice(0, 10) : '—'],
+            ]} />
+          </section>
+        )}
         <section className="inspector-section">
           <h3>관련 장소</h3>
           {place?.related_places?.length ? (
@@ -91,12 +103,12 @@ export default function PlaceDetail({
                   endIcon="chevron-right"
                   onClick={() => onSelect(p.content_id)}
                 >
-                  {p.title}
+                  {p.title} ({number(p.score)}점)
                 </Button>
               ))}
             </div>
           ) : (
-            <p>제공된 관련 장소가 없습니다.</p>
+            <p>현재 게시된 관련 장소가 없습니다.</p>
           )}
         </section>
         <section className="inspector-section">
@@ -113,7 +125,7 @@ export default function PlaceDetail({
               ))}
             </ul>
           ) : (
-            <p>제공된 주변 상점이 없습니다.</p>
+            <p>현재 게시된 주변 상점이 없습니다.</p>
           )}
         </section>
         {resource.response && (

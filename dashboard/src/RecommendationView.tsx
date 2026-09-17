@@ -31,10 +31,12 @@ export default function RecommendationView({
   const themes = (params.has('themes') ? params.get('themes')! : 'culture')
     .split(',')
     .filter((t) => themeOptions.some((o) => o.code === t));
+  const avoidCrowds = params.get('avoidCrowds') === 'true';
   const body = JSON.stringify({
     target_country: country,
     travel_window: { season },
     themes,
+    constraints: { avoid_crowds: avoidCrowds },
     ...(region !== 'all' ? { area_code: region } : {}),
     limit: 10,
   });
@@ -108,10 +110,19 @@ export default function RecommendationView({
             {theme.name}
           </Checkbox>
         ))}
+        <Checkbox
+          checked={avoidCrowds}
+          onChange={() => update({ avoidCrowds: avoidCrowds ? '' : 'true' })}
+        >
+          혼잡도 낮은 순위 요청
+        </Checkbox>
       </div>
+      {avoidCrowds && data?.applied_constraints.avoid_crowds === true && (
+        <p className="inline-note">혼잡도 기준이 추천 순위에 적용되었습니다.</p>
+      )}
       {data?.unapplied_inputs.map((input) => (
         <p key={input.field} className="inline-note">
-          <strong>적용되지 않은 조건 · {input.field}</strong>
+          <strong>적용되지 않은 조건: {input.field}</strong>
           <br />
           {input.reason}
         </p>
@@ -163,8 +174,8 @@ export default function RecommendationView({
             ))}
           </DataTable>
           <p className="section-note">
-            점수는 추천 산식에 따른 지표입니다. 계절과 테마의 적용 여부는 제공된
-            근거에 따라 달라집니다.
+            점수는 추천 산식에 따른 지표입니다. 혼잡 지수가 없으면 혼잡도 조건은
+            순위에 적용되지 않으며 그 사유가 표시됩니다.
           </p>
         </State>
       </Section>

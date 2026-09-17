@@ -139,24 +139,28 @@ Some declared fields have no verified source today. They are always `null` (or `
 - **Recommendation inputs** that cannot be applied appear in `unapplied_inputs`, with reasons. Season only affects crowd calculations when supporting observations exist.
 - **Notice translations and summaries** are returned when available. Original notices remain accessible when a translation is missing.
 
-Availability depends on source permissions and collection coverage. NAVER search ratios are stored for the Korean travel keywords listed under Data Coverage; other social platforms are not collected, and the API does not fabricate metrics for them.
+Availability depends on source permissions and collection coverage. NAVER collection requires verified storage rights and successful collection before search ratios can be served. Unsupported social platforms have no invented metrics.
 
 ## Data Coverage and Refresh
 
-What a client can rely on today (deployment 2026-09-17). Sources publish with a lag, and some place fields are still being filled by rotating collection; check `meta.freshness` and `meta.sources` rather than assuming a date.
+Implementation coverage and database observations checked on 2026-09-17. Sources publish with a lag. A collection path being enabled does not mean its data has arrived; check `meta.freshness` and `meta.sources`.
 
 | Endpoint | Works today | Cadence and lag | Not answered |
 | --- | --- | --- | --- |
-| `GET /v1/trends` | Keywords that are collected: market keywords (`Korea travel`, `Seoul travel`, `Jeju travel` and their JP/CN/TW translations, per `country`), Korean province travel keywords (`서울 여행` … `제주 여행`, `한국 여행`), and Korean attraction names with `area_code` | YouTube and NAVER daily; KTO resource demand monthly | Free-text keywords outside that list return `unavailable`; `destination_searches` and `sns_mentions` are always `null` |
+| `GET /v1/trends` | Stored YouTube market keywords include `Korea travel`, `Seoul travel`, `Jeju travel` and their JP/CN/TW translations. Stored KTO keywords are `관광서비스수요` and `문화자연자원 수요`, with `area_code` filtering | YouTube daily; KTO resource demand monthly; NAVER has a daily collection path | NAVER had no observations at the database check. Uncollected keywords return `unavailable`; `destination_searches` and `sns_mentions` are always `null` |
 | `GET /v1/regions/{area_code}/insights` | Province (sido) codes; `period` 7d/30d/90d; add `compare=previous_period` to get `visitors.change_rate` and `comparison` | Daily visitors publish about 30 days late; demand and diversity are monthly, about two months late | Sigungu codes answer with the parent province (`requested_area_code` set, `partial`); `avg_stay_nights`, `age_index` always `null` |
 | `GET /v1/visitors/timeseries` | Province codes; day/week/month; 7d/30d/90d/12m | Same daily visitor source | `attraction_name` has no source (`unavailable`); `concentration_rate` always `null` |
 | `GET /v1/forecasts/visitors` | Sigungu codes get the official KTO concentration forecast averaged over the area's attractions (`method: official`, `sample_count`); province codes get the historical weekday reference index; weather, festivals and holidays per day | Forecast horizon 30 days; weather refreshed every 3 hours for one grid per province; festivals weekly; holidays monthly | `expected_visitors`, `confidence`, `adjustment_factors` always `null`; `nx`/`ny` other than the province grid are `unavailable` |
 | `GET /v1/markets/inbound` | `JP`, `CN`, `TW`, `US`, `PH`; `period` 3m/6m/12m/24m; `include` blocks visitors, flights, flight_schedule, fx, social_interest; `forecast_days` up to 7 | Visitors monthly (about two months late); flights and passengers monthly; 7-day schedule daily; FX daily | `social_interest.youtube.score` is always `null` by design; only YouTube is collected among social sources |
-| `GET /v1/markets/{country}/alerts` | Korean originals with source links; `types`, `since`, `limit` | Sources refresh every 12 hours | `language=en` returns the Korean original with `fallback: true` (no translation); `source_scope=local` has no collector; `summary` is `null` |
+| `GET /v1/markets/{country}/alerts` | Originals with source links; existing stored translations and summaries; `types`, `since`, `limit` | Sources refresh every 12 hours; new paid enrichment is disabled | Missing translations return the original with `fallback: true`; `source_scope=local` has no collector; summaries are nullable |
 | `GET /v1/places/{content_id}` | Korean title, category, address, coordinates; `overview`, `en`/`ja`/`zh-CN` titles, `hub`, `related_places`, `nearby_shops` as collection fills them | Overview 60 places per day, translations province by province every six days, hub and related places daily, nearby shops 20 places every six hours | `zh-TW` has no source; places whose KTO name does not match a TourAPI entry keep empty `hub`/`related_places` |
 | `POST /v1/recommendations/destinations` | `target_country`, `themes`, `area_code`, `limit`; `constraints.avoid_crowds: true` applies `travel_window.season` to crowd ranking | Feature snapshot refreshed with the product cycle | `budget_krw`, `travel_window.days`, `party_size` are echoed in `unapplied_inputs`; `accessibility_required`, `max_travel_minutes`, `constraints.extra` make the request `unavailable`; `estimated_budget_krw` always `null` |
 
-Two request options the current dashboard does not send but the API supports: `compare=previous_period` on regional insights and `constraints.avoid_crowds` on recommendations.
+The dashboard sends `compare=previous_period` and offers `constraints.avoid_crowds`. It displays applied conditions and missing evidence, serves KTO trends without forcing the YouTube filter, and exposes official sigungu forecasts by area code. Market details include flight schedules and the Korean national tourism balance. Place details include hub data when present.
+
+At the database check, NAVER observations, nonempty place overviews and passenger values had not arrived. These remain missing in the UI. Existing alert revisions included 150 stored Korean and English summaries from earlier AI enrichment; disabling new enrichment does not remove them. The dashboard labels these summaries and retains links to the originals.
+
+TourAPI event records (`EV`) are excluded from destination recommendations because the feature snapshot has no verified event dates. An old event title must not be presented as an available destination for a new trip.
 
 ## How It Works
 

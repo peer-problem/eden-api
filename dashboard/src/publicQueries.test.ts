@@ -17,3 +17,12 @@ test('place lookup waits for an ID and user query values cannot alter API parame
   assert.equal(new URLSearchParams(path.split('?')[1]).get('keyword'), options.keyword);
   assert.match(buildPublicQuery('markets', options).path!, /period=12m/);
 });
+test('the explorer requests comparison and permits official trend sources', () => {
+  assert.match(buildPublicQuery('insights', options).path!, /compare=previous_period/);
+  const path = buildPublicQuery('trends', { ...options, country: 'all', keyword: '관광서비스수요' }).path!;
+  const query = new URLSearchParams(path.split('?')[1]);
+  assert.equal(query.has('social_sources'), false);
+  assert.equal(query.get('area_code'), options.area);
+  const nationwide = buildPublicQuery('trends', { ...options, country: 'all', area: 'all' }).path!;
+  assert.equal(new URLSearchParams(nationwide.split('?')[1]).has('area_code'), false);
+});

@@ -10,16 +10,16 @@ const metrics: Record<string, Record<string, [string, string, string][]>> = {
   },
   inbound: {
     inbound_visitor_observation: [['markets[].visitors', '방한 방문자', '명'], ['markets[].visitor_change_rate', '방문 증감', '%']],
-    flight_observation: [['markets[].arriving_flights', '도착 항공편', '편'], ['markets[].passengers', '승객', '명']],
+    flight_observation: [['markets[].arriving_flights', '도착 항공편', '편'], ['markets[].passengers', '승객', '명'], ['markets[].flight_schedule', '향후 운항 일정', '응답 객체']],
     fx_observation: [['markets[].fx.krw_rate', '원화 환율', '원'], ['markets[].fx.rate_date', '환율 기준일', '날짜']],
     tourism_balance_observation: [['markets[].tourism_balance_usd', '한국 전체 관광수지', 'USD']],
     social_observation: [['markets[].social_interest', '관심도', '응답 객체']],
   },
   trends: {
-    social_observation: [['source_metrics[].posts', '게시물 수', '건'], ['source_metrics[].views', '조회 수', '회'], ['interest_index', '관심 지수', '지수'], ['change_rate', '관심도 증감', '%'], ['rising_keywords[]', '상승 키워드', '목록']],
+    social_observation: [['source_metrics[].posts', '게시물 수', '건'], ['source_metrics[].views', '조회 수', '회'], ['source_metrics[].search_ratio', '검색 비율', '지수'], ['interest_index', '관심 지수', '지수'], ['change_rate', '관심도 증감', '%'], ['rising_keywords[]', '상승 키워드', '목록']],
   },
   forecast: {
-    forecast_input: [['daily[].date', '예측일', '날짜'], ['daily[].demand_score', '방문 수요 점수', '점수'], ['daily[].expected_visitors', '예상 방문자', '명'], ['daily[].weather', '날씨', '응답 객체'], ['daily[].festivals', '축제', '목록'], ['daily[].holiday', '공휴일 여부', '참/거짓']],
+    forecast_input: [['daily[].date', '전망일', '날짜'], ['daily[].demand_score', '방문 수요 점수', '점수'], ['daily[].source_concentration_rate', '공식 집중률', '%'], ['daily[].method', '계산 방식', '문자열'], ['daily[].basis', '계산 근거', '문자열'], ['daily[].sample_count', '표본 수', '건'], ['daily[].weather', '날씨', '응답 객체'], ['daily[].festivals', '축제', '목록'], ['daily[].holiday', '공휴일 여부', '참/거짓']],
   },
   recommendation: {
     place: [['recommendations[].place.content_id', '장소 ID', '문자열'], ['recommendations[].place.title', '장소명', '문자열'], ['recommendations[].place.location', '위치', '좌표']],

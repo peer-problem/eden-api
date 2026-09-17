@@ -1121,7 +1121,7 @@ h3 {
   display: grid;
   grid-template-columns:
     repeat(4, minmax(118px, 1.22fr))
-    repeat(5, minmax(72px, 0.72fr));
+    repeat(3, minmax(72px, 0.72fr));
   margin: 0;
   min-height: 70px;
   color: #738091;
@@ -1155,6 +1155,16 @@ h3 {
 .region-stat-band .primary dd {
   font-size: clamp(0.95rem, 1.25vw, 1.15rem);
   font-weight: 550;
+}
+.region-metric-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.region-metric-context .section-note span {
+  display: block;
 }
 .region-tabs {
   margin-top: 9px;

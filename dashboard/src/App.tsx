@@ -97,7 +97,7 @@ export default function App() {
     if (placeId) setDetailOpen(true);
   }, [placeId]);
   useEffect(() => {
-    document.title = `${view.name} · EDEN`;
+    document.title = `${view.name} | EDEN`;
   }, [view.name]);
   const update = (values: Record<string, string>) => {
     writeUrl({ ...values, place: "" });
@@ -157,7 +157,7 @@ export default function App() {
                 alignText="left"
                 active={r.code === area}
                 aria-current={r.code === area ? "true" : undefined}
-                onClick={() => update({ area: r.code })}
+                onClick={() => update({ area: r.code, forecastArea: "" })}
               >
                 {r.name}
               </Button>
@@ -169,9 +169,9 @@ export default function App() {
           <span className="nav-section-label">데이터 범위</span>
           <p>
             {view.id === "markets"
-              ? "일본 · 중국 · 대만\n미국 · 필리핀"
+              ? "일본, 중국, 대만\n미국, 필리핀"
               : view.id === "trends"
-                ? "YouTube 관광 키워드\n수집된 검색 결과 표본"
+                ? "YouTube 검색 표본\nKTO 관광자원 수요 지수"
                 : "지역과 테마별 여행지\n점수와 추천 근거"}
           </p>
         </div>
@@ -401,7 +401,7 @@ export default function App() {
             <span>
               EDEN API <span className="mono">v1</span>
             </span>
-            <span>출처별 기준일 적용 · KST</span>
+            <span>출처별 기준일 적용 / KST</span>
           </footer>
         </div>
         {detailOpen && hasInspectorContent && !isNarrow && (
@@ -444,10 +444,42 @@ function MarketDetail({ market }: { market: Market }) {
           ["방문 지표", number(market.visitors)],
           ["방문 증감률", number(market.visitor_change_rate, "%")],
           ["도착 항공편", number(market.arriving_flights)],
+          ["도착 여객", number(market.passengers)],
           ["환율", number(market.fx?.krw_rate, " KRW")],
           ["환율 기준일", date(market.fx?.rate_date)],
+          ["향후 운항 일정", number(market.flight_schedule?.flights, "편")],
+          ["운항 일정 기준", market.flight_schedule?.basis_period
+            ? `${date(market.flight_schedule.basis_period.start)}부터 ${date(market.flight_schedule.basis_period.end)}까지`
+            : "—"],
+          ["한국 전체 관광수지", number(market.tourism_balance_usd, " USD")],
+          ["관광수지 기준월", market.tourism_balance_period ?? "—"],
         ]}
       />
+      {market.flight_schedule?.reason && (
+        <p className="inspector-note">운항 일정: {market.flight_schedule.reason}</p>
+      )}
+      {Boolean(market.flight_schedule?.major_routes.length) && (
+        <section className="inspector-section">
+          <h3>주요 도착 노선</h3>
+          <Properties rows={market.flight_schedule!.major_routes.map((route) => [
+            `${route.origin} → ${route.destination}`,
+            number(route.flights, "편"),
+          ])} />
+        </section>
+      )}
+      {market.social_interest && Object.entries(market.social_interest).length > 0 && (
+        <section className="inspector-section">
+          <h3>공개 검색 표본</h3>
+          {Object.entries(market.social_interest).map(([source, signal]) => (
+            <div className="block-status" key={source}>
+              <span className="mono">{source}</span>
+              <Status value={signal.availability} />
+              <Properties rows={[["게시물", number(signal.posts)], ["조회 수", number(signal.views)]]} />
+              {signal.reason && <p className="muted break-text">{signal.reason}</p>}
+            </div>
+          ))}
+        </section>
+      )}
       <section className="inspector-section">
         <h3>지표별 제공 상태</h3>
         {Object.entries(market.source_availability).map(([name, block]) => (

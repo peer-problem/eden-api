@@ -59,6 +59,22 @@ def test_recommendation_ties_have_a_stable_place_id_order() -> None:
     RecommendationsData.model_validate(data)
 
 
+def test_event_without_verified_dates_is_not_recommended_as_a_permanent_place() -> None:
+    event = {**_feature("past_event"), "category": "EV", "demand_score": 100.0}
+    place = {**_feature("museum"), "category": "VE"}
+    product = {"country_languages": {"US": "en"}, "features": [event, place]}
+
+    data, availability, _ = build_recommendation_view(product, {**_scope(), "limit": 1})
+
+    assert availability == Availability.AVAILABLE
+    assert [row["place"]["content_id"] for row in data["recommendations"]] == ["museum"]
+    data, availability, _ = build_recommendation_view(
+        {**product, "features": [event]}, _scope()
+    )
+    assert availability == Availability.UNAVAILABLE
+    assert data["recommendations"] == []
+
+
 def test_recommendation_score_renormalizes_around_unavailable_features() -> None:
     data, _availability, _reason = build_recommendation_view(
         {"country_languages": {"US": "en"}, "features": [_feature("place_a")]},

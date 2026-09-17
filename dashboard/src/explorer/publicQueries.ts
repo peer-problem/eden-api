@@ -26,11 +26,11 @@ export function buildPublicQuery(kind: PublicQueryKind, options: PublicQueryOpti
   const area = encodeURIComponent(options.area);
   const period = ['7d', '30d', '90d'].includes(options.period) ? options.period : '30d';
   switch (kind) {
-    case 'insights': return { path: `/regions/${area}/insights?period=${period}` };
+    case 'insights': return { path: `/regions/${area}/insights?period=${period}&compare=previous_period` };
     case 'visitors': return { path: `/visitors/timeseries?area_code=${area}&period=${period}&granularity=day` };
     case 'forecast': return { path: `/forecasts/visitors?area_code=${area}&days=7` };
     case 'markets': return { path: `/markets/inbound?countries=${encodeURIComponent(options.country)}&period=${['3m', '6m', '12m', '24m'].includes(options.period) ? options.period : '12m'}` };
-    case 'trends': return { path: options.keyword.trim() ? `/trends?${new URLSearchParams({ keyword: options.keyword.trim(), country: options.country, period, social_sources: 'youtube' })}` : null };
+    case 'trends': return { path: options.keyword.trim() ? `/trends?${new URLSearchParams({ keyword: options.keyword.trim(), country: options.country, period, ...(options.area !== 'all' ? { area_code: options.area } : {}) })}` : null };
     case 'place': return { path: options.place.trim() ? `/places/${encodeURIComponent(options.place.trim())}?lang=ko` : null };
     case 'recommendations': return { path: '/recommendations/destinations', body: JSON.stringify({ target_country: options.country, area_code: options.area, travel_window: { season: 'autumn' }, themes: ['culture'], limit: 10 }) };
   }

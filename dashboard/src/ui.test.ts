@@ -27,7 +27,7 @@ test('unavailable responses render the actual reason, not their child values', (
         loading: false,
         retry() {},
         response: {
-          data: null,
+          data: { value: 123 },
           meta: {
             availability: 'unavailable',
             reason: 'No published observations',

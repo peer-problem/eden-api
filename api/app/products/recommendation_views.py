@@ -85,6 +85,11 @@ def build_recommendation_view(
     for feature in features:
         if not isinstance(feature, dict):
             continue
+        # TourAPI EV rows are time-limited events. The published feature has
+        # no verified event dates, so it cannot establish that an event is open
+        # for this trip. This also protects reads of existing snapshots.
+        if feature.get("category") == "EV":
+            continue
         area = feature.get("area")
         localizations = feature.get("localizations")
         if not isinstance(area, dict) or not isinstance(localizations, dict):

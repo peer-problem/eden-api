@@ -96,7 +96,7 @@ export function State<T>({
         />
       </div>
     );
-  if (!resource.response?.data || empty)
+  if (!resource.response?.data || resource.response.meta.availability === 'unavailable' || empty)
     return (
       <NonIdealState
         icon="database"
@@ -107,7 +107,12 @@ export function State<T>({
         }
       />
     );
-  return <>{children}</>;
+  return <>
+    {resource.response.meta.reason && (
+      <p className="inline-note">{resource.response.meta.reason}</p>
+    )}
+    {children}
+  </>;
 }
 export function MetaLine({
   meta,
