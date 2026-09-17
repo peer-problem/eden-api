@@ -2,6 +2,7 @@
 
 ## 미배포
 
+- NAVER 검색 트렌드(SRC_NAVER_TREND)를 켰다. NAVER는 한국어 검색만 답하므로 시장별 외국어 키워드 대신 지역 여행 키워드 18개("한국 여행", "서울 여행", …)를 하루 5개씩 순환 수집하고, 국내 검색 관심은 특정 방한시장에 속하지 않으므로 country 없이 저장한다. 트렌드 응답은 social_sources를 지정하지 않은 요청에서 한국어 키워드의 `search_ratio`를 NAVER로 채운다. 운영 반영에는 `NAVER_STORAGE_POLICY_APPROVED=true` 설정이 필요하다.
 - 방한시장의 `passengers`를 채운다. 인천공항 국가별 항공통계 서비스의 여객 오퍼레이션(getTotalNumberOfPassenger)을 운항편 오퍼레이션과 함께 수집하고, 같은 국가·월의 관측에 운항편 수와 여객 수를 합쳐 저장한다. 여객 통계를 수집하기 전 달은 null로 남는다.
 - 시군구 방문 전망이 공식 예측 없이 unavailable로 나오던 것을 고쳤다. KTO 공식 예측은 관광지 단위이므로 지역 요청은 그 지역 관광지들의 공식 집중률 평균을 `official`로 내고, `sample_count`에 평균에 쓴 관광지 수와 `basis`에 근거를 표시한다. 관광지명을 지정한 요청과 시도 참고 전망은 그대로다.
 - 트렌드가 YouTube 고정 키워드 15개 외에는 항상 unavailable이던 것을 보완했다. 이미 수집 중인 KTO 관광자원 수요 지수(관광지명·지역별 월간, 0~100)를 관측이 있을 때 응답에 포함해 한국어 관광지명 키워드와 `area_code` 필터가 동작한다. `area_code`가 있으면 meta.sources에도 이 원천을 표시한다.

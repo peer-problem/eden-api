@@ -15,7 +15,6 @@
 
 | 엔드포인트 | 필드 | 상태 |
 | --- | --- | --- |
-| trends | `search_ratio` | NAVER 데이터랩 전용, 소스 비활성 + 저장 정책 미승인 |
 | trends, inbound | instagram / facebook / reddit 블록, `sns_mentions` | 어댑터 없음, 외부 승인 필요 |
 | trends | `destination_searches` | 어떤 원천도 연결되지 않음 |
 | regions/insights | `demand.avg_stay_nights`, `diversity.age_index` | KTO 원천에 대응 지표 없음, 정규화가 None 고정 (insights는 이 때문에 항상 partial) |
@@ -33,7 +32,8 @@
 - **avg_stay_nights, age_index**: 관광공사 데이터랩 공개 API(AreaTarDemDsService, AreaTarDivService)는 관광체류강도·관광소비강도·관광객 다양성·소비 다양성·국제적 다양성 지수만 준다. 숙박일수와 연령 구성은 데이터랩 웹에만 있고 오픈 API에는 없다. 원천 없음 유지.
 - **estimated_budget_krw**: 관광지 단위 비용 원천은 없다. 지역 단위 관광소비강도 지수(이미 수집)만 있다. 원천 없음 유지.
 - **concentration_rate(시계열), expected_visitors, confidence**: 공개 원천 없음.
-- **destination_searches, search_ratio**: NAVER 데이터랩(상대 검색 비율만 제공)을 켜면 `search_ratio`는 채워진다. 절대 검색 수는 어떤 원천도 주지 않는다.
+- **search_ratio**: 2026-09-17 NAVER 검색 트렌드(NCP API Hub)를 켰다. 외국어 시장 키워드에는 데이터가 없어 한국어 지역 여행 키워드 18개("서울 여행" 등)를 하루 5개씩 순환 수집한다. 운영에서 켜지려면 루트 `.env`에 `NAVER_STORAGE_POLICY_APPROVED=true`가 있어야 한다(저장·재게시 권리 확인 플래그).
+- **destination_searches**: 절대 검색 수는 어떤 원천도 주지 않는다.
 
 ## 데이터 품질로 격리된 항목
 

@@ -294,3 +294,21 @@ def test_airport_country_scope_collects_flights_and_passengers_for_two_months() 
     }
     assert passenger["watermark"] == {"param": "to_month", "format": "%Y%m"}
     assert len(operations) <= scope["max_operations_per_run"]
+
+
+def test_naver_scope_rotates_korean_province_keywords_five_per_run() -> None:
+    from app.sources.plans import NAVER_KEYWORDS, NAVER_KEYWORDS_PER_RUN, naver_targets
+
+    assert NAVER_KEYWORDS_PER_RUN == 5
+    assert all(keyword.endswith(" 여행") for keyword in NAVER_KEYWORDS)
+    seen: list[str] = []
+    for day in range(4):
+        batch = naver_targets(day)
+        assert 1 <= len(batch) <= NAVER_KEYWORDS_PER_RUN
+        assert all(target["country"] == "KR" for target in batch)
+        seen.extend(target["keyword"] for target in batch)
+    assert seen == list(NAVER_KEYWORDS)
+    assert naver_targets(4) == naver_targets(0)
+    scope = social_refresh_scope("SRC_NAVER_TREND")
+    assert scope["lookback_days"] == 90
+    assert len(scope["targets"]) <= NAVER_KEYWORDS_PER_RUN

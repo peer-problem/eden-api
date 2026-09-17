@@ -13,7 +13,6 @@ from app.repositories.models import Area, Place, PlaceLocalization
 MARKETS = ("JP", "CN", "TW", "US", "PH")
 DISABLED_SOURCES = frozenset(
     {
-        "SRC_NAVER_TREND",
         "SRC_INSTAGRAM",
         "SRC_FACEBOOK",
         "SRC_REDDIT",
@@ -51,6 +50,7 @@ SOURCE_INTERVALS = {
     "SRC_KTO_PLACE_HUB": DAY,  # Five sigungu per batch, monthly hub rankings.
     "SRC_KTO_PLACE_RELATED": DAY,  # Five hub places per batch.
     "SRC_YOUTUBE": DAY,
+    "SRC_NAVER_TREND": DAY,  # Five Korean keywords per run; 18 keywords within four days.
     "SRC_KMA_FORECAST": 3 * 3600,
     "SRC_SEMAS_SHOPS": 6 * 3600,  # Twenty places per batch, ~480 within a week.
     "SRC_FESTIVAL": 7 * DAY,

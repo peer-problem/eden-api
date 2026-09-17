@@ -129,7 +129,7 @@ Some declared fields have no verified source today. They are always `null` (or `
 | `/v1/visitors/timeseries` | `concentration_rate`, `summary.peak_concentration_rate` | The visitor statistics do not publish concentration |
 | `/v1/forecasts/visitors` | `expected_visitors`, `confidence`, `adjustment_factors` | No source forecasts headcounts or confidence; the reference index is not scaled into people |
 | `/v1/markets/inbound` | `social_interest.youtube.score` | A search sample is not a country signal |
-| `/v1/trends` | `destination_searches`, `search_ratio`, `sns_mentions` | No connected source; NAVER and the other social platforms need external approval |
+| `/v1/trends` | `destination_searches`, `sns_mentions` | No absolute search-count source; the other social platforms need external approval. `search_ratio` comes from NAVER for Korean province travel keywords only |
 | `/v1/recommendations/destinations` | `estimated_budget_krw`, `budget_krw`, `travel_window.days`, `party_size`, `constraints.accessibility_required`, `constraints.max_travel_minutes` | No verified cost, stay, capacity, accessibility or travel-time source |
 
 ### Understanding the Indicators

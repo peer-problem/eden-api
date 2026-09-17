@@ -21,7 +21,7 @@ SOURCE_NAMES = REQUESTABLE_SOCIAL_SOURCES
 # Official KTO resource demand indexes are keyed by attraction name and area, so
 # they answer Korean keywords and area filters that the social samples cannot.
 # They join a response whenever they have observations for the request.
-ALWAYS_INCLUDED_SOURCES = {"SRC_KTO_RESOURCE_DEMAND"}
+ALWAYS_INCLUDED_SOURCES = {"SRC_KTO_RESOURCE_DEMAND", "SRC_NAVER_TREND"}
 RISING_MIN_OBSERVATIONS_PER_WINDOW = 2
 
 
@@ -213,7 +213,12 @@ def build_trend_view(
     requested_source_ids = {
         SOURCE_NAMES[name] for name in requested_sources if name in SOURCE_NAMES
     }
-    allowed_source_ids = requested_source_ids | ALWAYS_INCLUDED_SOURCES
+    explicit_request = scope.get("social_sources") is not None
+    # An explicit social_sources request is answered from those samples only;
+    # otherwise the official and domestic indexes may answer too.
+    allowed_source_ids = (
+        requested_source_ids if explicit_request else requested_source_ids | ALWAYS_INCLUDED_SOURCES
+    )
     keyword = normalize_keyword(str(scope["keyword"]))
     candidates = [
         row
@@ -232,8 +237,8 @@ def build_trend_view(
     if not rows:
         return None, Availability.UNAVAILABLE, "요청 기간의 social signal이 없습니다."
     observed_source_ids = {str(row.get("source_id")) for row in rows}
-    selected_source_ids = requested_source_ids | (ALWAYS_INCLUDED_SOURCES & observed_source_ids)
-    if scope.get("social_sources") is None:
+    selected_source_ids = requested_source_ids | (allowed_source_ids & observed_source_ids)
+    if not explicit_request:
         # Nobody asked for a specific social sample: report the sources that
         # answered instead of degrading the response for the default one.
         selected_source_ids = {

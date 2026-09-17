@@ -63,11 +63,15 @@ def normalize_social_run(
                 if row.get("source_id") != source_id:
                     raise ValueError("social raw record source_id mismatch")
                 country_code = (_text(row, "country", required=True) or "").upper()
-                country_id = session.scalar(
-                    select(Country.eden_country_id).where(Country.iso_alpha2 == country_code)
-                )
-                if country_id is None:
-                    raise ValueError("social country is outside market_cohort_v1")
+                if country_code == "KR":
+                    # Domestic search interest (NAVER) belongs to no inbound market.
+                    country_id = None
+                else:
+                    country_id = session.scalar(
+                        select(Country.eden_country_id).where(Country.iso_alpha2 == country_code)
+                    )
+                    if country_id is None:
+                        raise ValueError("social country is outside market_cohort_v1")
                 period = _date(
                     _text(row, "bucket_start", required=True) or "",
                     ("%Y-%m-%d",),

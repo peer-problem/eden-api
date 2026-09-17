@@ -239,12 +239,49 @@ def test_official_resource_demand_answers_korean_keywords_and_area_filters() -> 
     assert [point["interest_index"] for point in data["series"]] == [60.0, 80.0]
     assert set(data["source_availability"]) == {"SRC_KTO_RESOURCE_DEMAND"}
 
-    # an explicit social request keeps reporting that sample as missing
-    explicit, explicit_availability, _ = build_trend_view(
+    # an explicit social request is answered from that sample only
+    explicit, explicit_availability, explicit_reason = build_trend_view(
         product, {**scope, "social_sources": ["youtube"]}
     )
-    assert explicit_availability == Availability.PARTIAL
-    assert explicit["source_availability"]["SRC_YOUTUBE"]["availability"] == "unavailable"
+    assert explicit is None and explicit_availability == Availability.UNAVAILABLE
+    assert explicit_reason == "요청 범위와 일치하는 social signal이 없습니다."
+
+
+def test_naver_search_ratio_answers_korean_keywords_on_default_requests() -> None:
+    product = {
+        "observations": [
+            {
+                "source_id": "SRC_NAVER_TREND",
+                "keyword": "제주 여행",
+                "country": None,
+                "bucket_start": "2026-09-01T00:00:00+00:00",
+                "search_ratio": 10.6,
+            },
+            {
+                "source_id": "SRC_NAVER_TREND",
+                "keyword": "제주 여행",
+                "country": None,
+                "bucket_start": "2026-09-02T00:00:00+00:00",
+                "search_ratio": 9.6,
+            },
+        ]
+    }
+    scope = {
+        "keyword": "제주 여행",
+        "country": "all",
+        "area_code": None,
+        "social_sources": None,
+        "period": "7d",
+        "time_unit": "day",
+    }
+
+    data, availability, reason = build_trend_view(product, scope)
+
+    assert data is not None and availability == Availability.AVAILABLE and reason is None
+    assert data["sources"] == ["SRC_NAVER_TREND"]
+    assert [point["search_ratio"] for point in data["series"]] == [10.6, 9.6]
+    assert data["source_metrics"][0]["search_ratio"] == 10.1
+    assert data["interest_index"] == 10.1
 
     other_area = build_trend_view(product, {**scope, "area_code": "eden_area_busan"})
     assert other_area[0] is None and other_area[1] == Availability.UNAVAILABLE

@@ -1965,7 +1965,7 @@ def test_scheduler_start_syncs_registry_enablement_with_the_code(pipeline: Pipel
         changed = sync_source_enablement(session)
     # the fixture seeds every endpoint source as enabled; code-disabled ones flip off
     assert changed["SRC_TOUR_JA"] is True and changed["SRC_KTO_PLACE_HUB"] is True
-    assert changed["SRC_NAVER_TREND"] is False
+    assert changed["SRC_INSTAGRAM"] is False
 
     with pipeline.session_factory() as session:
         assert session.get(SourceRegistry, "SRC_TOUR_JA").enabled is True

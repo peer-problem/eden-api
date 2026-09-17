@@ -144,9 +144,14 @@ def _request_source_ids(endpoint: str, scope: dict[str, object]) -> tuple[str, .
             for name in names
             if isinstance(name, str) and name in TREND_SOCIAL_SOURCES
         )
-        if scope.get("area_code"):
-            # Area filters are answered by the official KTO resource demand index.
-            source_ids.add("SRC_KTO_RESOURCE_DEMAND")
+        if not isinstance(requested, list):
+            keyword = str(scope.get("keyword") or "")
+            if scope.get("area_code"):
+                # Area filters are answered by the official KTO resource demand index.
+                source_ids.add("SRC_KTO_RESOURCE_DEMAND")
+            if any("\uac00" <= char <= "\ud7a3" for char in keyword):
+                # Korean keywords are answered by NAVER search trends too.
+                source_ids.add("SRC_NAVER_TREND")
         return tuple(sorted(source_ids))
     if endpoint == "region_insights":
         selected = scope.get("include")

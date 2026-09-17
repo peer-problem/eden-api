@@ -57,6 +57,44 @@ SOCIAL_MARKET_TARGETS = tuple(
     for country, keywords in SOCIAL_KEYWORDS.items()
 )
 
+# NAVER search trends only answer Korean queries; the market keywords above
+# return no data there. Track domestic travel interest per province instead.
+NAVER_KEYWORDS = tuple(
+    f"{name} 여행"
+    for name in (
+        "한국",
+        "서울",
+        "부산",
+        "대구",
+        "인천",
+        "광주",
+        "대전",
+        "울산",
+        "세종",
+        "경기",
+        "강원",
+        "충북",
+        "충남",
+        "전북",
+        "전남",
+        "경북",
+        "경남",
+        "제주",
+    )
+)
+NAVER_KEYWORDS_PER_RUN = 5
+
+
+def naver_targets(day_ordinal: int) -> list[dict[str, str]]:
+    """Five Korean keywords per daily run, rotating through the whole list."""
+    batch_count = -(-len(NAVER_KEYWORDS) // NAVER_KEYWORDS_PER_RUN)
+    start = (day_ordinal % batch_count) * NAVER_KEYWORDS_PER_RUN
+    return [
+        {"country": "KR", "keyword": keyword}
+        for keyword in NAVER_KEYWORDS[start : start + NAVER_KEYWORDS_PER_RUN]
+    ]
+
+
 SOCIAL_SCOPE_SOURCES = {
     "SRC_NAVER_TREND",
     "SRC_YOUTUBE",
@@ -600,8 +638,16 @@ def semas_place_operations(
 def social_refresh_scope(source_id: str) -> dict[str, Any]:
     if source_id not in SOCIAL_SCOPE_SOURCES:
         return {}
+    if source_id == "SRC_NAVER_TREND":
+        from datetime import date
+
+        return {
+            "targets": naver_targets(date.today().toordinal()),
+            "lookback_days": 90,
+            "scope_semantics": "Korean domestic search interest; not a market signal",
+        }
     return {
         "targets": deepcopy(list(SOCIAL_MARKET_TARGETS)),
-        "lookback_days": 90 if source_id == "SRC_NAVER_TREND" else 7,
+        "lookback_days": 7,
         "scope_semantics": "query-language market proxy; not user geolocation",
     }

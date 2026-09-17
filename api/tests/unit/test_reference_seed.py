@@ -26,5 +26,6 @@ def test_place_sources_are_enabled_again_and_social_sources_stay_off() -> None:
     ):
         assert source_id not in DISABLED_SOURCES
         assert source_enabled_by_code(source_id) is True
-    for source_id in ("SRC_NAVER_TREND", "SRC_INSTAGRAM", "SRC_TOURISM_ADMISSION"):
+    assert source_enabled_by_code("SRC_NAVER_TREND") is True
+    for source_id in ("SRC_INSTAGRAM", "SRC_REDDIT", "SRC_TOURISM_ADMISSION"):
         assert source_enabled_by_code(source_id) is False
