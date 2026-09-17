@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.domain.enums import Availability, SourceStatus, SpatialResolution
 from app.domain.time import kst_now
 from app.products.forecast_views import build_forecast_view
-from app.products.recommendation_views import build_recommendation_view
 from app.products.regional_views import (
     build_region_insight_view,
     build_visitor_timeseries_view,
@@ -88,17 +87,10 @@ ENDPOINT_SOURCES: dict[str, tuple[str, ...]] = {
         "SRC_FACEBOOK",
     ),
     "market_alerts": ("SRC_EMBASSY_NOTICE", "SRC_KETA", "SRC_KTO_MARKET_TREND"),
-    "recommendations": (
-        "SRC_TOUR_KO",
-        "SRC_KTO_PLACE_RELATED",
-        "SRC_KTO_DEMAND_INTENSITY",
-        "SRC_KTO_REGIONAL_VISITORS",
-    ),
 }
 
 TREND_SOCIAL_SOURCES = REQUESTABLE_SOCIAL_SOURCES
 INBOUND_SOCIAL_SOURCES = dict(TREND_SOCIAL_SOURCES)
-INBOUND_SCORE_BLOCKS = frozenset({"visitors", "flights", "fx", "social_interest"})
 PLACE_LANGUAGE_SOURCES = {
     "ko": "SRC_TOUR_KO",
     "en": "SRC_TOUR_EN",
@@ -233,17 +225,6 @@ def _request_source_ids(endpoint: str, scope: dict[str, object]) -> tuple[str, .
             "all": ENDPOINT_SOURCES["market_alerts"],
         }[str(scope.get("source_scope", "all"))]
     return ENDPOINT_SOURCES[endpoint]
-
-
-def _included_inbound_score(
-    visitor_data: dict[str, object],
-    include: set[str],
-    *,
-    excluded_social_contributed: bool = False,
-) -> object | None:
-    if excluded_social_contributed or not INBOUND_SCORE_BLOCKS.issubset(include):
-        return None
-    return visitor_data.get("inbound_score")
 
 
 def _selected_inbound_social_interest(
@@ -553,8 +534,6 @@ class MariaDBReadRepository:
         with self.session_factory() as session:
             if endpoint == "trends":
                 return self._fetch_trends(session, key)
-            if endpoint == "recommendations":
-                return self._fetch_recommendations(session, key)
             if endpoint == "inbound_markets":
                 return self._fetch_inbound_markets(session, key)
             if endpoint == "market_alerts":
@@ -638,50 +617,11 @@ class MariaDBReadRepository:
             sources=source_rows,
         )
 
-    def _fetch_recommendations(self, session: Session, key: str) -> ReadResult:
-        scope = json.loads(key)
-        product_key = lookup_key(scope="global")
-        snapshot = self._current_snapshot(session, "recommendation_feature", product_key)
-        source_rows = self._source_metadata(session, ENDPOINT_SOURCES["recommendations"])
-        if snapshot is None or not isinstance(snapshot.data, dict):
-            return ReadResult(
-                data=None,
-                availability=Availability.UNAVAILABLE,
-                reason="게시된 추천 feature 제품이 없습니다.",
-                as_of=None,
-                calculated_at=None,
-                max_acceptable_age_seconds=None,
-                spatial_resolution=SpatialResolution.PLACE,
-                sources=source_rows,
-            )
-        data, availability, reason = build_recommendation_view(snapshot.data, scope)
-        metadata = snapshot.metadata_json or {}
-        return ReadResult(
-            data=data,
-            availability=availability,
-            reason=reason,
-            as_of=_as_aware_utc(snapshot.as_of),
-            calculated_at=_as_aware_utc(snapshot.calculated_at),
-            max_acceptable_age_seconds=metadata.get("max_acceptable_age_seconds"),
-            spatial_resolution=SpatialResolution.PLACE,
-            formula_versions=snapshot.formula_versions or {},
-            sources=source_rows,
-        )
 
     def _fetch_regional_view(self, session: Session, endpoint: str, key: str) -> ReadResult:
         scope = json.loads(key)
         product_key = lookup_key(area_code=scope["area_code"])
         snapshot = self._current_snapshot(session, "regional_product", product_key)
-        requested_area_code = None
-        if snapshot is None and not scope.get("attraction_name"):
-            requested_area = session.get(Area, scope["area_code"])
-            if requested_area is not None and requested_area.parent_area_id:
-                snapshot = self._current_snapshot(
-                    session, "regional_product", lookup_key(area_code=requested_area.parent_area_id)
-                )
-                requested_area_code = (
-                    requested_area.administrative_code or requested_area.eden_area_id
-                )
         source_ids = _request_source_ids(endpoint, scope)
         source_rows = self._source_metadata(
             session,
@@ -702,10 +642,6 @@ class MariaDBReadRepository:
             data, availability, reason = build_region_insight_view(snapshot.data, scope)
         else:
             data, availability, reason = build_visitor_timeseries_view(snapshot.data, scope)
-        if requested_area_code and data is not None:
-            data["requested_area_code"] = requested_area_code
-            reason = "요청 상세 지역의 관측이 없어 응답 area에 표시한 시도 자료를 제공합니다."
-            availability = Availability.PARTIAL
         metadata = snapshot.metadata_json or {}
         return ReadResult(
             data=data,
@@ -821,8 +757,6 @@ class MariaDBReadRepository:
                     "score_as_of": _as_aware_utc(hub_row.source_updated_at),
                 }
                 source_ids.append("SRC_KTO_PLACE_HUB")
-            elif source_status.get("SRC_KTO_PLACE_HUB") == SourceStatus.AVAILABLE:
-                hub_data = {"is_hub": False, "rank": None, "score_as_of": None}
             else:
                 partial_reasons.append("중심 관광지 원천을 사용할 수 없습니다.")
 
@@ -843,7 +777,6 @@ class MariaDBReadRepository:
                             PlaceRelation.from_place_id.in_(alias_ids),
                             PlaceRelation.relation_type == "related",
                             PlaceRelation.observed_at == latest_relation_at,
-                            PlaceRelation.score.is_not(None),
                         )
                         .order_by(PlaceRelation.rank, PlaceRelation.to_place_id)
                         .limit(int(scope.get("related_limit", 5)))
@@ -870,13 +803,12 @@ class MariaDBReadRepository:
                             "content_id": target_id,
                             "title": title,
                             "relation_type": relation.relation_type,
-                            "score": float(relation.score),
+                            "score": None,
+                            "rank": relation.rank,
                             "score_as_of": _as_aware_utc(relation.source_updated_at),
                         }
                     )
                 source_ids.append("SRC_KTO_PLACE_RELATED")
-            elif source_status.get("SRC_KTO_PLACE_RELATED") == SourceStatus.AVAILABLE:
-                related_data = []
             else:
                 partial_reasons.append("연관 관광지 원천을 사용할 수 없습니다.")
 
@@ -1022,46 +954,19 @@ class MariaDBReadRepository:
             session,
             source_ids,
         )
-        regional = self._current_snapshot(session, "regional_product", product_key)
         data_area = session.get(Area, scope["area_code"])
-        requested_area = data_area
-        if regional is None and data_area is not None and data_area.parent_area_id:
-            parent_key = lookup_key(area_code=data_area.parent_area_id)
-            regional = self._current_snapshot(session, "regional_product", parent_key)
-            if regional is not None:
-                data_area = session.get(Area, data_area.parent_area_id)
-        product = dict(snapshot.data) if snapshot and isinstance(snapshot.data, dict) else {}
-        if regional and isinstance(regional.data, dict):
-            product["visits"] = regional.data.get("visits", [])
-        basis_snapshot = snapshot or regional
-        if basis_snapshot is None:
+        if snapshot is None or not isinstance(snapshot.data, dict):
             return ReadResult(
                 data=None,
                 availability=Availability.UNAVAILABLE,
-                reason="요청 지역에 게시된 전망 또는 방문 관측이 없습니다.",
+                reason="요청 지역에 게시된 공식 전망 제품이 없습니다.",
                 as_of=None,
                 calculated_at=None,
                 max_acceptable_age_seconds=None,
                 spatial_resolution=SpatialResolution.NONE,
                 sources=source_rows,
             )
-        product.setdefault(
-            "area_code",
-            (requested_area.administrative_code or requested_area.eden_area_id)
-            if requested_area
-            else scope["area_code"],
-        )
-        product.setdefault("eden_area_id", scope["area_code"])
-        data, availability, reason = build_forecast_view(product, scope)
-        uses_proxy = any(row["method"] == "historical_weekday_proxy" for row in data["daily"])
-        if uses_proxy:
-            data["requested_area_code"] = product["area_code"]
-            data["data_area_code"] = (
-                data_area.administrative_code or data_area.eden_area_id
-                if data_area
-                else product["area_code"]
-            )
-            data["spatial_resolution"] = data_area.level if data_area else "none"
+        data, availability, reason = build_forecast_view(snapshot.data, scope)
         source_ids = tuple(data["sources"])
         source_rows = self._source_metadata(session, source_ids)
         return ReadResult(
@@ -1069,13 +974,13 @@ class MariaDBReadRepository:
             availability=availability,
             reason=reason,
             as_of=_selected_snapshot_as_of(
-                tuple(row for row in (snapshot, regional) if row is not None), source_ids
+                (snapshot,), source_ids
             ),
-            calculated_at=_as_aware_utc(basis_snapshot.calculated_at),
-            max_acceptable_age_seconds=60 * 86400 if uses_proxy else 18 * 3600,
+            calculated_at=_as_aware_utc(snapshot.calculated_at),
+            max_acceptable_age_seconds=18 * 3600,
             spatial_resolution=SpatialResolution(data_area.level if data_area else "none"),
             formula_versions={
-                "visitor_forecast": "historical_weekday_proxy" if uses_proxy else "official"
+                "visitor_forecast": "official"
             },
             sources=source_rows,
         )
@@ -1117,12 +1022,12 @@ class MariaDBReadRepository:
             snapshot_blocks = visitor_data.get("source_availability") or {}
             if not isinstance(snapshot_blocks, dict):
                 snapshot_blocks = {}
-            fx = visitor_data.get("fx")
+            fx = None
             if currency is not None:
                 fx_by_currency = visitor_data.get("fx_by_currency")
                 fx = fx_by_currency.get(currency) if isinstance(fx_by_currency, dict) else None
             schedule = _project_flight_schedule(visitor_data.get("flight_schedule"), forecast_days)
-            social_interest, excluded_social_contributed = _selected_inbound_social_interest(
+            social_interest, _excluded_social_contributed = _selected_inbound_social_interest(
                 visitor_data.get("social_interest"),
                 requested_social_sources,
             )
@@ -1147,9 +1052,11 @@ class MariaDBReadRepository:
                         "reason": (
                             f"요청 통화 {currency}의 환율 관측이 없습니다."
                             if currency is not None
-                            else "해당 시장 기본 통화의 환율 관측이 없습니다."
+                            else "currency를 지정해야 수집된 환율을 조회할 수 있습니다."
                         ),
                     }
+                elif block == "fx" and fx is not None:
+                    block_data = {"availability": "available", "reason": None}
                 elif block == "flight_schedule" and schedule is not None:
                     block_data = {
                         "availability": schedule["availability"],
@@ -1244,13 +1151,7 @@ class MariaDBReadRepository:
                 ),
                 "social_interest": (social_interest if "social_interest" in include else None),
                 "source_availability": source_availability,
-                "inbound_score": (
-                    _included_inbound_score(
-                        visitor_data,
-                        include,
-                        excluded_social_contributed=excluded_social_contributed,
-                    )
-                ),
+                "inbound_score": None,
                 "sources": market_sources,
             }
             markets.append(market)
@@ -1297,7 +1198,7 @@ class MariaDBReadRepository:
                 or None,
             ),
             spatial_resolution=SpatialResolution.COUNTRY,
-            formula_versions={"inbound_score": "inbound_score_v1"},
+            formula_versions={},
             sources=source_rows,
             stale=any(item["stale"] for market in markets for item in market["sources"]),
         )

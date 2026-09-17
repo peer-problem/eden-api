@@ -21,7 +21,9 @@ export default function MarketView({
   )
     ? params.get('marketPeriod')!
     : '12m';
+  const currency = params.get('marketCurrency') || '';
   const query = new URLSearchParams({ period });
+  if (currency) query.set('currency', currency);
   active.forEach((c) => query.append('countries', c));
   const resource = useResource<Markets>(`/markets/inbound?${query}`);
   const [sort, setSort] = useState<'country' | 'visitors'>('country');
@@ -68,6 +70,18 @@ export default function MarketView({
               { label: '6개월', value: '6m' },
               { label: '12개월', value: '12m' },
               { label: '24개월', value: '24m' },
+            ]}
+          />
+        </label>
+        <label className="filter">
+          <span>환율 통화</span>
+          <HTMLSelect
+            aria-label="환율 통화"
+            value={currency}
+            onChange={(e) => update({ marketCurrency: e.target.value })}
+            options={[
+              { label: '통화 선택', value: '' },
+              ...['CNY', 'JPY', 'TWD', 'USD', 'PHP'].map((value) => ({ label: value, value })),
             ]}
           />
         </label>

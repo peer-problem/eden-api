@@ -8,7 +8,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.domain.enums import Availability
-from app.products.formulas import INBOUND_FORMULA_VERSION, inbound_score, minmax_score
+from app.products.formulas import minmax_score
 from app.products.snapshots import SnapshotCandidate, SnapshotPublisher
 from app.readmodels.keys import lookup_key
 from app.repositories.models import (
@@ -207,19 +207,6 @@ def build_inbound_snapshots(
         fx_history.setdefault(row.currency, [])
         if len(fx_history[row.currency]) < 2:
             fx_history[row.currency].append(row)
-    fx_change_population = [
-        change
-        for rows_by_currency in fx_history.values()
-        if len(rows_by_currency) > 1
-        and (
-            change := _change_rate_decimal(
-                float(rows_by_currency[0].krw_rate),
-                float(rows_by_currency[1].krw_rate),
-            )
-        )
-        is not None
-    ]
-
     publisher = SnapshotPublisher(session_factory)
     published_count = 0
     published_countries: list[str] = []
@@ -237,7 +224,6 @@ def build_inbound_snapshots(
                 .order_by(FlightObservation.period_start.desc())
                 .limit(1)
             )
-            fx_rows = fx_history.get(country.default_currency, [])
             balance = session.scalar(
                 select(TourismBalanceObservation)
                 .order_by(TourismBalanceObservation.period_start.desc())
@@ -321,46 +307,9 @@ def build_inbound_snapshots(
                 "tourism_balance_observation": ([balance.observation_id] if balance else []),
                 "social_observation": [row.observation_id for row in social_population_rows],
             }
-            visitor_population = _component_population(
-                all_visitor_rows, end_ordinal, month_count, "visitor_count"
-            )
-            flight_population = _component_population(
-                all_flight_rows, end_ordinal, month_count, "arriving_flights"
-            )
-            visitor_component = minmax_score(
-                float(current_total) if current_total is not None else None,
-                visitor_population,
-                "inbound_visitors_minmax_v1",
-            )
-            flight_component = minmax_score(
-                float(arriving_flights) if arriving_flights is not None else None,
-                flight_population,
-                "inbound_flights_minmax_v1",
-            )
-            social_interest, social_component = _social_interest(
+            social_interest, _social_component = _social_interest(
                 social_rows,
                 _social_source_scores(social_population_rows, country_id),
-            )
-            fx = fx_rows[0] if fx_rows else None
-            previous_fx = fx_rows[1] if len(fx_rows) > 1 else None
-            fx_change = _change_rate_decimal(
-                float(fx.krw_rate) if fx and fx.krw_rate is not None else None,
-                (
-                    float(previous_fx.krw_rate)
-                    if previous_fx and previous_fx.krw_rate is not None
-                    else None
-                ),
-            )
-            fx_component = minmax_score(
-                fx_change,
-                fx_change_population,
-                "inbound_fx_change_minmax_v1",
-            )
-            score = inbound_score(
-                visitor_component.value,
-                flight_component.value,
-                fx_component.value,
-                social_component,
             )
             social_available = any(
                 item["availability"] == "available" for item in social_interest.values()
@@ -391,8 +340,8 @@ def build_inbound_snapshots(
                     "reason": None if schedule else "향후 7일 운항 일정이 없습니다.",
                 },
                 "fx": {
-                    "availability": "available" if fx else "unavailable",
-                    "reason": None if fx else "해당 통화의 환율 관측이 없습니다.",
+                    "availability": "unavailable",
+                    "reason": "currency를 지정해야 수집된 환율을 조회할 수 있습니다.",
                 },
                 "tourism_balance": {
                     "availability": "available" if balance else "unavailable",
@@ -441,19 +390,7 @@ def build_inbound_snapshots(
                             if schedule
                             else None
                         ),
-                        "fx": (
-                            {
-                                "currency": fx.currency,
-                                "krw_rate": fx.krw_rate,
-                                "change_rate": fx_change,
-                                "rate_date": fx.rate_date.date().isoformat(),
-                                "source_id": fx.source_id,
-                                "availability": "available",
-                                "reason": None,
-                            }
-                            if fx
-                            else None
-                        ),
+                        "fx": None,
                         "fx_by_currency": _fx_views(fx_history),
                         "tourism_balance_usd": (balance.balance_usd if balance else None),
                         "tourism_balance_period": (
@@ -462,7 +399,7 @@ def build_inbound_snapshots(
                         "tourism_balance_scope": "KR_total" if balance else None,
                         "social_interest": social_interest or None,
                         "source_availability": source_availability,
-                        "inbound_score": score.value,
+                        "inbound_score": None,
                     },
                     metadata={
                         "max_acceptable_age_seconds": MAX_AGE_SECONDS,
@@ -474,7 +411,7 @@ def build_inbound_snapshots(
                         "reason": reason,
                     },
                     input_watermarks=input_watermarks,
-                    formula_versions={"inbound_score": INBOUND_FORMULA_VERSION},
+                    formula_versions={},
                     observed_at=max(_aware_utc(row.observed_at) for row in input_rows),
                     source_updated_at=max(_aware_utc(row.source_updated_at) for row in input_rows),
                     ingested_at=max(_aware_utc(row.ingested_at) for row in input_rows),
@@ -636,23 +573,6 @@ def _fx_views(
             "reason": None,
         }
     return result
-
-
-def _component_population(
-    rows: list[InboundVisitorObservation] | list[FlightObservation],
-    end_ordinal: int,
-    months: int,
-    field_name: str,
-) -> list[float]:
-    grouped: dict[str, float] = {}
-    start_ordinal = end_ordinal - months + 1
-    for row in rows:
-        if not start_ordinal <= _month_ordinal(row.period_start) <= end_ordinal:
-            continue
-        value = getattr(row, field_name)
-        if value is not None:
-            grouped[row.country_id] = grouped.get(row.country_id, 0) + float(value)
-    return list(grouped.values())
 
 
 def _change_rate_decimal(current: float | None, previous: float | None) -> float | None:

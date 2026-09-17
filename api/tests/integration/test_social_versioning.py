@@ -82,8 +82,6 @@ def _seed_country(factory: sessionmaker[Session], now: datetime) -> None:
                 iso_alpha2="KR",
                 name_ko="대한민국",
                 name_en="South Korea",
-                default_language="ko",
-                default_currency="KRW",
                 created_at=now,
                 updated_at=now,
             )

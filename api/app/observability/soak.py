@@ -38,7 +38,6 @@ REQUIRED_PUBLIC_ENDPOINTS = (
     "visitor_timeseries",
     "inbound_markets",
     "market_alerts",
-    "recommendations",
 )
 
 

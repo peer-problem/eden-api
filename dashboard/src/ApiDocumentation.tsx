@@ -29,13 +29,6 @@ interface LiveResponse {
   requestUrl: string;
 }
 
-const RECOMMENDATION_EXAMPLE = {
-  target_country: "JP",
-  travel_window: { season: "autumn" },
-  themes: ["culture"],
-  limit: 5,
-};
-
 interface FriendlyCopy {
   title: string;
   description: string;
@@ -57,7 +50,7 @@ const ENDPOINT_COPY: Record<string, FriendlyCopy> = {
   "/v1/places/{content_id}": {
     title: "관광지 정보",
     description:
-      "관광지의 이름, 주소, 위치, 소개와 주변 관광지·상점을 확인합니다. 여행지 추천 결과에 포함된 관광지 ID나 TourAPI 콘텐츠 ID를 입력하세요.",
+      "관광지의 이름, 주소, 위치, 소개와 주변 관광지·상점을 확인합니다. EDEN 관광지 ID나 TourAPI 콘텐츠 ID를 입력하세요.",
     note: "선택한 언어의 소개가 없으면 다른 언어로 저장된 내용이 반환될 수 있습니다. 실제 표시 언어는 응답의 language에서 확인할 수 있습니다.",
   },
   "/v1/forecasts/visitors": {
@@ -84,12 +77,6 @@ const ENDPOINT_COPY: Record<string, FriendlyCopy> = {
       "선택한 국가의 비자, 입국, 안전 관련 공식 공지와 원문 링크를 확인합니다.",
     note: "한국어 번역이 준비되지 않은 공지는 원문으로 표시됩니다.",
   },
-  "/v1/recommendations/destinations": {
-    title: "여행지 추천",
-    description:
-      "여행객의 국가, 계절과 관심사를 입력하면 현재 보유한 자료 안에서 조건에 맞는 관광지를 추천합니다.",
-    note: "이 요청은 저장된 자료만 조회합니다. 새로운 자료를 수집하거나 AI 모델을 실행하지 않습니다.",
-  },
 };
 
 interface ParameterCopy {
@@ -111,7 +98,7 @@ const PARAMETER_COPY: Record<string, ParameterCopy> = {
   },
   content_id: {
     label: "관광지 ID",
-    description: "여행지 추천 결과나 TourAPI에서 확인한 관광지 ID를 입력하세요.",
+    description: "EDEN 관광지 ID나 TourAPI 콘텐츠 ID를 입력하세요.",
     placeholder: "예: eden_place_…",
   },
   country: {
@@ -194,7 +181,7 @@ const PARAMETER_COPY: Record<string, ParameterCopy> = {
   },
   currency: {
     label: "환율 통화",
-    description: "환율을 확인할 세 글자 통화 코드를 입력하세요.",
+    description: "환율 조회에는 세 글자 통화 코드를 지정해야 합니다. 국가에서 추정하지 않습니다.",
     placeholder: "예: JPY, USD",
   },
   forecast_days: {
@@ -596,9 +583,7 @@ function EndpointDetail({ document, operation }: { document: OpenApiDocument; op
   const friendly = endpointCopy(operation);
   const [tab, setTab] = useState<DetailTab>("request");
   const [values, setValues] = useState(() => initialParameterValues(operation));
-  const generatedBody = operation.path === "/v1/recommendations/destinations"
-    ? RECOMMENDATION_EXAMPLE
-    : sampleFromSchema(document, operation.requestSchema);
+  const generatedBody = sampleFromSchema(document, operation.requestSchema);
   const [body, setBody] = useState(() => JSON.stringify(generatedBody, null, 2));
   const [live, setLive] = useState<LiveResponse>();
   const [error, setError] = useState<string>();

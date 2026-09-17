@@ -702,20 +702,19 @@ def normalize_related_run(session_factory: sessionmaker[Session], run_id: str) -
                         )
                         rank = _positive_rank(row, "rlteRank")
                         period = _hub_period(row)
-                        score = (Decimal("100") / Decimal(rank)).quantize(Decimal("0.0001"))
                         values = {
                             "from_place_id": from_id,
                             "to_place_id": to_id,
                             "relation_type": "related",
                             "rank": rank,
-                            "score": score,
+                            "score": None,
                             "observed_at": period,
                             "source_updated_at": _database_time(raw.source_updated_at),
                             "ingested_at": _database_time(raw.ingested_at),
                             "calculated_at": calculated_at,
                             "source_id": RELATED_SOURCE,
                             "availability": "available",
-                            "quality_flags": ["score_derived_from_rank"],
+                            "quality_flags": [],
                         }
                         session.execute(
                             insert(PlaceRelation).values(**values).on_duplicate_key_update(**values)

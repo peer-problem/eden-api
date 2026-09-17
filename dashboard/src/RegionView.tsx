@@ -437,7 +437,7 @@ function Outlook({
           label="방문 수요 참고 자료"
           headers={[
             '날짜',
-            '수요 지수 또는 공식 집중률',
+            '공식 집중률',
             '계산 방식',
             '날씨',
             '축제 및 공휴일',
@@ -453,11 +453,7 @@ function Outlook({
                   : number(day.demand_score)}
               </td>
               <td>
-                {day.method === 'historical_weekday_proxy'
-                  ? '과거 동일 요일 참고'
-                  : day.method === 'official'
-                    ? '공식 전망'
-                    : '—'}
+                {day.method === 'official' ? '공식 전망' : '자료 없음'}
                 {day.basis_period && (
                   <small className="cell-detail">
                     {date(day.basis_period.start)}부터{' '}

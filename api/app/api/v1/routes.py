@@ -15,8 +15,6 @@ from app.api.v1.schemas import (
     Language,
     PeriodShort,
     PlaceData,
-    RecommendationRequest,
-    RecommendationsData,
     RegionInsightData,
     TrendData,
     VisitorForecastData,
@@ -190,7 +188,7 @@ def get_region_insights(
     tags=["places"],
     summary="관광지 상세 조회",
     description=(
-        "추천 결과의 content_id 또는 기존 TourAPI ID로 조회합니다. 요청 "
+        "EDEN content_id 또는 기존 TourAPI ID로 조회합니다. 요청 "
         "언어가 없으면 fallback과 실제 language를 확인하세요. 주변 상점의 "
         "반경은 미터 단위입니다."
     ),
@@ -301,7 +299,7 @@ def get_visitor_timeseries(
     summary="국가별 방한시장 비교",
     description=(
         "countries=JP&countries=CN처럼 국가 코드를 반복해 전달합니다. "
-        "환율과 항공 및 방문 지표의 기준 시점은 서로 다를 수 있습니다. "
+        "환율 조회는 currency를 지정해야 합니다. 각 지표의 기준 시점은 다를 수 있습니다. "
         "tourism_balance는 한국 전체 일반여행 수지이며 국가별 양자 수지가 "
         "아닙니다."
     ),
@@ -391,26 +389,3 @@ def get_market_alerts(
         limit=limit,
     )
     return _envelope(request, repository.fetch("market_alerts", key), AlertsData)
-
-
-@router.post(
-    "/recommendations/destinations",
-    response_model=Envelope[RecommendationsData],
-    tags=["recommendations"],
-    summary="여행 조건별 목적지 추천",
-    description=(
-        "게시된 데이터에서 목적지를 추천하는 읽기 전용 POST입니다. 데이터 수집이나 "
-        "LLM 호출을 유발하지 않습니다. 예산과 접근성 등 근거가 부족한 조건은 충족된 "
-        "것으로 추정하지 않으며 응답의 가용성과 사유를 확인해야 합니다."
-    ),
-)
-def recommend_destinations(
-    request: Request,
-    repository: RepositoryDep,
-    payload: RecommendationRequest,
-) -> Envelope[RecommendationsData]:
-    values = payload.model_dump(mode="json", exclude_unset=True)
-    if payload.area_code:
-        values["area_code"] = _resolve_area(repository, payload.area_code)
-    key = lookup_key(**values)
-    return _envelope(request, repository.fetch("recommendations", key), RecommendationsData)

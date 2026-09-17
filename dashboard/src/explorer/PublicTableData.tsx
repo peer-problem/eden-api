@@ -54,14 +54,13 @@ export default function PublicTableData({ table, pipeline, params, onClose }: {
           const next = event.target.value as PublicQueryKind;
           setKind(next); const options = { ...draft, period: next === 'markets' ? '12m' : '30d', country: next === 'trends' ? 'all' : draft.country === 'all' ? 'JP' : draft.country, area: next === 'trends' ? 'all' : draft.area === 'all' ? regions[0].code : draft.area }; setDraft(options); setApplied(options);
         }} />
-        {['insights', 'visitors', 'forecast', 'recommendations', 'trends'].includes(kind) && <HTMLSelect aria-label="API 조회 지역" value={draft.area} options={[...(kind === 'trends' ? [{ value: 'all', label: '전체 지역' }] : []), ...regions.map((r) => ({ value: r.code, label: r.name }))]} onChange={(e) => edit('area', e.target.value)} />}
-        {['markets', 'trends', 'recommendations'].includes(kind) && <HTMLSelect aria-label="API 조회 국가" value={draft.country} options={[...(kind === 'trends' ? [{ value: 'all', label: '전체 검색 지역' }] : []), ...countries.map((c) => ({ value: c.code, label: c.name }))]} onChange={(e) => edit('country', e.target.value)} />}
+        {['insights', 'visitors', 'forecast', 'trends'].includes(kind) && <HTMLSelect aria-label="API 조회 지역" value={draft.area} options={[...(kind === 'trends' ? [{ value: 'all', label: '전체 지역' }] : []), ...regions.map((r) => ({ value: r.code, label: r.name }))]} onChange={(e) => edit('area', e.target.value)} />}
+        {['markets', 'trends'].includes(kind) && <HTMLSelect aria-label="API 조회 국가" value={draft.country} options={[...(kind === 'trends' ? [{ value: 'all', label: '전체 검색 지역' }] : []), ...countries.map((c) => ({ value: c.code, label: c.name }))]} onChange={(e) => edit('country', e.target.value)} />}
         {['insights', 'visitors', 'trends', 'markets'].includes(kind) && <HTMLSelect aria-label="API 조회 기간" value={draft.period} options={(kind === 'markets' ? ['3m', '6m', '12m', '24m'] : ['7d', '30d', '90d']).map((value) => ({ value, label: `최근 ${value.slice(0, -1)}${value.endsWith('m') ? '개월' : '일'}` }))} onChange={(e) => edit('period', e.target.value)} />}
         {kind === 'trends' && <InputGroup aria-label="API 검색어" value={draft.keyword} onChange={(e) => edit('keyword', e.target.value)} required maxLength={200} />}
         {kind === 'place' && <InputGroup aria-label="장소 ID" placeholder="장소 ID 입력" value={draft.place} onChange={(e) => edit('place', e.target.value)} required />}
         <Button type="submit" icon="search">조회</Button>
       </form>
-      {kind === 'recommendations' && <p className="inline-note">추천 조건: 가을 · 문화 · 최대 10곳</p>}
       {request.path ? <>
         <p className="inline-note mono" style={{ overflowWrap: 'anywhere' }}>{request.body ? 'POST' : 'GET'} /v1{request.path}</p>
         {sourceOnly && <p className="inline-note">API 응답에 포함된 출처 정보입니다.</p>}

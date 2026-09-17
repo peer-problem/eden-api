@@ -18,7 +18,6 @@ from app.api.v1.schemas import (
     AlertsData,
     InboundData,
     PlaceData,
-    RecommendationsData,
     RegionInsightData,
     TrendData,
     VisitorForecastData,
@@ -61,7 +60,6 @@ RESPONSE_MODELS: dict[str, type[BaseModel]] = {
     "visitor_timeseries": VisitorTimeseriesData,
     "inbound_markets": InboundData,
     "market_alerts": AlertsData,
-    "recommendations": RecommendationsData,
 }
 
 
@@ -200,18 +198,6 @@ def probe_public_routes() -> list[dict[str, Any]]:
             "market_alerts",
             f"/v1/markets/{encoded_country}/alerts?limit=100&source_scope=all"
             "&types=visa&types=entry&types=safety&types=travel&types=market_trend",
-        ),
-        _probe(
-            "recommendations",
-            "/v1/recommendations/destinations",
-            body={
-                "target_country": country,
-                "travel_window": {"season": "spring", "days": 30},
-                "themes": ["nature", "culture", "food", "kpop"],
-                "party_size": 100,
-                "constraints": {"avoid_crowds": True},
-                "limit": 20,
-            },
         ),
     ]
 

@@ -230,10 +230,8 @@ def build_region_insight_view(
         rows = _latest_month(product.get("demand", []))
         stay = [_number(row.get("stay_index")) for row in rows]
         spend = [_number(row.get("spend_index")) for row in rows]
-        nights = [_number(row.get("avg_stay_nights")) for row in rows]
         stay_values = [value for value in stay if value is not None]
         spend_values = [value for value in spend if value is not None]
-        night_values = [value for value in nights if value is not None]
         # avg_stay_nights has no official source (see UNSOURCED_FIELDS); it stays
         # null and does not degrade the block.
         present_dimensions = sum(bool(values) for values in (stay_values, spend_values))
@@ -249,7 +247,7 @@ def build_region_insight_view(
             "data_period": str(rows[0]["period_start"])[:7] if rows else None,
             "stay_index": bounded_index(mean(stay_values)) if stay_values else None,
             "spend_index": bounded_index(mean(spend_values)) if spend_values else None,
-            "avg_stay_nights": round(mean(night_values), 3) if night_values else None,
+            "avg_stay_nights": None,
             "availability": state.value,
             "reason": (
                 None
@@ -263,7 +261,6 @@ def build_region_insight_view(
     diversity = None
     if "diversity" in selected:
         rows = _latest_month(product.get("diversity", []))
-        ages = [value for row in rows if (value := _number(row.get("age_index"))) is not None]
         nationalities = [
             value for row in rows if (value := _number(row.get("nationality_index"))) is not None
         ]
@@ -273,7 +270,7 @@ def build_region_insight_view(
         states.append(state)
         diversity = {
             "data_period": str(rows[0]["period_start"])[:7] if rows else None,
-            "age_index": bounded_index(mean(ages)) if ages else None,
+            "age_index": None,
             "nationality_index": (bounded_index(mean(nationalities)) if nationalities else None),
             "availability": state.value,
             "reason": (

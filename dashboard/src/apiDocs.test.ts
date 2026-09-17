@@ -64,7 +64,7 @@ test("POST code samples keep shell continuation lines copy-ready", () => {
     requestSchema: { type: "object" },
   };
   const sample = codeSamples(operation, {
-    url: "https://api.edenapi.org/v1/recommendations/destinations",
+    url: "https://api.edenapi.org/v1/example",
     body: '{"target_country":"JP"}',
   }).curl;
   assert.match(sample, /\n  -H 'Content-Type: application\/json'/);

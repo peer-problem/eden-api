@@ -71,7 +71,7 @@ def normalize_social_run(
                         select(Country.eden_country_id).where(Country.iso_alpha2 == country_code)
                     )
                     if country_id is None:
-                        raise ValueError("social country is outside market_cohort_v1")
+                        raise ValueError("social country has no collected reference")
                 period = _date(
                     _text(row, "bucket_start", required=True) or "",
                     ("%Y-%m-%d",),

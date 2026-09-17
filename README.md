@@ -10,22 +10,23 @@
 
 ## API 제공 범위 (2026-09-17, API v0.3.0)
 
-공개 엔드포인트 8개의 구현 범위입니다. 구현 여부와 실제 수집 여부는 다르며, 자료가 없으면 `null` 또는 `unavailable`로 응답합니다. 2026-09-17 DB 확인 시 NAVER 관측, 장소 소개문, 국가별 항공 여객 수는 아직 없었습니다. 원천이 없는 필드와 사유는 [API 문서](api/README.md#fields-that-are-not-provided), 수집 제한은 [알려진 제한](api/KNOWN_GAPS.md)에 있습니다.
+공개 엔드포인트 7개의 구현 범위입니다. 구현 여부와 실제 수집 여부는 다르며, 자료가 없으면 `null` 또는 `unavailable`로 응답합니다. 2026-09-17 DB 확인 시 NAVER 관측, 장소 소개문, 국가별 항공 여객 수는 아직 없었습니다. 원천이 없는 필드와 사유는 [API 문서](api/README.md#fields-that-are-not-provided), 수집 제한은 [알려진 제한](api/KNOWN_GAPS.md)에 있습니다.
 
 | 엔드포인트 | 상태 | 제공하는 것 | 미제공 / 제한 |
 | --- | --- | --- | --- |
 | `GET /v1/trends` | 수집 범위 내 지원 | YouTube 검색 표본과 KTO 관광자원 수요 지수. KTO 저장 키워드는 `관광서비스수요`, `문화자연자원 수요` | NAVER는 수집 경로만 준비됨. 사전 수집되지 않은 키워드는 unavailable |
-| `GET /v1/regions/{area_code}/insights` | 완성 (시도 단위) | 일별 방문자(내·외국인, 원천 발표 지연 약 30일), 관광 체류·소비 강도, 국적 다양성, `compare=previous_period`로 증감률 | 시군구 코드는 시도 자료로 대체. `avg_stay_nights`, `age_index`는 원천 없음 |
-| `GET /v1/visitors/timeseries` | 완성 (시도 단위, 일·주·월) | 방문자 시계열과 요약 | `concentration_rate`는 원천 없음. `attraction_name`(관광지별)은 원천이 없어 항상 unavailable |
-| `GET /v1/forecasts/visitors` | 완성 | 시군구: 관광지별 KTO 공식 집중률의 평균(`sample_count` 표시). 시도: 과거 동일 요일 참고 지수. 기상청 단기예보, 축제, 공휴일 | `expected_visitors`, `confidence`는 원천 없음 |
+| `GET /v1/regions/{area_code}/insights` | 완성 (시도 단위) | 일별 방문자(내 및 외국인, 원천 발표 지연 약 30일), 관광 체류 및 소비 강도, 국적 다양성, `compare=previous_period`로 증감률 | 요청 지역에 관측이 없으면 unavailable. `avg_stay_nights`, `age_index`는 원천 없음 |
+| `GET /v1/visitors/timeseries` | 완성 (시도 단위, 일 및 주 및 월) | 방문자 시계열과 요약 | `concentration_rate`는 원천 없음. `attraction_name`(관광지별)은 원천이 없어 항상 unavailable |
+| `GET /v1/forecasts/visitors` | 완성 | 시군구: 관광지별 KTO 공식 집중률의 평균(`sample_count` 표시). 공식 전망이 없으면 unavailable. 기상청 단기예보, 축제, 공휴일 | `expected_visitors`, `confidence`는 원천 없음 |
 | `GET /v1/markets/inbound` | 지원, 여객 수 수집 대기 | 월별 방한객과 도착 항공편. 향후 운항 일정, 환율, 한국 전체 관광수지, YouTube 검색 표본 | 여객 수는 DB에 아직 없음. YouTube 점수는 국가 신호로 사용하지 않음 |
 | `GET /v1/markets/{country}/alerts` | 저장 자료 지원 | 공식 공지 원문과 출처 링크. 기존에 저장된 번역 및 AI 요약 | 신규 유료 보강은 중단. 번역이 없는 공지는 원문으로 fallback |
 | `GET /v1/places/{content_id}` | 지원, 일부 수집 대기 | 장소명과 위치, 다국어 제목, 중심 관광지 순위, 연관 장소, 주변 상점 | 소개문은 DB에 아직 없음. 장소별 번역과 연관 데이터의 제공 범위가 다름 |
-| `POST /v1/recommendations/destinations` | 완성 | 테마·지역 수요·계절 혼잡도 점수, 근거, 연관 관광지 | `estimated_budget_krw`, `budget_krw`, `days`, `party_size`, 접근성·이동시간 조건은 원천 없음(입력은 `unapplied_inputs`로 알림) |
 
-수집 원천 36개 중 26개가 켜져 있습니다. 꺼진 10개(Instagram·Facebook·Reddit·X·TikTok·Weibo·Douyin·Xiaohongshu·LINE·관광지 입장객)는 어댑터가 없거나 외부 승인이 필요합니다.
+수집 원천 36개 중 26개가 켜져 있습니다. 꺼진 10개(Instagram 및 Facebook 및 Reddit 및 X 및 TikTok 및 Weibo 및 Douyin 및 Xiaohongshu 및 LINE 및 관광지 입장객)는 어댑터가 없거나 외부 승인이 필요합니다.
 
-대시보드는 지역 비교, 공식 시군구 전망, KTO 트렌드와 추천 혼잡도 조건을 API에 연결합니다. 시장 상세에는 운항 일정과 한국 전체 관광수지를 표시합니다. 적용 근거가 없는 조건은 사유를 보여주며, 일정이 확인되지 않은 행사(`EV`)는 목적지 추천에서 제외합니다.
+대시보드는 지역 비교와 공식 시군구 전망 및 KTO 트렌드를 API에 연결합니다. 시장 상세에는 운항 일정과 한국 전체 관광수지를 표시합니다.
+
+응답은 수집 근거가 있는 값만 제공합니다. 고정 국가 통계 seed와 임의 점수를 제거했습니다. 여행지 추천 API와 화면은 삭제했습니다. 환율은 `currency`를 직접 지정해야 합니다. DB 정리 마이그레이션과 변경된 계약은 [API 데이터 정책](api/README.md#source-backed-responses)을 참고하세요.
 
 ## 디렉터리
 
@@ -94,7 +95,7 @@ Python 3.12는 uv가 준비합니다. DB 연결에는 MariaDB Connector/C 3.4 �
 
 API 배포는 이미 구성된 VPS에 `api/`와 두 운영 실행 파일을 전송합니다. 운영 의존성을 설치하고 `.env`에서 생성한 설정을 반영한 뒤 API를 재시작합니다. SSH fingerprint와 DB TLS, 계정별 권한을 확인하며 실패하면 이전 release와 환경 파일을 복구합니다.
 
-운영 VPS에서 수집·게시·정리 스케줄러는 `eden-scheduler.service`가 `python -m app.scheduler`로 별도 프로세스에서 실행합니다. `eden-api.service`는 `/opt/eden/shared/api.env`의 `SCHEDULER_ENABLED=false`로 공개 API만 담당하며, 두 서비스는 각자 메모리 상한을 갖습니다. 잡 내용과 주기, 락, 용량 게이트는 프로세스 분리 전과 같습니다. 스케줄러 유닛은 `PartOf`와 `Wants`로 API 유닛에 묶여 있어 배포 스크립트의 `systemctl stop/restart/start eden-api`가 두 서비스에 함께 적용됩니다. 유닛 파일과 최초 설치 절차는 [api/deploy/README.md](api/deploy/README.md)에 있습니다.
+운영 VPS에서 수집 및 게시 및 정리 스케줄러는 `eden-scheduler.service`가 `python -m app.scheduler`로 별도 프로세스에서 실행합니다. `eden-api.service`는 `/opt/eden/shared/api.env`의 `SCHEDULER_ENABLED=false`로 공개 API만 담당하며, 두 서비스는 각자 메모리 상한을 갖습니다. 잡 내용과 주기, 락, 용량 게이트는 프로세스 분리 전과 같습니다. 스케줄러 유닛은 `PartOf`와 `Wants`로 API 유닛에 묶여 있어 배포 스크립트의 `systemctl stop/restart/start eden-api`가 두 서비스에 함께 적용됩니다. 유닛 파일과 최초 설치 절차는 [api/deploy/README.md](api/deploy/README.md)에 있습니다.
 
 Nginx와 systemd 설정은 VPS의 기존 구성을 사용합니다. 서버 계정과 타이머를 다시 만들거나 과거 배포 파일을 청소하지 않습니다. 일반 배포에서 DB 마이그레이션과 데이터 수집도 수행하지 않습니다.
 
@@ -109,7 +110,7 @@ API는 scheduler 없이 시작한 뒤 readiness와 공개 OpenAPI 접속을 확�
 기존 `scripts/`는 제거했습니다. 실행 명령은 두 `.ops/` 파일로 통합하고, 재사용하는 Python 로직은 `api/app/operations/`에 둡니다.
 
 - 수집: `run.sh import-mois`, `import-inbound`, `import-notices`
-- 게시: `run.sh seed-reference`, `publish-recommendations`
+- 게시: `run.sh seed-reference`
 - 이전 게시본 선택: `run.sh restore-snapshot ENDPOINT KEY`
 - 운영 증거: `run.sh phase1-soak`, `phase2-soak`, `pilot` 뒤에 하위 명령 지정
 

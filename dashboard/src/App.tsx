@@ -13,7 +13,6 @@ import { Properties, Sources, Status } from "./ui";
 import RegionView from "./RegionView";
 import MarketView from "./MarketView";
 import TrendView from "./TrendView";
-import RecommendationView from "./RecommendationView";
 import PlaceDetail from "./PlaceDetail";
 import ApiDocumentation from "./ApiDocumentation";
 import DatabaseWorkspace, {
@@ -28,7 +27,6 @@ const views = [
   { id: "regions", name: "지역 탐색", icon: "map-marker" },
   { id: "markets", name: "방한 시장", icon: "globe" },
   { id: "trends", name: "관광 트렌드", icon: "timeline-line-chart" },
-  { id: "recommendations", name: "여행지 추천", icon: "compass" },
 ] as const;
 function useUrl() {
   const [query, setQuery] = useState(() => window.location.search);
@@ -170,9 +168,7 @@ export default function App() {
           <p>
             {view.id === "markets"
               ? "일본, 중국, 대만\n미국, 필리핀"
-              : view.id === "trends"
-                ? "YouTube 검색 표본\nKTO 관광자원 수요 지수"
-                : "지역과 테마별 여행지\n점수와 추천 근거"}
+              : "YouTube 검색 표본\nKTO 관광자원 수요 지수"}
           </p>
         </div>
       ) : null}
@@ -282,9 +278,7 @@ export default function App() {
             <p>
               {view.id === "markets"
                 ? "국가 이름을 선택하면 지표와 출처가 여기에 표시됩니다."
-                : view.id === "recommendations"
-                  ? "여행지 이름을 선택하면 소개, 위치와 관련 장소를 확인할 수 있습니다."
-                  : "출처 버튼을 선택하면 관측 기준일과 수집 상태를 확인할 수 있습니다."}
+                : "출처 버튼을 선택하면 관측 기준일과 수집 상태를 확인할 수 있습니다."}
             </p>
           </div>
         </>
@@ -391,10 +385,8 @@ export default function App() {
                   setDetailOpen(true);
                 }}
               />
-            ) : view.id === "trends" ? (
-              <TrendView {...viewProps} />
             ) : (
-              <RecommendationView {...viewProps} showPlace={showPlace} />
+              <TrendView {...viewProps} />
             )}
           </main>
           <footer className="workspace-footer">

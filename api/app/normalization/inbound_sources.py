@@ -93,7 +93,7 @@ def _country_id(session: Session, value: str) -> str:
         )
     )
     if country_id is None:
-        raise ValueError(f"country is outside market_cohort_v1: {normalized[:50]}")
+        raise ValueError(f"uncollected_country: {normalized[:50]}")
     return country_id
 
 
@@ -236,7 +236,7 @@ def normalize_airport_country_run(session_factory: sessionmaker[Session], run_id
                             session, _text(row, "country", required=True) or ""
                         )
                     except ValueError as exc:
-                        if "outside market_cohort_v1" in str(exc):
+                        if "uncollected_country" in str(exc):
                             continue
                         raise
                     with session.begin_nested():
@@ -445,7 +445,7 @@ def normalize_airport_weekly_run(session_factory: sessionmaker[Session], run_id:
                 "calculated_at": calculated_at,
                 "source_id": AIRPORT_WEEKLY_SOURCE,
                 "availability": "available",
-                "quality_flags": ["market_cohort_airport_mapping"],
+                "quality_flags": ["source_airport_country_mapping"],
             }
             session.execute(
                 insert(FlightObservation).values(**values).on_duplicate_key_update(**values)

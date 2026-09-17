@@ -63,7 +63,7 @@ test('malformed success responses fail instead of presenting invented data', asy
     /응답 형식/,
   );
 });
-test('recommendation requests omit credentials and send the exact read-only POST payload', async (t) => {
+test('POST requests omit credentials and send the exact read-only POST payload', async (t) => {
   let seen: RequestInit | undefined;
   t.mock.method(
     globalThis,
@@ -80,7 +80,7 @@ test('recommendation requests omit credentials and send the exact read-only POST
     limit: 10,
   });
   await request(
-    '/recommendations/destinations',
+    '/example',
     new AbortController().signal,
     body,
   );

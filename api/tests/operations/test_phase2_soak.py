@@ -27,7 +27,6 @@ def _sample(
         "visitor_timeseries",
         "inbound_markets",
         "market_alerts",
-        "recommendations",
     )
     return {
         "sampled_at": sampled_at.isoformat(),

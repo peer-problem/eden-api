@@ -216,7 +216,10 @@ def test_alert_retry_upgrade_and_contract_rollback_do_not_cross_the_soak_gate():
     config = Config()
     config.set_main_option("script_location", str(MIGRATION_ROOT.parent))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["20260911_0010"]
+    assert set(scripts.get_heads()) == {"20260911_0010", "20260917_0011"}
+    assert [step.revision.revision for step in scripts._upgrade_revs(
+        "20260917_0011", ("20260911_0009",)
+    )] == ["20260917_0011"]
     assert [step.revision.revision for step in scripts._upgrade_revs(
         "20260911_0009", ("20260829_0008",)
     )] == ["20260911_0009"]
@@ -226,3 +229,49 @@ def test_alert_retry_upgrade_and_contract_rollback_do_not_cross_the_soak_gate():
     assert [step.revision.revision for step in scripts._downgrade_revs(
         "20260829_0007@20260829_0008", ("20260829_0007", "20260911_0009")
     )] == ["20260829_0007"]
+
+
+def test_seed_cleanup_preserves_collected_data_and_never_reseeds_on_downgrade():
+    from sqlalchemy import text
+
+    migration = _load_migration("0011_remove_seeded_market_data")
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE country (eden_country_id VARCHAR(64) PRIMARY KEY, "
+            "default_language VARCHAR(16), default_currency VARCHAR(3))"
+        ))
+        connection.execute(text("CREATE TABLE market_cohort (visitor_count INTEGER)"))
+        connection.execute(text("INSERT INTO market_cohort VALUES (1374273)"))
+        connection.execute(text(
+            "CREATE TABLE place_relation (relation_type VARCHAR(32), score FLOAT, rank INTEGER)"
+        ))
+        connection.execute(text("INSERT INTO place_relation VALUES ('related', 50, 2)"))
+        connection.execute(text("CREATE TABLE metric_definition (metric_id VARCHAR(100))"))
+        connection.execute(text(
+            "INSERT INTO metric_definition VALUES ('inbound_score'), ('interest_index')"
+        ))
+        connection.execute(text("CREATE TABLE inbound_visitor_observation (visitor_count INTEGER)"))
+        connection.execute(text("INSERT INTO inbound_visitor_observation VALUES (123)"))
+        migration.op = _operations(connection)
+
+        migration.upgrade()
+
+        assert "market_cohort" not in inspect(connection).get_table_names()
+        assert {c["name"] for c in inspect(connection).get_columns("country")} == {
+            "eden_country_id"
+        }
+        assert connection.execute(text("SELECT score, rank FROM place_relation")).one() == (None, 2)
+        assert connection.scalar(text(
+            "SELECT visitor_count FROM inbound_visitor_observation"
+        )) == 123
+        assert connection.scalars(text("SELECT metric_id FROM metric_definition")).all() == [
+            "interest_index"
+        ]
+
+        migration.downgrade()
+
+        assert connection.scalar(text("SELECT COUNT(*) FROM market_cohort")) == 0
+        assert connection.scalar(text(
+            "SELECT visitor_count FROM inbound_visitor_observation"
+        )) == 123

@@ -12,7 +12,6 @@ PUBLIC_OPERATIONS = {
     "/v1/visitors/timeseries": "get",
     "/v1/markets/inbound": "get",
     "/v1/markets/{country}/alerts": "get",
-    "/v1/recommendations/destinations": "post",
 }
 
 EXPECTED_PARAMETER_NAMES = {
@@ -71,7 +70,6 @@ EXPECTED_PARAMETER_NAMES = {
         "language",
         "limit",
     },
-    "/v1/recommendations/destinations": set(),
 }
 
 EXPECTED_DATA_FIELDS = {
@@ -137,7 +135,6 @@ EXPECTED_DATA_FIELDS = {
     },
     "InboundData": {"period", "markets"},
     "AlertsData": {"country", "items"},
-    "RecommendationsData": {"recommendations"},
 }
 
 EXPECTED_NESTED_OUTPUT_FIELDS = {
@@ -279,21 +276,6 @@ EXPECTED_NESTED_OUTPUT_FIELDS = {
         "source_url",
         "updated_at",
     },
-    "RecommendationItem": {
-        "rank",
-        "score",
-        "region",
-        "place",
-        "estimated_budget_krw",
-        "budget_availability",
-        "crowd_index",
-        "related_places",
-        "reasons",
-        "sources",
-        "formula_version",
-    },
-    "RecommendationRegion": {"area_code", "eden_area_id", "name"},
-    "RecommendationPlace": {"content_id", "title", "location"},
     "BlockAvailability": {"availability", "reason"},
 }
 
@@ -323,7 +305,7 @@ def _array_items(schema: dict[str, Any]) -> dict[str, Any]:
     return next(variant["items"] for variant in _schema_variants(schema) if "items" in variant)
 
 
-def test_openapi_exposes_exactly_the_eight_phase_one_operations(
+def test_openapi_exposes_exactly_the_seven_phase_one_operations(
     contract_client: TestClient,
 ) -> None:
     openapi = contract_client.get("/openapi.json").json()
@@ -355,10 +337,10 @@ def test_official_documentation_replaces_dashboard(contract_client: TestClient) 
 def test_separate_frontend_can_read_api_without_credentials(contract_client: TestClient) -> None:
     headers = {"Origin": "https://team-frontend.vercel.app"}
     preflight = contract_client.options(
-        "/v1/recommendations/destinations",
+        "/v1/trends",
         headers={
             **headers,
-            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Method": "GET",
             "Access-Control-Request-Headers": "content-type",
         },
     )
@@ -508,51 +490,6 @@ def test_openapi_query_defaults_and_bounds_match_phase_one(contract_client: Test
     }
 
 
-def test_recommendation_body_defaults_and_bounds_match_phase_one(
-    contract_client: TestClient,
-) -> None:
-    components = contract_client.get("/openapi.json").json()["components"]["schemas"]
-    request = components["RecommendationRequest"]
-
-    assert set(request["required"]) == {"target_country", "travel_window"}
-    assert set(request["properties"]) == {
-        "target_country",
-        "travel_window",
-        "budget_krw",
-        "themes",
-        "area_code",
-        "party_size",
-        "constraints",
-        "limit",
-    }
-    assert _enum(_array_items(request["properties"]["themes"])) == {
-        "nature",
-        "culture",
-        "food",
-        "kpop",
-    }
-    assert request["properties"]["party_size"]["anyOf"][0]["minimum"] == 1
-    assert request["properties"]["party_size"].get("default") is None
-    assert {
-        key: request["properties"]["limit"][key] for key in ("minimum", "maximum", "default")
-    } == {"minimum": 1, "maximum": 20, "default": 5}
-
-    travel_window = components["TravelWindow"]
-    assert set(travel_window["required"]) == {"season"}
-    assert _enum(travel_window["properties"]["season"]) == {
-        "spring",
-        "summer",
-        "autumn",
-        "winter",
-    }
-    assert {
-        key: travel_window["properties"]["days"]["anyOf"][0][key] for key in ("minimum", "maximum")
-    } == {
-        "minimum": 1,
-        "maximum": 30,
-    }
-
-
 def test_openapi_contains_common_envelope_and_all_endpoint_output_fields(
     contract_client: TestClient,
 ) -> None:
@@ -594,7 +531,7 @@ def test_every_public_field_and_parameter_has_a_description(contract_client: Tes
         examples = schema["paths"][path][method]["responses"]["200"]["content"]["application/json"][
             "examples"
         ]
-        assert examples["observed"]["value"]["data"]
+        assert "observed" not in examples
         assert examples["unavailable"]["value"]["data"] is None
     for model in schema["components"]["schemas"].values():
         assert all(field.get("description") for field in model.get("properties", {}).values())

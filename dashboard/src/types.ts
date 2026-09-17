@@ -178,25 +178,6 @@ export interface Trend {
   }[];
   rising_keywords: { keyword: string; score: number }[];
 }
-export interface Recommendation {
-  rank: number;
-  score: number;
-  region: { name: string; area_code: string };
-  place: {
-    content_id: string;
-    title: string;
-    location: { lat: number; lng: number };
-  };
-  reasons: string[];
-  estimated_budget_krw: number | null;
-  crowd_index: number | null;
-  formula_version: string;
-}
-export interface Recommendations {
-  recommendations: Recommendation[];
-  applied_constraints: Record<string, unknown>;
-  unapplied_inputs: { field: string; reason: string; value: unknown }[];
-}
 export interface Place {
   content_id: string;
   title: string;
@@ -213,6 +194,6 @@ export interface Place {
     | { shop_id: string; name: string; category: string; distance_m: number }[]
     | null;
   related_places:
-    | { content_id: string; title: string; relation_type: string; score: number; score_as_of: string }[]
+    | { content_id: string; title: string; relation_type: string; rank: number | null; score: number | null; score_as_of: string }[]
     | null;
 }

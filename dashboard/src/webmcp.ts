@@ -22,7 +22,7 @@ export function validateNavigation(input: unknown): Record<string, string> {
   if (Object.keys(object).some((k) => !['view', 'area', 'period'].includes(k)))
     throw new Error('지원하지 않는 조건입니다.');
   if (
-    !['docs', 'regions', 'markets', 'trends', 'recommendations'].includes(
+    !['docs', 'regions', 'markets', 'trends'].includes(
       String(object.view),
     )
   )
@@ -59,7 +59,7 @@ export function registerExplorerTools(
         properties: {
           view: {
             type: 'string',
-            enum: ['docs', 'regions', 'markets', 'trends', 'recommendations'],
+            enum: ['docs', 'regions', 'markets', 'trends'],
           },
           area: { type: 'string', enum: regions.map((r) => r.code) },
           period: { type: 'string', enum: ['7d', '30d', '90d'] },

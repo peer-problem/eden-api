@@ -71,7 +71,7 @@ interface ProductGraphField {
 interface FlowStep {
   id: string;
   label: string;
-  kind: "transform" | "product";
+  kind: "transform" | "product" | "reader";
   sources: string[];
   inputs: string[];
   outputs: string[];
@@ -131,9 +131,9 @@ export const findTable = (name?: string | null) =>
 const preferredPipeline: Record<string, string> = {
   area: "regional",
   area_source_map: "regional",
-  place: "recommendation",
-  place_localization: "recommendation",
-  place_source_map: "recommendation",
+  place: "places",
+  place_localization: "places",
+  place_source_map: "places",
   regional_visit_observation: "regional",
   regional_demand_observation: "regional",
   regional_diversity_observation: "regional",
@@ -143,7 +143,7 @@ const preferredPipeline: Record<string, string> = {
   flight_observation: "inbound",
   fx_observation: "inbound",
   tourism_balance_observation: "inbound",
-  place_relation: "recommendation",
+  place_relation: "places",
 };
 
 const pipelineDefaultTable: Record<string, string> = {
@@ -151,7 +151,7 @@ const pipelineDefaultTable: Record<string, string> = {
   inbound: "inbound_visitor_observation",
   trends: "social_observation",
   forecast: "forecast_input",
-  recommendation: "place",
+  places: "place",
 };
 
 const graphTableStage = (name: string) => {
@@ -445,7 +445,7 @@ function PipelineGraph({
       };
     });
 
-    const products = steps.filter((step) => step.kind === "product");
+    const products = steps.filter((step) => step.kind === "product" || step.kind === "reader");
     const mappingsForStep = (step: FlowStep): SourceFieldMapping[] =>
       step.sources.flatMap((sourceId) => {
         const source = sources.find((item) => item.source_id === sourceId);
@@ -563,7 +563,7 @@ function PipelineGraph({
       "target:run_id",
     );
     steps.forEach((step) => {
-      if (step.kind !== "product") return;
+      if (step.kind !== "product" && step.kind !== "reader") return;
       const fields = step.graph?.fields ?? [];
       if (!fields.length) {
         step.inputs.forEach((input) =>

@@ -26,3 +26,11 @@ test('the explorer requests comparison and permits official trend sources', () =
   const nationwide = buildPublicQuery('trends', { ...options, country: 'all', area: 'all' }).path!;
   assert.equal(new URLSearchParams(nationwide.split('?')[1]).has('area_code'), false);
 });
+
+test('place exploration uses the place detail endpoint', () => {
+  assert.deepEqual(publicQueriesFor('place', 'places'), ['place']);
+  assert.deepEqual(publicQueriesFor('place_relation', 'places'), ['place']);
+  const request = buildPublicQuery('place', { ...options, place: '123' });
+  assert.ok(request.path?.startsWith('/places/'));
+  assert.equal(request.body, undefined);
+});

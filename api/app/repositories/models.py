@@ -72,26 +72,6 @@ class Country(Base, TimestampMixin):
     iso_alpha2: Mapped[str] = mapped_column(String(2), unique=True, nullable=False)
     name_ko: Mapped[str] = mapped_column(String(100), nullable=False)
     name_en: Mapped[str] = mapped_column(String(100), nullable=False)
-    default_language: Mapped[str] = mapped_column(String(16), nullable=False)
-    default_currency: Mapped[str] = mapped_column(String(3), nullable=False)
-
-
-class MarketCohort(Base, TimestampMixin):
-    __tablename__ = "market_cohort"
-    __table_args__ = (
-        UniqueConstraint("version", "rank"),
-        UniqueConstraint("version", "country_id"),
-    )
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    version: Mapped[str] = mapped_column(String(64), nullable=False)
-    statistics_period: Mapped[str] = mapped_column(String(32), nullable=False)
-    rank: Mapped[int] = mapped_column(Integer, nullable=False)
-    country_id: Mapped[str] = mapped_column(ForeignKey("country.eden_country_id"))
-    visitor_count: Mapped[int | None] = mapped_column(BigInteger)
-    fixed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    evidence: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
 class Place(Base, TimestampMixin):

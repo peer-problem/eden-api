@@ -15,7 +15,7 @@ TABLES = {
     "country": (
         "국가",
         "기준 정보",
-        "eden_country_id iso_alpha2 name_ko name_en default_language default_currency",
+        "eden_country_id iso_alpha2 name_ko name_en",
     ),
     "place": (
         "장소",
@@ -387,33 +387,6 @@ PRODUCT_GRAPH_DETAILS = {
             },
         )
     },
-    "build_recommendation_product": {
-        "fields": (
-            {
-                "id": "lookup_key",
-                "label": "전역 게시 조회 키",
-                "name": "scope=global",
-                "inputs": (),
-                "target_table": "read_model_snapshot",
-                "target_column": "lookup_key",
-            },
-            {
-                "id": "payload",
-                "label": "여행지 추천 응답 데이터",
-                "name": "장소 · 관계 · 방문 · 수요",
-                "inputs": (
-                    {"table": "place", "column": "eden_place_id"},
-                    {"table": "place", "column": "area_id"},
-                    {"table": "place_relation", "column": "score"},
-                    {"table": "regional_visit_observation", "column": "visitor_count"},
-                    {"table": "regional_demand_observation", "column": "stay_index"},
-                    {"table": "regional_demand_observation", "column": "spend_index"},
-                ),
-                "target_table": "read_model_payload",
-                "target_column": "payload_blob",
-            },
-        )
-    },
 }
 
 # These routes are intentionally explicit. Foreign keys describe storage, but
@@ -680,24 +653,15 @@ FLOW_STEPS = (
         "code_ref": "app.products.forecast.build_forecast_snapshots",
     },
     {
-        "id": "build_recommendation_product",
-        "label": "여행지 추천 특성 구성",
-        "kind": "product",
+        "id": "read_place_detail",
+        "label": "장소 상세 조회",
+        "kind": "reader",
         "sources": (),
-        "inputs": (
-            "place",
-            "place_localization",
-            "place_source_map",
-            "place_relation",
-            "area",
-            "country",
-            "regional_visit_observation",
-            "regional_demand_observation",
-        ),
-        "outputs": ("read_model_snapshot",),
-        "keys": "eden_place_id · area_id · 최신 방문/수요 관측",
-        "detail": "장소·관계·지역 방문·수요로 recommendation_feature를 만듭니다.",
-        "code_ref": "app.products.recommendations.build_recommendation_snapshot",
+        "inputs": ("place", "place_localization", "place_source_map", "place_relation", "area"),
+        "outputs": (),
+        "keys": "eden_place_id 또는 TourAPI content_id",
+        "detail": "수집된 장소와 번역 및 관계를 장소 상세 API로 조회합니다.",
+        "code_ref": "app.readmodels.repository.MariaDBReadRepository._fetch_place_detail",
     },
 )
 
@@ -745,14 +709,12 @@ PIPELINES = (
         ),
     },
     {
-        "id": "recommendation",
-        "label": "여행지 추천",
+        "id": "places",
+        "label": "장소 상세",
         "steps": (
             "normalize_places",
             "normalize_place_relations",
-            "normalize_regional_visitors",
-            "normalize_regional_demand",
-            "build_recommendation_product",
+            "read_place_detail",
         ),
     },
 )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import json
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select, update
@@ -13,8 +12,6 @@ from app.normalization.alerts import normalize_keta_alert_run
 from app.normalization.inbound import normalize_kto_inbound_run
 from app.normalization.raw_content import decoded_raw_json
 from app.products.inbound import build_inbound_snapshots
-from app.products.recommendations import MAX_RECOMMENDATION_FEATURES
-from app.products.registry import ProductFamily, refresh_product_family
 from app.reference import seed_reference_data
 from app.repositories.database import (
     create_scheduler_database_engine,
@@ -211,28 +208,3 @@ def seed_reference() -> None:
     with factory.begin() as session:
         seed_reference_data(session)
     engine.dispose()
-
-
-def publish_recommendations() -> int:
-    engine = create_scheduler_database_engine(get_settings())
-    try:
-        result = refresh_product_family(
-            ProductFamily.RECOMMENDATION,
-            create_session_factory(engine),
-        )
-    finally:
-        engine.dispose()
-    if result.published_count != 1 or not 1 <= result.place_count <= MAX_RECOMMENDATION_FEATURES:
-        raise RuntimeError("Bounded recommendation product was not published")
-    print(
-        json.dumps(
-            {
-                "published_count": result.published_count,
-                "place_count": result.place_count,
-                "maximum_place_count": MAX_RECOMMENDATION_FEATURES,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-    )
-    return 0

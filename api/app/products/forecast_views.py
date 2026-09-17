@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import date, datetime, timedelta
-from statistics import mean, median
+from statistics import mean
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.domain.enums import Availability
-from app.products.regional_views import _visitor_totals
 
 SEOUL = ZoneInfo("Asia/Seoul")
 
@@ -128,58 +126,6 @@ def _weather_value(rows: list[dict[str, Any]], scope: dict[str, Any]) -> dict[st
     )
 
 
-def _historical_daily_values(visits: list[dict[str, Any]], today: date) -> dict[date, int]:
-    grouped = defaultdict(list)
-    for row in visits:
-        observed = _date(str(row["period_start"]))
-        if (
-            row.get("grain") == "day"
-            and row.get("subject_type") == "area"
-            and today - timedelta(days=89) <= observed <= today
-        ):
-            grouped[observed].append(row)
-    return {
-        day: total
-        for day, rows in grouped.items()
-        if (total := _visitor_totals(rows)["all"]) is not None and total >= 0
-    }
-
-
-def _weekday_proxy(values: dict[date, int], target: date, today: date):
-    """Percentile reference, never a predicted visitor count or confidence."""
-    if len(values) < 28 or (today - max(values)).days > 60:
-        return None
-    same_weekday = [value for day, value in values.items() if day.weekday() == target.weekday()]
-    fallback = len(same_weekday) < 3
-    samples = list(values.values()) if fallback else same_weekday
-    center = median(samples)
-    population = list(values.values())
-    percentile = (
-        (
-            sum(value < center for value in population)
-            + sum(value == center for value in population) / 2
-        )
-        / len(population)
-        * 100
-    )
-    return {
-        "demand_score": round(percentile, 4),
-        "method": "historical_weekday_proxy",
-        "basis_period": {"start": min(values).isoformat(), "end": max(values).isoformat()},
-        "sample_count": len(values),
-        "basis": (
-            "전체 일별 중앙값: 같은 요일 표본 3개 미만"
-            if fallback
-            else f"같은 요일 중앙값: {len(samples)}개 표본"
-        )
-        + (". 7일 이후도 동일한 역사적 기준의 참고값입니다." if (target - today).days >= 7 else ""),
-    }
-
-
-def historical_weekday_proxy(visits: list[dict[str, Any]], target: date, today: date):
-    return _weekday_proxy(_historical_daily_values(visits, today), target, today)
-
-
 def build_forecast_view(
     product: dict[str, Any],
     scope: dict[str, Any],
@@ -217,7 +163,6 @@ def build_forecast_view(
     available_days = 0
     complete_days = 0
     source_ids: set[str] = set()
-    historical_values: dict[date, int] | None = None
     for offset in range(days):
         target = today + timedelta(days=offset)
         rows = by_date.get(target, [])
@@ -255,20 +200,13 @@ def build_forecast_view(
         concentration = base.get("concentration_rate") if base else None
         expected = base.get("expected_visitors") if base else None
         has_official = concentration is not None or expected is not None
-        proxy = None
-        if not has_official and place_name is None:
-            if historical_values is None:
-                historical_values = _historical_daily_values(product.get("visits", []), today)
-            proxy = _weekday_proxy(historical_values, target, today)
-        demand_score = concentration if has_official else proxy["demand_score"] if proxy else None
+        demand_score = concentration
         adjusted_visitors = expected
         confidence = None
-        has_base = has_official or proxy is not None
+        has_base = has_official
         if has_base:
             available_days += 1
-            source_ids.add(
-                "SRC_KTO_VISITOR_FORECAST" if has_official else "SRC_KTO_REGIONAL_VISITORS"
-            )
+            source_ids.add("SRC_KTO_VISITOR_FORECAST")
         missing_adjustments: list[str] = []
         if "weather" in include and (weather is None or weather.get("availability") != "available"):
             missing_adjustments.append("weather")
@@ -287,10 +225,7 @@ def build_forecast_view(
         )
         day_reason = None
         if not has_base:
-            day_reason = (
-                "공식 예측이 없고 참고 전망에 필요한 최근 90일 내 "
-                "28일 관측 또는 60일 최신성을 충족하지 못합니다."
-            )
+            day_reason = "요청 날짜와 범위의 공식 방문 전망이 없습니다."
         elif missing_adjustments:
             day_reason = "일부 참고 정보가 없습니다: " + ", ".join(missing_adjustments)
         source_ids.update(str(row["source_id"]) for row in rows)
@@ -305,22 +240,10 @@ def build_forecast_view(
                 "festivals": festivals if "festivals" in include else None,
                 "holiday": (is_holiday if "holidays" in include and holiday_known else None),
                 "adjustment_factors": factors,
-                "method": "official" if has_official else proxy["method"] if proxy else None,
-                "basis_period": proxy["basis_period"] if proxy else None,
-                "sample_count": (
-                    base.get("sample_count")
-                    if has_official and base
-                    else proxy["sample_count"]
-                    if proxy
-                    else None
-                ),
-                "basis": (
-                    base.get("basis")
-                    if has_official and base
-                    else proxy["basis"]
-                    if proxy
-                    else None
-                ),
+                "method": "official" if has_official else None,
+                "basis_period": None,
+                "sample_count": base.get("sample_count") if has_official and base else None,
+                "basis": base.get("basis") if has_official and base else None,
                 "availability": day_availability,
                 "reason": day_reason,
             }

@@ -94,7 +94,6 @@ def _sample(
                 "visitor_timeseries",
                 "inbound_markets",
                 "market_alerts",
-                "recommendations",
             )
         ],
         "database_disconnects": database_disconnects,
@@ -127,7 +126,7 @@ def test_phase1_soak_passes_only_after_contiguous_24_hour_evidence() -> None:
     )
 
     assert result["status"] == "passed"
-    assert result["public_probe_count"] == 289 * 8
+    assert result["public_probe_count"] == 289 * 7
     assert result["api_p95_milliseconds"] == 100
     assert set(result["api_route_p95_milliseconds"]) == {
         "trends",
@@ -137,7 +136,6 @@ def test_phase1_soak_passes_only_after_contiguous_24_hour_evidence() -> None:
         "visitor_timeseries",
         "inbound_markets",
         "market_alerts",
-        "recommendations",
     }
     assert result["max_derived_daily_growth_bytes"] == 50 * 1024 * 1024
     assert result["scheduler_phases_missing"] == []
@@ -257,7 +255,7 @@ def test_warmup_cli_fails_when_a_public_route_cannot_be_primed(monkeypatch: Any)
     monkeypatch.setattr(
         phase1_soak,
         "warm_public_routes",
-        lambda: {"status": "failed", "failed_endpoints": ["recommendations"]},
+        lambda: {"status": "failed", "failed_endpoints": ["trends"]},
     )
     monkeypatch.setattr(sys, "argv", ["phase1_soak.py", "warmup"])
 

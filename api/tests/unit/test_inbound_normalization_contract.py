@@ -236,3 +236,39 @@ def test_airport_operations_merge_into_one_monthly_observation() -> None:
     assert inbound_sources.airport_country_metrics(
         {"country": "일본", "arrPassenger": "46,273", "depPassenger": "44,016"}
     ) == (None, 46_273)
+
+
+@pytest.mark.parametrize("nationality", ["미국", None])
+def test_country_is_registered_from_collected_nationality_not_seed(nationality, monkeypatch):
+    from unittest.mock import MagicMock
+
+    from app.normalization import inbound
+
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    row = {"R:기준년월": "202607", "V:인원수": 0}
+    if nationality:
+        row["R:국적"] = nationality
+    body = {"country_iso": "US", "response": {"list": [row]}}
+    monkeypatch.setattr(inbound, "decoded_raw_json", lambda _raw: body)
+    factory = MagicMock()
+    session = factory.begin.return_value.__enter__.return_value
+    session.scalars.return_value.all.return_value = [SimpleNamespace(
+        raw_record_id=1, observed_at=now, ingested_at=now,
+    )]
+    session.scalar.return_value = 42
+
+    result = inbound.normalize_kto_inbound_run(factory, "collected-inbound")
+
+    if nationality is None:
+        assert result.normalized_count == 0
+        session.execute.assert_not_called()
+    else:
+        statements = [call.args[0] for call in session.execute.call_args_list]
+        country, observation, provenance = statements
+        assert country.table.name == "country"
+        assert country.compile().params["name_ko"] == nationality
+        assert "default_language" not in country.compile().params
+        assert "default_currency" not in country.compile().params
+        assert observation.compile().params["visitor_count"] == 0
+        assert provenance.table.name == "provenance_edge"
+        assert result.normalized_count == 1

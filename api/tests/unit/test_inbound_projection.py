@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from app.products.inbound import _social_interest, _sum_optional
 from app.readmodels.repository import (
-    _included_inbound_score,
     _selected_inbound_social_interest,
 )
 from app.repositories.models import SocialObservation
@@ -11,19 +10,6 @@ from app.repositories.models import SocialObservation
 def test_inbound_optional_sum_preserves_null_and_numeric_zero() -> None:
     assert _sum_optional([None, None]) is None
     assert _sum_optional([None, 0]) == 0
-
-
-def test_inbound_score_is_hidden_when_component_blocks_are_excluded() -> None:
-    snapshot = {"inbound_score": 72.5}
-
-    assert _included_inbound_score(snapshot, {"visitors", "flights"}) is None
-    assert (
-        _included_inbound_score(
-            snapshot,
-            {"visitors", "flights", "fx", "social_interest"},
-        )
-        == 72.5
-    )
 
 
 def test_stale_inbound_snapshot_cannot_leak_excluded_social_inputs() -> None:
@@ -40,14 +26,6 @@ def test_stale_inbound_snapshot_cannot_leak_excluded_social_inputs() -> None:
     assert social_interest["youtube"]["views"] is None
     assert social_interest["youtube"]["availability"] == "unavailable"
     assert excluded_contributed
-    assert (
-        _included_inbound_score(
-            {"inbound_score": 88.0},
-            {"visitors", "flights", "fx", "social_interest"},
-            excluded_social_contributed=excluded_contributed,
-        )
-        is None
-    )
 
 
 def test_youtube_query_sample_is_not_used_as_country_interest() -> None:

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { publicModel } from './explorer/publicModel';
 
 test('public graphs omit operational storage and terminate at response fields', () => {
-  for (const pipeline of ['regional', 'inbound', 'trends', 'forecast', 'recommendation']) {
+  for (const pipeline of ['regional', 'inbound', 'trends', 'forecast', 'places']) {
     const model = publicModel(pipeline);
     assert.ok(model.tables.length > 0);
     for (const table of model.tables) {
@@ -11,7 +11,7 @@ test('public graphs omit operational storage and terminate at response fields', 
       assert.deepEqual(table.primary_key, []);
       assert.ok(table.columns.every((column) => !column.references.length));
     }
-    const product = model.flow_steps.find((step) => step.kind === 'product')!;
+    const product = model.flow_steps.find((step) => step.kind === 'product' || step.kind === 'reader')!;
     assert.match(product.code_ref, /^(GET|POST) \/v1\//);
     for (const field of product.graph!.fields) {
       assert.match(field.name, /^(data|meta)\./);

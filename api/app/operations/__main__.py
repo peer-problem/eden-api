@@ -12,7 +12,7 @@ def main() -> int:
     parser.add_argument("command", choices=(
         "env-generate", "db-security", "phase1-soak", "phase2-soak", "pilot",
         "seed-reference", "import-mois", "import-inbound", "import-notices",
-        "publish-recommendations", "restore-snapshot", "export-catalog",
+        "restore-snapshot", "export-catalog",
     ))
     parser.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -72,7 +72,6 @@ def main() -> int:
         "import-mois": maintenance.import_mois,
         "import-inbound": maintenance.import_inbound,
         "import-notices": maintenance.import_notices,
-        "publish-recommendations": maintenance.publish_recommendations,
     }
     return actions[args.command]() or 0
 

@@ -103,7 +103,7 @@ export default function PlaceDetail({
                   endIcon="chevron-right"
                   onClick={() => onSelect(p.content_id)}
                 >
-                  {p.title} ({number(p.score)}점)
+                  {p.title}{p.rank != null ? ` (원천 ${number(p.rank)}위)` : ''}
                 </Button>
               ))}
             </div>

@@ -307,68 +307,29 @@ def test_forecast_uses_the_requested_precollected_weather_grid() -> None:
     assert data["daily"][0]["adjustment_factors"] == {}
 
 
-def test_weekday_proxy_midrank_never_invents_people_or_confidence():
+def test_historical_visits_never_replace_missing_official_forecasts():
     from datetime import timedelta
 
-    class CountedVisits(list):
-        iterations = 0
-
-        def __iter__(self):
-            self.iterations += 1
-            return super().__iter__()
-
     today = date(2026, 9, 11)
-    visits = CountedVisits([
-        {
-            "period_start": (today - timedelta(days=30 + offset)).isoformat(),
-            "grain": "day",
-            "subject_type": "area",
-            "visitor_type": "all",
-            "visitor_count": 100,
-        }
-        for offset in range(28)
-    ])
+    visits = [
+        {"period_start": (today - timedelta(days=offset)).isoformat(),
+         "grain": "day", "subject_type": "area", "visitor_type": "all",
+         "visitor_count": 100}
+        for offset in range(60)
+    ]
     data, status, _ = build_forecast_view(
         {"area_code": "11", "visits": visits, "inputs": []},
-        {"days": 30},
-        today=today,
+        {"days": 30}, today=today,
     )
-    assert status == Availability.PARTIAL
+    assert status == Availability.UNAVAILABLE
     assert len(data["daily"]) == 30
     for row in data["daily"]:
-        assert row["demand_score"] == 50
-        assert row["method"] == "historical_weekday_proxy"
+        assert row["demand_score"] is None
+        assert row["method"] is None
         assert row["expected_visitors"] is None
         assert row["confidence"] is None
-        assert row["sample_count"] == 28
-    assert "7일 이후" in data["daily"][7]["basis"]
-    assert data["daily"][0]["weather"] is None
-    assert visits.iterations == 1
+        assert row["sample_count"] is None
     VisitorForecastData.model_validate(data)
-
-
-def test_weekday_proxy_requires_28_days_and_expires_after_60_days():
-    from datetime import timedelta
-
-    from app.products.forecast_views import historical_weekday_proxy
-
-    today = date(2026, 9, 11)
-
-    def visits(count, lag):
-        return [
-            {
-                "period_start": (today - timedelta(days=lag + offset)).isoformat(),
-                "grain": "day",
-                "subject_type": "area",
-                "visitor_type": "all",
-                "visitor_count": offset,
-            }
-            for offset in range(count)
-        ]
-
-    assert historical_weekday_proxy(visits(27, 30), today, today) is None
-    assert historical_weekday_proxy(visits(28, 60), today, today) is not None
-    assert historical_weekday_proxy(visits(28, 61), today, today) is None
 
 
 def test_named_attraction_does_not_receive_area_proxy():

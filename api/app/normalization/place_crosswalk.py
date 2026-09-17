@@ -1,7 +1,7 @@
 """Match KTO hub/related places (KTO_TATS ids) to TourAPI places (KTO_CONTENT ids).
 
 The hub and related-place APIs identify attractions with the KTO TATS code, while
-the place detail and recommendation endpoints serve TourAPI content ids. Without
+the place detail endpoint serves TourAPI content ids. Without
 a bridge, hub ranks and related places only ever attach to separate TATS-minted
 place rows that no public request reaches. A TATS row is treated as the same
 facility as a TourAPI place when the normalized Korean name is identical inside

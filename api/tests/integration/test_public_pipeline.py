@@ -25,7 +25,6 @@ from app.main import create_app
 from app.normalization.registry import normalize_run
 from app.products.forecast import build_forecast_snapshots
 from app.products.inbound import build_inbound_snapshots
-from app.products.recommendations import build_recommendation_snapshot
 from app.products.regional import build_regional_snapshots
 from app.products.trends import build_trend_snapshot
 from app.readmodels.repository import ENDPOINT_SOURCES, MariaDBReadRepository
@@ -256,8 +255,6 @@ def _seed_reference_data(
                 iso_alpha2="JP",
                 name_ko="일본",
                 name_en="Japan",
-                default_language="ja",
-                default_currency="JPY",
                 created_at=now,
                 updated_at=now,
             )
@@ -662,7 +659,6 @@ def _seed_normalized_products(factory: sessionmaker[Session]) -> None:
     assert build_trend_snapshot(factory).published_count == 1
     assert build_regional_snapshots(factory).published_count == 1
     assert build_inbound_snapshots(factory).published_count > 0
-    assert build_recommendation_snapshot(factory).published_count == 1
 
 
 @pytest.fixture
@@ -1004,7 +1000,7 @@ def test_scheduler_resumes_original_raw_after_backoff_and_scope_changes(
         assert session.get(ProductRefreshRequest, "forecast").status == "pending"
 
 
-def test_all_eight_public_routes_read_built_or_normalized_database_products(
+def test_all_seven_public_routes_read_built_or_normalized_database_products(
     pipeline: Pipeline,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1053,20 +1049,6 @@ def test_all_eight_public_routes_read_built_or_normalized_database_products(
         assert payload["data"] is not None, path
         bodies.append(payload)
 
-    recommendation = pipeline.client.post(
-        "/v1/recommendations/destinations",
-        json={
-            "target_country": "JP",
-            "travel_window": {"season": "autumn", "days": 3},
-            "themes": ["culture"],
-            "constraints": {"avoid_crowds": True},
-            "limit": 2,
-        },
-    )
-    assert recommendation.status_code == 200, recommendation.text
-    recommendation_payload = recommendation.json()
-    assert recommendation_payload["data"]["recommendations"][0]["place"]["content_id"]
-    assert recommendation_payload["meta"]["availability"] == "available"
 
     assert bodies[0]["data"]["sources"] == ["SRC_YOUTUBE"]
     assert bodies[1]["data"]["visitors"]["total"] == 100
@@ -1247,18 +1229,6 @@ def test_all_public_routes_return_explicit_unavailable_without_products() -> Non
             assert payload["data"] is None, path
             assert payload["meta"]["availability"] == "unavailable", path
             assert payload["meta"]["reason"], path
-
-        recommendation = client.post(
-            "/v1/recommendations/destinations",
-            json={
-                "target_country": "JP",
-                "travel_window": {"season": "spring", "days": 2},
-            },
-        )
-        assert recommendation.status_code == 200
-        payload = recommendation.json()
-        assert payload["data"] is None
-        assert payload["meta"]["availability"] == "unavailable"
 
 
 @pytest.mark.parametrize("inherited", [False, True])
@@ -1563,64 +1533,6 @@ def test_regional_snapshot_keeps_comparison_history_and_excludes_ancient_rows(
     assert ancient_diversity_id not in diversity_ids
 
 
-def test_recommendation_snapshot_loads_only_latest_relation_generation(
-    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from app.products import recommendations
-
-    with pipeline.session_factory() as session:
-        latest = session.scalar(
-            select(func.max(PlaceRelation.observed_at)).where(
-                PlaceRelation.from_place_id == PLACE_ID,
-                PlaceRelation.relation_type == "related",
-            )
-        )
-        current_relation_id = session.scalar(
-            select(PlaceRelation.relation_id).where(
-                PlaceRelation.from_place_id == PLACE_ID,
-                PlaceRelation.relation_type == "related",
-                PlaceRelation.observed_at == latest,
-            )
-        )
-    assert latest is not None
-    assert current_relation_id is not None
-    with pipeline.session_factory.begin() as session:
-        ancient_relation = PlaceRelation(
-            from_place_id=PLACE_ID,
-            to_place_id=RELATED_PLACE_ID,
-            relation_type="related",
-            rank=99,
-            score=Decimal("1.0000"),
-            **_fact_audit("SRC_KTO_PLACE_RELATED", latest - timedelta(days=30)),
-        )
-        session.add(ancient_relation)
-        session.flush()
-        ancient_relation_id = ancient_relation.relation_id
-
-    loaded_relation_ids: set[int] = set()
-
-    def remember_loaded(_session: Session, instance: object) -> None:
-        if isinstance(instance, PlaceRelation):
-            loaded_relation_ids.add(instance.relation_id)
-
-    candidates = []
-    monkeypatch.setattr(
-        recommendations.SnapshotPublisher,
-        "publish",
-        lambda _self, candidate: candidates.append(candidate),
-    )
-    event.listen(Session, "loaded_as_persistent", remember_loaded)
-    try:
-        result = recommendations.build_recommendation_snapshot(pipeline.session_factory)
-    finally:
-        event.remove(Session, "loaded_as_persistent", remember_loaded)
-
-    assert result.published_count == 1
-    assert candidates
-    assert current_relation_id in loaded_relation_ids
-    assert ancient_relation_id not in loaded_relation_ids
-
-
 def test_ingestion_retains_partial_fetch_evidence_for_normalization(pipeline: Pipeline):
     from dataclasses import replace
 
@@ -1707,8 +1619,6 @@ def test_alert_retention_keeps_active_entry_and_removes_expired_notice(pipeline)
                 iso_alpha2="CA",
                 name_ko="캐나다",
                 name_en="Canada",
-                default_language="en",
-                default_currency="CAD",
                 created_at=now,
                 updated_at=now,
             )
@@ -1769,39 +1679,6 @@ def test_alert_freshness_limit_follows_the_source_refresh_policy(pipeline: Pipel
     # The seeded refresh policy allows 86,400 s; the old fixed 3-hour limit
     # marked every response between 12-hour collection runs as stale.
     assert freshness["max_acceptable_age_seconds"] == 86_400
-
-
-def test_recommendation_sources_credit_the_crowd_index_observations(
-    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from app.products import recommendations
-    from app.products.formulas import CROWD_FORMULA_VERSION, ScoreResult
-
-    monkeypatch.setattr(
-        recommendations,
-        "crowd_index",
-        lambda value, _population: ScoreResult(
-            50.0 if value is not None else None,
-            "available" if value is not None else "unavailable",
-            None,
-            CROWD_FORMULA_VERSION,
-        ),
-    )
-    candidates = []
-    monkeypatch.setattr(
-        recommendations.SnapshotPublisher,
-        "publish",
-        lambda _self, candidate: candidates.append(candidate),
-    )
-
-    recommendations.build_recommendation_snapshot(pipeline.session_factory)
-
-    assert candidates
-    feature = next(
-        feature for feature in candidates[0].data["features"] if feature["place_id"] == PLACE_ID
-    )
-    assert any(value is not None for value in feature["crowd_by_season"].values())
-    assert "SRC_KTO_REGIONAL_VISITORS" in feature["sources"]
 
 
 def test_forecast_reference_coverage_follows_source_freshness(pipeline: Pipeline) -> None:
@@ -2180,46 +2057,6 @@ def test_backfill_retires_minted_tats_rows_and_reads_serve_their_relations(
     assert alias_response.json()["data"]["content_id"] == PLACE_ID
 
 
-def test_recommendations_credit_relations_recorded_on_retired_aliases(
-    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from app.normalization.place_crosswalk import crosswalk_tats_places
-    from app.products import recommendations
-
-    audit = datetime.now(UTC).replace(tzinfo=None)
-    with pipeline.session_factory.begin() as session:
-        _tourapi_map_for_museum(session)
-        palace_alias = _minted_tats_place(session, "T-palace-2", "경복궁")
-        museum_alias = _minted_tats_place(
-            session, "T-museum-2", "국립민속박물관", source_id="SRC_KTO_PLACE_RELATED"
-        )
-        session.add(
-            PlaceRelation(
-                from_place_id=palace_alias,
-                to_place_id=museum_alias,
-                relation_type="related",
-                rank=1,
-                score=Decimal("100.0000"),
-                **_fact_audit("SRC_KTO_PLACE_RELATED", audit + timedelta(days=1)),
-            )
-        )
-        crosswalk_tats_places(session)
-
-    candidates = []
-    monkeypatch.setattr(
-        recommendations.SnapshotPublisher,
-        "publish",
-        lambda _self, candidate: candidates.append(candidate),
-    )
-    recommendations.build_recommendation_snapshot(pipeline.session_factory)
-
-    feature = next(
-        feature for feature in candidates[0].data["features"] if feature["place_id"] == PLACE_ID
-    )
-    assert [row["content_id"] for row in feature["related_places"]] == [RELATED_PLACE_ID]
-    assert feature["related_places"][0]["title"] == "국립민속박물관"
-
-
 def test_inbound_publishes_collected_passenger_counts(pipeline: Pipeline) -> None:
     with pipeline.session_factory.begin() as session:
         rows = session.scalars(
@@ -2240,3 +2077,71 @@ def test_inbound_publishes_collected_passenger_counts(pipeline: Pipeline) -> Non
     market = response.json()["data"]["markets"][0]
     assert market["passengers"] == 3_000
     assert market["source_availability"]["flights"]["availability"] == "available"
+
+
+def test_legacy_inbound_score_and_seeded_currency_cannot_leak(pipeline, monkeypatch):
+    repo = pipeline.client.app.state.read_repository
+    original = repo._current_snapshot
+
+    def legacy_snapshot(session, endpoint, key):
+        snapshot = original(session, endpoint, key)
+        if snapshot is not None and endpoint == "inbound_market_country":
+            snapshot.data = {**snapshot.data, "inbound_score": 99.9,
+                             "fx": {"currency": "JPY", "krw_rate": 999}}
+        return snapshot
+
+    monkeypatch.setattr(repo, "_current_snapshot", legacy_snapshot)
+    data = pipeline.client.get(
+        "/v1/markets/inbound", params={"countries": "JP", "period": "3m"}
+    ).json()
+    market = data["data"]["markets"][0]
+    assert market["inbound_score"] is None
+    assert market["fx"] is None
+    assert "currency" in market["source_availability"]["fx"]["reason"]
+    assert "inbound_score" not in data["meta"]["formula_versions"]
+    selected = pipeline.client.get(
+        "/v1/markets/inbound",
+        params={"countries": "JP", "period": "3m", "currency": "JPY", "include": "fx"},
+    ).json()["data"]["markets"][0]
+    assert selected["fx"]["currency"] == "JPY"
+    assert selected["fx"]["krw_rate"] != 999
+    assert selected["source_availability"]["fx"]["availability"] == "available"
+
+
+def test_missing_official_forecast_does_not_use_published_visits(pipeline, monkeypatch):
+    repo = pipeline.client.app.state.read_repository
+    original = repo._current_snapshot
+    monkeypatch.setattr(repo, "_current_snapshot", lambda session, endpoint, key: (
+        None if endpoint == "forecast_product" else original(session, endpoint, key)
+    ))
+    response = pipeline.client.get(
+        "/v1/forecasts/visitors", params={"area_code": "11"}
+    ).json()
+    assert response["data"] is None
+    assert response["meta"]["availability"] == "unavailable"
+
+
+def test_missing_child_observations_do_not_use_parent_values(pipeline):
+    child = "eden_area_no_observations"
+    with pipeline.session_factory.begin() as session:
+        now = datetime.now(UTC).replace(tzinfo=None)
+        session.add(Area(eden_area_id=child, name_ko="관측 없는 지역", level="sigungu",
+                         parent_area_id=AREA_ID, active=True, created_at=now, updated_at=now))
+    for path in (f"/v1/regions/{child}/insights", f"/v1/visitors/timeseries?area_code={child}"):
+        response = pipeline.client.get(path).json()
+        assert response["data"] is None
+        assert response["meta"]["availability"] == "unavailable"
+
+
+def test_legacy_relation_score_is_discarded_but_collected_rank_survives(pipeline):
+    response = pipeline.client.get("/v1/places/tour-1").json()
+    relations = response["data"]["related_places"]
+    assert relations
+    assert all(row["score"] is None for row in relations)
+    assert all(row["rank"] is not None for row in relations)
+
+
+def test_seeded_optional_regional_metrics_are_never_served(pipeline):
+    response = pipeline.client.get("/v1/regions/11/insights").json()
+    assert response["data"]["demand"]["avg_stay_nights"] is None
+    assert response["data"]["diversity"]["age_index"] is None

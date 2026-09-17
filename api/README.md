@@ -6,7 +6,7 @@
 
 <p align="center">
   Explore Korean destinations and regional visitor patterns.<br>
-  Compare inbound markets and find places to recommend.
+  Compare inbound markets and explore tourism data.
 </p>
 
 <p align="center">
@@ -44,7 +44,6 @@ EDEN connects regional codes and place identifiers across tourism data sources a
 | Visitor history | Daily, weekly, or monthly visitor indicators |
 | Inbound markets | Visitor, flight, and exchange-rate indicators for Japan, China, Taiwan, the US, and the Philippines |
 | Official alerts | Entry and safety notices with links to their sources |
-| Destination recommendations | Places matching a region and theme, with scoring reasons |
 
 > **Current deployment:** The public API reads published data while a bounded background worker collects and refreshes selected sources. Coverage varies by source. Check observation dates and freshness metadata before using the results.
 
@@ -60,19 +59,6 @@ Get regional insights for Seoul:
 
 ```bash
 curl -fsS 'https://api.edenapi.org/v1/regions/1100000000/insights?period=30d'
-```
-
-Request five cultural destinations for the Japanese market:
-
-```bash
-curl -fsS 'https://api.edenapi.org/v1/recommendations/destinations' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "target_country": "JP",
-    "travel_window": {"season": "autumn"},
-    "themes": ["culture"],
-    "limit": 5
-  }'
 ```
 
 Call the API from a browser:
@@ -100,9 +86,8 @@ Cross-origin GET and POST requests are supported without cookies. Do not set `cr
 | `GET` | `/v1/visitors/timeseries` | Visitor history |
 | `GET` | `/v1/markets/inbound` | Inbound market comparisons |
 | `GET` | `/v1/markets/{country}/alerts` | Official notices |
-| `POST` | `/v1/recommendations/destinations` | Destination recommendations |
 
-Use `place.content_id` from a recommendation to fetch its place details. Supported country codes are `JP`, `CN`, `TW`, `US`, and `PH`. Visitor outlook requests default to 7 days and support up to 30 days.
+Use an EDEN place ID or TourAPI content ID to fetch place details. Supported country codes are `JP`, `CN`, `TW`, `US`, and `PH`. Visitor outlook requests default to 7 days and support up to 30 days.
 
 ## Reading Responses
 
@@ -130,13 +115,11 @@ Some declared fields have no verified source today. They are always `null` (or `
 | `/v1/forecasts/visitors` | `expected_visitors`, `confidence`, `adjustment_factors` | No source forecasts headcounts or confidence; the reference index is not scaled into people |
 | `/v1/markets/inbound` | `social_interest.youtube.score` | A search sample is not a country signal |
 | `/v1/trends` | `destination_searches`, `sns_mentions` | No absolute search-count source; the other social platforms need external approval. `search_ratio` comes from NAVER for Korean province travel keywords only |
-| `/v1/recommendations/destinations` | `estimated_budget_krw`, `budget_krw`, `travel_window.days`, `party_size`, `constraints.accessibility_required`, `constraints.max_travel_minutes` | No verified cost, stay, capacity, accessibility or travel-time source |
 
 ### Understanding the Indicators
 
 - **YouTube metrics** describe a sample of publicly available search results. A search region filter does not identify viewers' nationalities.
-- **Visitor outlook** may use `historical_weekday_proxy`, a reference index based on observations from the same weekday. This is distinct from an actual visitor count forecast.
-- **Recommendation inputs** that cannot be applied appear in `unapplied_inputs`, with reasons. Season only affects crowd calculations when supporting observations exist.
+- **Visitor outlook** requires collected official forecasts. Missing forecasts return `unavailable`; historical visits are not used as substitutes.
 - **Notice translations and summaries** are returned when available. Original notices remain accessible when a translation is missing.
 
 Availability depends on source permissions and collection coverage. NAVER collection requires verified storage rights and successful collection before search ratios can be served. Unsupported social platforms have no invented metrics.
@@ -148,19 +131,29 @@ Implementation coverage and database observations checked on 2026-09-17. Sources
 | Endpoint | Works today | Cadence and lag | Not answered |
 | --- | --- | --- | --- |
 | `GET /v1/trends` | Stored YouTube market keywords include `Korea travel`, `Seoul travel`, `Jeju travel` and their JP/CN/TW translations. Stored KTO keywords are `관광서비스수요` and `문화자연자원 수요`, with `area_code` filtering | YouTube daily; KTO resource demand monthly; NAVER has a daily collection path | NAVER had no observations at the database check. Uncollected keywords return `unavailable`; `destination_searches` and `sns_mentions` are always `null` |
-| `GET /v1/regions/{area_code}/insights` | Province (sido) codes; `period` 7d/30d/90d; add `compare=previous_period` to get `visitors.change_rate` and `comparison` | Daily visitors publish about 30 days late; demand and diversity are monthly, about two months late | Sigungu codes answer with the parent province (`requested_area_code` set, `partial`); `avg_stay_nights`, `age_index` always `null` |
+| `GET /v1/regions/{area_code}/insights` | Province (sido) codes; `period` 7d/30d/90d; add `compare=previous_period` to get `visitors.change_rate` and `comparison` | Daily visitors publish about 30 days late; demand and diversity are monthly, about two months late | Areas without their own observations return `unavailable`; `avg_stay_nights`, `age_index` always `null` |
 | `GET /v1/visitors/timeseries` | Province codes; day/week/month; 7d/30d/90d/12m | Same daily visitor source | `attraction_name` has no source (`unavailable`); `concentration_rate` always `null` |
-| `GET /v1/forecasts/visitors` | Sigungu codes get the official KTO concentration forecast averaged over the area's attractions (`method: official`, `sample_count`); province codes get the historical weekday reference index; weather, festivals and holidays per day | Forecast horizon 30 days; weather refreshed every 3 hours for one grid per province; festivals weekly; holidays monthly | `expected_visitors`, `confidence`, `adjustment_factors` always `null`; `nx`/`ny` other than the province grid are `unavailable` |
+| `GET /v1/forecasts/visitors` | Sigungu codes get the official KTO concentration forecast averaged over the area's attractions (`method: official`, `sample_count`); areas without official forecasts return `unavailable`; weather, festivals and holidays per day | Forecast horizon 30 days; weather refreshed every 3 hours for one grid per province; festivals weekly; holidays monthly | `expected_visitors`, `confidence`, `adjustment_factors` always `null`; `nx`/`ny` other than the province grid are `unavailable` |
 | `GET /v1/markets/inbound` | `JP`, `CN`, `TW`, `US`, `PH`; `period` 3m/6m/12m/24m; `include` blocks visitors, flights, flight_schedule, fx, social_interest; `forecast_days` up to 7 | Visitors monthly (about two months late); flights and passengers monthly; 7-day schedule daily; FX daily | `social_interest.youtube.score` is always `null` by design; only YouTube is collected among social sources |
 | `GET /v1/markets/{country}/alerts` | Originals with source links; existing stored translations and summaries; `types`, `since`, `limit` | Sources refresh every 12 hours; new paid enrichment is disabled | Missing translations return the original with `fallback: true`; `source_scope=local` has no collector; summaries are nullable |
 | `GET /v1/places/{content_id}` | Korean title, category, address, coordinates; `overview`, `en`/`ja`/`zh-CN` titles, `hub`, `related_places`, `nearby_shops` as collection fills them | Overview 60 places per day, translations province by province every six days, hub and related places daily, nearby shops 20 places every six hours | `zh-TW` has no source; places whose KTO name does not match a TourAPI entry keep empty `hub`/`related_places` |
-| `POST /v1/recommendations/destinations` | `target_country`, `themes`, `area_code`, `limit`; `constraints.avoid_crowds: true` applies `travel_window.season` to crowd ranking | Feature snapshot refreshed with the product cycle | `budget_krw`, `travel_window.days`, `party_size` are echoed in `unapplied_inputs`; `accessibility_required`, `max_travel_minutes`, `constraints.extra` make the request `unavailable`; `estimated_budget_krw` always `null` |
 
-The dashboard sends `compare=previous_period` and offers `constraints.avoid_crowds`. It displays applied conditions and missing evidence, serves KTO trends without forcing the YouTube filter, and exposes official sigungu forecasts by area code. Market details include flight schedules and the Korean national tourism balance. Place details include hub data when present.
+The dashboard sends `compare=previous_period`, displays missing evidence, serves KTO trends without forcing the YouTube filter, and exposes official sigungu forecasts by area code. Market details include flight schedules and the Korean national tourism balance. Place details include hub data when present.
 
 At the database check, NAVER observations, nonempty place overviews and passenger values had not arrived. These remain missing in the UI. Existing alert revisions included 150 stored Korean and English summaries from earlier AI enrichment; disabling new enrichment does not remove them. The dashboard labels these summaries and retains links to the originals.
 
-TourAPI event records (`EV`) are excluded from destination recommendations because the feature snapshot has no verified event dates. An old event title must not be presented as an available destination for a new trip.
+## Source-backed responses
+
+Fixed market statistics and seeded country language/currency defaults are removed. Countries are registered only when KTO inbound records contain an ISO identifier and a source nationality name. Supported country codes and source request settings remain collection configuration, not response data.
+
+- Missing evidence returns `null`, an empty result or `unavailable` with a reason. Observed zero values remain zero.
+- No historical weekday forecast, language affinity bonus, title-keyword theme guess or weighted inbound score is served.
+- Related places expose the collected `rank`; `score` is `null`, including for old stored rank-derived scores.
+- The destination recommendation endpoint and dashboard view have been removed. Public API requests to the former route return 404.
+- FX requires an explicit `currency`; country defaults are not inferred.
+- Collected historical data can still be returned with `stale=true`. Source-derived totals, averages and normalization remain supported.
+
+Deploy the new reader code, then apply `../.ops/run.sh migrate upgrade 20260917_0011` with collection paused. This cleanup branches directly from `20260911_0009` and does not apply the separately gated snapshot contract migration. Do not use `upgrade heads` to bypass that gate. It removes the fixed cohort table and country defaults, clears rank-derived relation scores and retires old metric definitions. It preserves collected observations and raw evidence.
 
 ## How It Works
 
@@ -168,7 +161,7 @@ TourAPI event records (`EV`) are excluded from destination recommendations becau
 External sources -> Collection and normalization -> Published MariaDB data -> FastAPI -> Client
 ```
 
-Public requests only read published database snapshots. They do not trigger external collection or LLM calls. The recommendation POST is also a read operation.
+Public requests only read published database snapshots. They do not trigger external collection or LLM calls.
 
 Collection uses one source worker, request budgets and resource limits. Monthly regional demand and diversity sources are checked weekly. Monthly flight refreshes cover the two most recent months while existing history remains stored. Cleanup keeps the current snapshot and two recent retired versions, preserving their referenced facts and source evidence. Superseded catalog errors and sources outside the maintained scope are quarantined without deleting their raw evidence. The API records pilot usage rows (daily counts per pilot key) and nothing else about requests.
 
@@ -215,7 +208,7 @@ app/
   sources/         # External data adapters
   ingestion/       # Collection and retention policies
   normalization/   # Regional and place identity resolution
-  products/        # Published aggregates, outlooks, and recommendations
+  products/        # Published aggregates and outlooks
   readmodels/      # Public API queries
   scheduler/       # Bounded collection, refresh and cleanup jobs; `python -m app.scheduler` runs them standalone
   operations/      # Maintenance and deployment validation logic
@@ -245,6 +238,6 @@ Deployment generates production configuration from the root `.env`. It verifies 
 
 Schema changes require a separate request. Database backup and restore commands are disabled. Public API documentation is served at `/docs`; internal readiness is available on loopback at `/internal/readiness`.
 
-The production database is at migration `20260911_0009` (alert enrichment retry state). Deployment does not run migrations; apply new ones with `../.ops/run.sh migrate` before deploying code that needs them. The Phase 1 storage-contract migration `20260829_0007` is gated behind the soak evidence described in the root README and has not been applied; databases that complete it advance to the merge revision `20260911_0010`.
+The seed cleanup advances the production database from `20260911_0009` to `20260917_0011`. Deployment does not run migrations; apply the explicit target with `../.ops/run.sh migrate` in the order described above. The Phase 1 storage-contract migration `20260829_0007` is gated behind the soak evidence described in the root README and has not been applied; databases that complete it advance to the merge revision `20260911_0010`.
 
 </details>

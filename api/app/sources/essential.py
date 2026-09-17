@@ -27,7 +27,7 @@ DISABLED_SOURCES = frozenset(
 )
 # TourAPI language catalogs and KTO hub/related places were paused on
 # 2026-09-11 and re-enabled on 2026-09-17 (team decision): the place detail
-# and recommendation endpoints declare translations, hubs and related places.
+# endpoints declare translations, hubs and related places.
 TOUR_LANGUAGE_SOURCES = ("SRC_TOUR_KO", "SRC_TOUR_EN", "SRC_TOUR_JA", "SRC_TOUR_ZH_CN")
 EXPANSION_SOURCES = frozenset(
     {

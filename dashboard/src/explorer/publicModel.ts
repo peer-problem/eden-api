@@ -21,19 +21,19 @@ const metrics: Record<string, Record<string, [string, string, string][]>> = {
   forecast: {
     forecast_input: [['daily[].date', '전망일', '날짜'], ['daily[].demand_score', '방문 수요 점수', '점수'], ['daily[].source_concentration_rate', '공식 집중률', '%'], ['daily[].method', '계산 방식', '문자열'], ['daily[].basis', '계산 근거', '문자열'], ['daily[].sample_count', '표본 수', '건'], ['daily[].weather', '날씨', '응답 객체'], ['daily[].festivals', '축제', '목록'], ['daily[].holiday', '공휴일 여부', '참/거짓']],
   },
-  recommendation: {
-    place: [['recommendations[].place.content_id', '장소 ID', '문자열'], ['recommendations[].place.title', '장소명', '문자열'], ['recommendations[].place.location', '위치', '좌표']],
-    place_relation: [['recommendations[].score', '추천 점수', '점수'], ['recommendations[].reasons', '추천 이유', '목록']],
+  places: {
+    place: [['content_id', '장소 ID', '문자열'], ['title', '장소명', '문자열'], ['location', '위치', '좌표']],
+    place_relation: [['related_places[].rank', '연관 장소 원천 순위', '순위']],
   },
 };
 const endpoints: Record<string, string> = {
   regional: 'GET /v1/regions/{area_code}/insights', inbound: 'GET /v1/markets/inbound',
-  trends: 'GET /v1/trends', forecast: 'GET /v1/forecasts/visitors', recommendation: 'POST /v1/recommendations/destinations',
+  trends: 'GET /v1/trends', forecast: 'GET /v1/forecasts/visitors', places: 'GET /v1/places/{content_id}',
 };
 const names: Record<string, string> = {
   regional_visit_observation: '방문 지표', regional_demand_observation: '체류·소비', regional_diversity_observation: '방문자 다양성',
   inbound_visitor_observation: '방한 방문', flight_observation: '항공', fx_observation: '환율', tourism_balance_observation: '관광수지', social_observation: '관심도',
-  forecast_input: '방문 예측', place: '추천 장소', place_relation: '추천 평가',
+  forecast_input: '방문 예측', place: '장소 상세', place_relation: '연관 장소',
 };
 const visitTargets = ['visitors.total', 'visitors.domestic', 'visitors.foreign', 'visitors.change_rate'];
 const regionalFields: Record<string, { name: string; label: string; targets: { table: string; column: string }[] }[]> = {
@@ -71,7 +71,7 @@ export function publicModel(pipelineId: string) {
     name, label: names[name], group: '제공 지표', primary_key: [] as string[],
     columns: [['meta.sources[].source_id', '출처', ''], ...fields].map(([name, label, type]) => ({ name, label, type, description: pipelineId === 'regional' ? calculationNotes[name] : undefined, nullable: false, primary_key: false, references: [] })),
   }));
-  const product = steps.find((step) => step.kind === 'product')!;
+  const product = steps.find((step) => step.kind === 'product' || step.kind === 'reader')!;
   const fields = Object.entries(group).flatMap(([table, fields]) => fields.map(([path, label]) => ({
     id: path, name: `data.${path}`, label, inputs: [{ table, column: path }], target_table: '', target_column: '',
   })));

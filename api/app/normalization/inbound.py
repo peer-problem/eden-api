@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+import pycountry
 from sqlalchemy import select
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session, sessionmaker
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.domain.ids import stable_eden_id
 from app.normalization.raw_content import decoded_raw_json
 from app.repositories.models import (
+    Country,
     InboundVisitorObservation,
     IngestionRun,
     ProvenanceEdge,
@@ -56,7 +58,31 @@ def normalize_kto_inbound_run(
             if not isinstance(country_iso, str):
                 continue
             totals = aggregate_kto_inbound_rows(body)
+            country = pycountry.countries.get(alpha_2=country_iso)
+            if country is None or not totals:
+                continue
             country_id = stable_eden_id("country", "ISO3166", country_iso)
+            source_names = {
+                row["R:국적"].strip()
+                for row in body.get("response", {}).get("list", [])
+                if isinstance(row, dict)
+                and isinstance(row.get("R:국적"), str)
+                and row["R:국적"].strip()
+            }
+            if len(source_names) != 1:
+                continue
+            country_values = {
+                "eden_country_id": country_id,
+                "iso_alpha2": country_iso,
+                "name_ko": next(iter(source_names)),
+                "name_en": country.name,
+                "updated_at": calculated_at,
+            }
+            session.execute(
+                insert(Country)
+                .values(**country_values, created_at=calculated_at)
+                .on_duplicate_key_update(**country_values)
+            )
             for month, visitor_count in sorted(totals.items()):
                 period_start = datetime(int(month[:4]), int(month[4:]), 1)
                 source_updated_at = _database_time(_month_data_as_of(month))

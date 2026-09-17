@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from unicodedata import normalize
 
 import pycountry
@@ -163,7 +163,8 @@ class RelatedPlace(ApiModel):
     content_id: str
     title: str
     relation_type: str
-    score: float = Field(ge=0, le=100)
+    rank: int | None = Field(default=None, ge=1)
+    score: float | None = Field(default=None, ge=0, le=100)
     score_as_of: datetime
 
 
@@ -218,7 +219,7 @@ class ForecastDay(ApiModel):
     festivals: list[str] | None = None
     holiday: bool | None = None
     adjustment_factors: dict[str, float] = Field(default_factory=dict)
-    method: Literal["official", "historical_weekday_proxy"] | None = None
+    method: Literal["official"] | None = None
     basis_period: BasisPeriod | None = None
     sample_count: int | None = Field(default=None, ge=0)
     basis: str | None = None
@@ -360,90 +361,3 @@ class AlertItem(ApiModel):
 class AlertsData(ApiModel):
     country: CountryCode
     items: list[AlertItem]
-
-
-class TravelWindow(ApiModel):
-    season: Literal["spring", "summer", "autumn", "winter"]
-    days: int | None = Field(
-        default=None,
-        ge=1,
-        le=30,
-        deprecated=True,
-        description="호환 입력. 일정 가능성과 순위에 반영하지 않습니다.",
-    )
-
-
-class RecommendationConstraints(ApiModel):
-    max_travel_minutes: int | None = Field(default=None, ge=1, le=720)
-    avoid_crowds: bool = False
-    accessibility_required: bool = False
-    extra: dict[str, Any] = Field(default_factory=dict)
-
-
-class RecommendationRequest(ApiModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "examples": [
-                {
-                    "target_country": "JP",
-                    "travel_window": {"season": "autumn"},
-                    "themes": ["culture", "nature"],
-                    "limit": 5,
-                }
-            ]
-        },
-    )
-
-    target_country: CountryCode
-    travel_window: TravelWindow
-    budget_krw: int | None = Field(default=None, ge=0)
-    themes: list[Literal["nature", "culture", "food", "kpop"]] = Field(default_factory=list)
-    area_code: str | None = None
-    party_size: int | None = Field(
-        default=None,
-        ge=1,
-        le=100,
-        deprecated=True,
-        description="호환 입력. 수용량과 순위에 반영하지 않습니다.",
-    )
-    constraints: RecommendationConstraints = Field(default_factory=RecommendationConstraints)
-    limit: int = Field(default=5, ge=1, le=20)
-
-
-class RecommendationRegion(ApiModel):
-    area_code: str
-    eden_area_id: str
-    name: str
-
-
-class RecommendationPlace(ApiModel):
-    content_id: str
-    title: str
-    location: Location
-
-
-class RecommendationItem(ApiModel):
-    rank: int = Field(ge=1)
-    score: float = Field(ge=0, le=100)
-    region: RecommendationRegion
-    place: RecommendationPlace
-    estimated_budget_krw: int | None = Field(default=None, ge=0)
-    budget_availability: BlockAvailability
-    crowd_index: float | None = Field(default=None, ge=0, le=100)
-    related_places: list[RelatedPlace]
-    reasons: list[str]
-    sources: list[str]
-    formula_version: str
-
-
-class UnappliedInput(ApiModel):
-    field: str
-    value: Any
-    reason: str
-
-
-class RecommendationsData(ApiModel):
-    recommendations: list[RecommendationItem]
-    applied_constraints: dict[str, Any] = Field(default_factory=dict)
-    unapplied_inputs: list[UnappliedInput] = Field(default_factory=list)

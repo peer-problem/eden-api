@@ -7,24 +7,18 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session
 
-from app.domain.ids import stable_eden_id
 from app.inventory import (
     kto_market_trend_target,
     official_notice_targets,
     seed_source_inventories,
 )
 from app.products.formulas import (
-    CROWD_FORMULA_VERSION,
-    INBOUND_FORMULA_VERSION,
     INTEREST_FORMULA_VERSION,
-    RECOMMENDATION_FORMULA_VERSION,
     RISING_KEYWORD_FORMULA_VERSION,
 )
 from app.repositories.models import (
     Area,
     AreaSourceMap,
-    Country,
-    MarketCohort,
     MetricDefinition,
     Place,
     RefreshPolicy,
@@ -54,35 +48,6 @@ MOIS_STYLE_AREA_SOURCES = {
     "SRC_SEMAS_SHOPS",
 }
 TOURAPI_AREA_SOURCES = {"SRC_TOUR_KO", "SRC_TOUR_EN", "SRC_TOUR_JA", "SRC_TOUR_ZH_CN"}
-
-MARKET_COHORT_V1 = (
-    (1, "CN", "중국", "China", "zh-CN", "CNY", 1_374_273),
-    (2, "JP", "일본", "Japan", "ja", "JPY", 939_975),
-    (3, "TW", "대만", "Taiwan", "zh-TW", "TWD", 542_670),
-    (4, "US", "미국", "United States", "en", "USD", 309_168),
-    (5, "PH", "필리핀", "Philippines", "en", "PHP", 153_393),
-)
-
-COHORT_EVIDENCE = {
-    "statistics_period": "2026-Q1",
-    "status": "provisional",
-    "source_id": "SRC_KTO_INBOUND_STATS",
-    "source_url": "https://datalab.visitkorea.or.kr/visualize/getGridData.do",
-    "query": {
-        "qid": "TS_01_16_010",
-        "BASE_YM1": "202601",
-        "BASE_YM2": "202603",
-        "srchAreaDate": "1",
-        "natNm": "전체",
-        "adminYn": "N",
-        "tabDiv": "2",
-    },
-    "row_count": 41346,
-    "verified_at": "2026-08-11T00:00:00+09:00",
-    "official_release": "https://www.mcst.go.kr/site/s_notice/press/pressView.jsp?pSeq=22348",
-    "method": "Sum V:인원수 by R:국적; fix the five largest ISO-addressable countries.",
-}
-
 
 def _upsert(session: Session, table, values: dict[str, Any], key_columns: list[str]) -> None:
     statement = insert(table).values(**values)
@@ -362,41 +327,6 @@ def seed_reference_data(session: Session) -> None:
                     ["source_id", "external_area_code"],
                 )
 
-    for rank, code, name_ko, name_en, language, currency, count in MARKET_COHORT_V1:
-        country_id = stable_eden_id("country", "ISO3166", code)
-        _upsert(
-            session,
-            Country.__table__,
-            {
-                "eden_country_id": country_id,
-                "iso_alpha2": code,
-                "name_ko": name_ko,
-                "name_en": name_en,
-                "default_language": language,
-                "default_currency": currency,
-                "created_at": now,
-                "updated_at": now,
-            },
-            ["eden_country_id"],
-        )
-        _insert_once(
-            session,
-            MarketCohort.__table__,
-            {
-                "version": "market_cohort_v1",
-                "statistics_period": "2026-Q1",
-                "rank": rank,
-                "country_id": country_id,
-                "visitor_count": count,
-                "fixed_at": now,
-                "active": True,
-                "evidence": COHORT_EVIDENCE,
-                "created_at": now,
-                "updated_at": now,
-            },
-            ["version", "rank"],
-        )
-
     metrics = (
         (
             "interest_index",
@@ -405,15 +335,6 @@ def seed_reference_data(session: Session) -> None:
             {"method": "normalize_within_source_then_available_weighted_mean"},
             "Observations matching keyword, country, area and time bucket",
             "Requested 7d, 30d or 90d source-relative window",
-            "Previous equal-length period",
-        ),
-        (
-            "inbound_score",
-            "index_0_100",
-            INBOUND_FORMULA_VERSION,
-            {"weights": {"visitors": 0.4, "flights": 0.25, "fx": 0.15, "social": 0.2}},
-            "Active market_cohort_v1 countries",
-            "Requested 3m, 6m, 12m or 24m window",
             "Previous equal-length period",
         ),
         (
@@ -427,32 +348,6 @@ def seed_reference_data(session: Session) -> None:
             "Keywords with both current and previous observations in the selected sources",
             "Requested 7d, 30d or 90d window",
             "Previous equal-length window",
-        ),
-        (
-            "crowd_index",
-            "percentile_0_100",
-            CROWD_FORMULA_VERSION,
-            {"method": "regional_seasonal_percentile"},
-            "Same EDEN area and seasonal reference population",
-            "Versioned seasonal reference window",
-            "Historical observations in reference population",
-        ),
-        (
-            "recommendation_score",
-            "index_0_100",
-            RECOMMENDATION_FORMULA_VERSION,
-            {
-                "weights": {
-                    "theme_match": 0.35,
-                    "demand": 0.2,
-                    "market_affinity": 0.15,
-                    "budget_fit": 0.15,
-                    "crowd_fit": 0.15,
-                }
-            },
-            "Eligible places after deterministic constraints",
-            "Published recommendation feature snapshot",
-            "Same snapshot and identical request",
         ),
     )
     for metric_id, unit, version, formula, population, window, basis in metrics:

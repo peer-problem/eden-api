@@ -104,16 +104,6 @@ PUBLIC_REQUESTS = (
             "limit": 20,
         },
     ),
-    (
-        "post",
-        "/v1/recommendations/destinations",
-        {"json": {"target_country": "us", "travel_window": {"season": "spring", "days": 3}}},
-        "recommendations",
-        {
-            "target_country": "US",
-            "travel_window": {"season": "spring", "days": 3},
-        },
-    ),
 )
 
 
@@ -313,30 +303,6 @@ INVALID_REQUESTS = (
         "VALIDATION_ERROR",
     ),
     ("get", "/v1/markets/us/alerts", {"params": {"since": "not-a-date"}}, "VALIDATION_ERROR"),
-    (
-        "post",
-        "/v1/recommendations/destinations",
-        {
-            "json": {
-                "target_country": "US",
-                "travel_window": {"season": "spring", "days": 3},
-                "limit": 21,
-            }
-        },
-        "VALIDATION_ERROR",
-    ),
-    (
-        "post",
-        "/v1/recommendations/destinations",
-        {
-            "json": {
-                "target_country": "US",
-                "travel_window": {"season": "spring", "days": 3},
-                "unknown": True,
-            }
-        },
-        "VALIDATION_ERROR",
-    ),
 )
 
 
@@ -366,7 +332,7 @@ def test_input_contract_violations_have_stable_422_errors(
 
 def test_oversized_body_has_stable_413_error(contract_client: TestClient) -> None:
     response = contract_client.post(
-        "/v1/recommendations/destinations",
+        "/v1/trends",
         content=b"{}",
         headers={
             "Content-Type": "application/json",
@@ -384,7 +350,7 @@ def test_chunked_oversized_body_has_stable_413_error(contract_client: TestClient
         yield b'"}'
 
     response = contract_client.post(
-        "/v1/recommendations/destinations",
+        "/v1/trends",
         content=chunks(),
         headers={
             "Content-Type": "application/json",
@@ -414,7 +380,7 @@ def test_unexpected_repository_failure_has_stable_safe_500_error(
     assert "source-body" not in serialized
 
 
-def test_all_eight_route_calls_are_socket_free(
+def test_all_seven_route_calls_are_socket_free(
     contract_client: TestClient,
     fake_read_repository: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -428,7 +394,7 @@ def test_all_eight_route_calls_are_socket_free(
         response = contract_client.request(method, path, **kwargs)
         assert response.status_code == 200, (method, path, response.text)
 
-    assert len(fake_read_repository.calls) == 8
+    assert len(fake_read_repository.calls) == 7
 
 
 @pytest.mark.parametrize("keyword", ["   ", "\t\n", "\u3000"])
@@ -463,14 +429,10 @@ def test_since_requires_timezone(contract_client):
     )
 
 
-def test_recommendation_days_and_party_are_optional_and_not_filled_in(
-    contract_client, fake_read_repository
-):
-    response = contract_client.post(
-        "/v1/recommendations/destinations",
-        json={"target_country": "JP", "travel_window": {"season": "autumn"}},
-    )
-    assert response.status_code == 200
-    scope = fake_read_repository.calls[-1].scope
-    assert "days" not in scope["travel_window"]
-    assert "party_size" not in scope
+def test_removed_recommendation_route_is_not_served(contract_client, fake_read_repository):
+    response = contract_client.post("/v1/recommendations/destinations", json={})
+    assert response.status_code == 404
+    assert fake_read_repository.calls == []
+    schema = contract_client.get("/openapi.json").json()
+    assert "/v1/recommendations/destinations" not in schema["paths"]
+    assert not any("Recommendation" in name for name in schema["components"]["schemas"])

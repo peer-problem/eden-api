@@ -6,10 +6,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.products.forecast import ForecastProductResult, build_forecast_snapshots
 from app.products.inbound import InboundProductResult, build_inbound_snapshots
-from app.products.recommendations import (
-    RecommendationProductResult,
-    build_recommendation_snapshot,
-)
 from app.products.regional import RegionalProductResult, build_regional_snapshots
 from app.products.trends import TrendProductResult, build_trend_snapshot
 
@@ -19,7 +15,6 @@ class ProductFamily(StrEnum):
     REGIONAL = "regional"
     FORECAST = "forecast"
     INBOUND = "inbound"
-    RECOMMENDATION = "recommendation"
 
 
 PRODUCT_FAMILIES = tuple(ProductFamily)
@@ -29,7 +24,6 @@ ProductResult = (
     | RegionalProductResult
     | ForecastProductResult
     | TrendProductResult
-    | RecommendationProductResult
 )
 
 _SOURCE_FAMILIES: dict[str, tuple[ProductFamily, ...]] = {
@@ -44,24 +38,13 @@ _SOURCE_FAMILIES: dict[str, tuple[ProductFamily, ...]] = {
     "SRC_NAVER_TREND": (ProductFamily.TRENDS,),
     "SRC_YOUTUBE": (ProductFamily.TRENDS, ProductFamily.INBOUND),
     "SRC_KTO_RESOURCE_DEMAND": (ProductFamily.TRENDS,),
-    "SRC_KTO_REGIONAL_VISITORS": (
-        ProductFamily.FORECAST,
-        ProductFamily.REGIONAL,
-        ProductFamily.RECOMMENDATION,
-    ),
+    "SRC_KTO_REGIONAL_VISITORS": (ProductFamily.REGIONAL,),
     "SRC_KTO_DEMAND_INTENSITY": (
         ProductFamily.REGIONAL,
-        ProductFamily.RECOMMENDATION,
     ),
     "SRC_KTO_DIVERSITY": (ProductFamily.REGIONAL,),
     "SRC_TOURISM_ADMISSION": (ProductFamily.REGIONAL,),
-    "SRC_TOUR_KO": (ProductFamily.RECOMMENDATION, ProductFamily.REGIONAL),
-    "SRC_TOUR_EN": (ProductFamily.RECOMMENDATION,),
-    "SRC_TOUR_JA": (ProductFamily.RECOMMENDATION,),
-    "SRC_TOUR_ZH_CN": (ProductFamily.RECOMMENDATION,),
-    "SRC_KTO_PLACE_HUB": (ProductFamily.RECOMMENDATION,),
-    "SRC_KTO_PLACE_RELATED": (ProductFamily.RECOMMENDATION,),
-    "SRC_SEMAS_SHOPS": (ProductFamily.RECOMMENDATION,),
+    "SRC_TOUR_KO": (ProductFamily.REGIONAL,),
     "SRC_KTO_VISITOR_FORECAST": (ProductFamily.FORECAST,),
     "SRC_KMA_FORECAST": (ProductFamily.FORECAST,),
     "SRC_FESTIVAL": (ProductFamily.FORECAST,),
@@ -91,6 +74,4 @@ def refresh_product_family(
         return build_regional_snapshots(session_factory)
     if product_family == ProductFamily.FORECAST:
         return build_forecast_snapshots(session_factory)
-    if product_family == ProductFamily.INBOUND:
-        return build_inbound_snapshots(session_factory)
-    return build_recommendation_snapshot(session_factory)
+    return build_inbound_snapshots(session_factory)
