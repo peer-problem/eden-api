@@ -155,7 +155,9 @@ export default function App() {
                 alignText="left"
                 active={r.code === area}
                 aria-current={r.code === area ? "true" : undefined}
-                onClick={() => update({ area: r.code, forecastArea: "" })}
+                onClick={() =>
+                  update({ area: r.code, forecastArea: "", placeArea: "", placeQuery: "", placePage: "" })
+                }
               >
                 {r.name}
               </Button>
@@ -376,7 +378,7 @@ export default function App() {
                 }}
               />
             ) : view.id === "regions" ? (
-              <RegionView {...viewProps} />
+              <RegionView {...viewProps} showPlace={showPlace} />
             ) : view.id === "markets" ? (
               <MarketView
                 {...viewProps}

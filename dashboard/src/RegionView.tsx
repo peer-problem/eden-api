@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { request, useResource, type Resource } from './api';
 import { date, number, regionName, regions } from './data';
+import PlaceList from './PlaceList';
 import { RegionMap } from './RegionMap';
 import { sigunguFor, sigunguName } from './sigungu';
 import type { Envelope, Forecast, Insights, Meta, Timeseries } from './types';
@@ -23,6 +24,8 @@ export interface ViewProps {
   workspaceActionsTarget?: HTMLElement | null;
 }
 
+const REGION_SCOPED_PARAMS = { forecastArea: '', placeArea: '', placeQuery: '', placePage: '' };
+
 type RegionSeriesStore = Record<string, Envelope<Timeseries>>;
 
 export default function RegionView({
@@ -30,12 +33,13 @@ export default function RegionView({
   update,
   showSources,
   workspaceActionsTarget,
-}: ViewProps) {
+  showPlace,
+}: ViewProps & { showPlace: (contentId: string) => void }) {
   const area = params.get('area') || regions[0].code;
   const period = ['7d', '30d', '90d'].includes(params.get('period') || '')
     ? params.get('period')!
     : '30d';
-  const tab = ['history', 'outlook'].includes(params.get('tab') || '')
+  const tab = ['history', 'outlook', 'places'].includes(params.get('tab') || '')
     ? params.get('tab')!
     : 'history';
   const insightsResource = useResource<Insights>(
@@ -86,7 +90,7 @@ export default function RegionView({
                 small
                 active={region.code === area}
                 aria-pressed={region.code === area}
-                onClick={() => update({ area: region.code, forecastArea: '' })}
+                onClick={() => update({ area: region.code, ...REGION_SCOPED_PARAMS })}
               >
                 {region.name}
               </Button>
@@ -109,7 +113,7 @@ export default function RegionView({
       </div>
 
       <div className="region-overview">
-        <RegionMap value={area} onChange={(area) => update({ area, forecastArea: '' })} />
+        <RegionMap value={area} onChange={(area) => update({ area, ...REGION_SCOPED_PARAMS })} />
         <RegionComparison
           selectedCode={area}
           responses={seriesStore.responses}
@@ -138,6 +142,19 @@ export default function RegionView({
           id="outlook"
           title="방문 수요 참고"
           panel={<Outlook area={area} params={params} update={update} showSources={showSources} />}
+        />
+        <Tab
+          id="places"
+          title="관광지"
+          panel={
+            <PlaceList
+              area={area}
+              params={params}
+              update={update}
+              showSources={showSources}
+              showPlace={showPlace}
+            />
+          }
         />
       </Tabs>
     </>
@@ -378,20 +395,20 @@ function Outlook({
   update: ViewProps['update'];
   showSources: (meta: Meta) => void;
 }) {
-  // KTO 공식 집중률은 시군구 단위로만 수집되므로 시도 코드로는 항상 unavailable이다.
-  // 선택한 시도의 시군구 중에서만 고르게 하고, 지정이 없으면 첫 시군구를 조회한다.
-  const options = sigunguFor(area);
+  // KTO 공식 집중률은 시군구 단위로 수집되고, 시도 요청은 API가 소속 시군구 전체의
+  // 평균을 돌려준다. 시도 전체를 기본으로 두고 시군구를 골라 좁힐 수 있게 한다.
+  const options = [{ code: area, name: `${regionName(area)} 전체` }, ...sigunguFor(area)];
   const requestedArea = params.get('forecastArea');
   const forecastArea = options.some((item) => item.code === requestedArea)
     ? requestedArea!
-    : options[0]?.code ?? area;
+    : area;
   const resource = useResource<Forecast>(
     `/forecasts/visitors?area_code=${encodeURIComponent(forecastArea)}&days=7`,
   );
   const daily = resource.response?.data?.daily ?? [];
   return (
     <Section
-      title={`7일 방문 수요 참고 · ${sigunguName(forecastArea)}`}
+      title={`7일 방문 수요 참고 · ${forecastArea === area ? regionName(area) : sigunguName(forecastArea)}`}
       extra={
         <MetaLine
           meta={resource.response?.meta}
@@ -408,13 +425,11 @@ function Outlook({
             label="방문 전망 시군구"
             value={forecastArea}
             options={options}
-            onChange={(code) =>
-              update({ forecastArea: code === options[0]?.code ? '' : code })
-            }
+            onChange={(code) => update({ forecastArea: code === area ? '' : code })}
           />
         </label>
         <span className="section-note">
-          공식 집중률은 {regionName(area)} 안의 시군구 단위로 제공됩니다.
+          시도 전체는 소속 시군구 관광지의 공식 집중률 평균입니다.
         </span>
       </div>
       <State resource={resource} empty={!daily.length}>

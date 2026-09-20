@@ -171,6 +171,26 @@ export interface Trend {
   }[];
   rising_keywords: { keyword: string; score: number }[];
 }
+export interface PlaceListItem {
+  content_id: string;
+  title: string;
+  language: string;
+  category: string | null;
+  address: string | null;
+  location: { lat: number; lng: number } | null;
+  area: Area;
+}
+export interface PlaceList {
+  area: Area;
+  requested_area_code: string | null;
+  language: string;
+  query: string | null;
+  total: number;
+  limit: number;
+  offset: number;
+  items: PlaceListItem[];
+  sources: string[];
+}
 export interface Place {
   content_id: string;
   title: string;
