@@ -312,7 +312,11 @@ export function State<T>({
         />
       </div>
     );
-  if (!resource.response?.data || resource.response.meta.availability === 'unavailable' || empty)
+  if (
+    !resource.response?.data
+    || empty
+    || (resource.response.meta.availability === 'unavailable' && empty !== false)
+  )
     return (
       <p className="inline-note" role="status">
         {resource.response?.meta.reason ||

@@ -9,6 +9,7 @@ import {
   buildVisitorOutlook,
   demandRowsForDisplay,
   fillDemandOutlook,
+  outlookPackFor,
 } from './regionAnalysis';
 import { RegionMap } from './RegionMap';
 import { sigunguFor, sigunguName } from './sigungu';
@@ -54,12 +55,15 @@ export default function RegionView({
     `/visitors/timeseries?area_code=${encodeURIComponent(area)}&period=${period}&granularity=day`,
   );
   const meta = seriesResource.response?.meta ?? insightsResource.response?.meta;
+  const today = seoulIsoDate();
   const outlook = buildVisitorOutlook(
     (seriesResource.response?.data?.series ?? []).map((point) => ({
       date: point.period_start,
       value: point.total,
     })),
-    seoulIsoDate(),
+    today,
+    7,
+    outlookPackFor(area),
   );
   const refresh = () => {
     insightsResource.retry();
@@ -360,7 +364,12 @@ function Outlook({
     `/forecasts/visitors?area_code=${encodeURIComponent(forecastArea)}&days=${FORECAST_LOOKAHEAD_DAYS}`,
   );
   const daily = resource.response?.data?.daily ?? [];
-  const rows = demandRowsForDisplay(fillDemandOutlook(daily));
+  const rows = demandRowsForDisplay(
+    fillDemandOutlook(daily, outlookPackFor(area), {
+      today: seoulIsoDate(),
+      days: FORECAST_LOOKAHEAD_DAYS,
+    }),
+  );
   const dayByDate = new Map(daily.map((day) => [day.date.slice(0, 10), day]));
   const basis = daily.find((day) => day.basis)?.basis;
   const hasOutlook = rows.some((row) => row.kind === 'outlook');

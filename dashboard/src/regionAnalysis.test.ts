@@ -5,6 +5,7 @@ import {
   buildVisitorOutlook,
   demandRowsForDisplay,
   fillDemandOutlook,
+  weekdayMeans,
 } from './regionAnalysis';
 
 test('visitor outlook keeps observed points and adds a gap then 7 reference days', () => {
@@ -106,6 +107,51 @@ test('demand rows put trend predictions above official days, newest first', () =
       ['2026-09-22', 'official'],
       ['2026-09-21', 'official'],
     ],
+  );
+});
+
+test('prepared weekday pack fills visitor outlook without averaging on read', () => {
+  const pack = {
+    weekday_visitors: [70, 10, 20, 30, 40, 50, 60] as const,
+    weekday_concentration: [7, 1, 2, 3, 4, 5, 6] as const,
+  };
+  const result = buildVisitorOutlook(
+    [{ date: '2026-08-21', value: 110 }],
+    '2026-08-24',
+    2,
+    pack,
+  );
+  assert.equal(result.byDate['2026-08-22'], 60);
+  assert.equal(result.byDate['2026-08-23'], 70);
+  assert.deepEqual(result.outlook.map((point) => point.value), [10, 20]);
+});
+
+test('prepared weekday pack fills demand days that have no official rate', () => {
+  const pack = {
+    weekday_visitors: [0, 0, 0, 0, 0, 0, 0] as const,
+    weekday_concentration: [17, 11, 12, 13, 14, 15, 16] as const,
+  };
+  const rows = fillDemandOutlook(
+    [
+      { date: '2026-09-21', source_concentration_rate: 35.55, method: 'official' },
+      { date: '2026-09-22', source_concentration_rate: null, method: null },
+    ],
+    pack,
+  );
+  assert.deepEqual(rows, [
+    { date: '2026-09-21', rate: 35.55, kind: 'official' },
+    { date: '2026-09-22', rate: 12, kind: 'outlook' },
+  ]);
+});
+
+test('weekday means keep one value per calendar weekday', () => {
+  assert.deepEqual(
+    weekdayMeans([
+      { date: '2026-09-20', value: 10 },
+      { date: '2026-09-21', value: 20 },
+      { date: '2026-09-27', value: 30 },
+    ]),
+    [20, 20, 20, 20, 20, 20, 20],
   );
 });
 
