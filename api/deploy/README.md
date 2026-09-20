@@ -8,13 +8,26 @@ switches and restarts `eden-api`, and the unit dependencies below carry
 | Unit | Role | Memory cap |
 | --- | --- | --- |
 | `eden-api.service` | uvicorn, public API, pilot usage recording (`SCHEDULER_ENABLED=false`) | 400M |
-| `eden-scheduler.service` | `python -m app.scheduler`, same jobs and locks as before | 600M |
+| `eden-scheduler.service` | `python -m app.scheduler`, same jobs and locks as before | 1G |
 | `eden-api-watchdog.timer` | every 30 s: kills eden-api when loopback `/internal/health` fails twice | – |
 
 `eden-scheduler` is `PartOf=` and `After=` `eden-api`, and `eden-api` `Wants=`
 `eden-scheduler`, so every `systemctl stop|start|restart eden-api` in the deploy
 and schema-finalization paths applies to both, in the right order. A scheduler
 crash or memory-cap kill restarts only the scheduler.
+
+## Shared MariaDB memory budget
+
+`mariadb/60-shared-vps.cnf` records the shared VPS configuration at
+`/etc/mysql/mariadb.conf.d/60-shared-vps.cnf`. The InnoDB cache uses 512 MiB,
+with a 16 MiB MyISAM key cache. These are cache budgets; MariaDB also needs
+memory for connections and internal structures. Keep the cache independent
+of total host RAM. Normal API deployments preserve the existing DB settings.
+
+Observation retention scans candidate IDs in pages of 500 and checks snapshot
+protection in Python. It never expands all protected IDs into a SQL `NOT IN`
+clause, which previously exceeded MariaDB's placeholder limit and accumulated
+memory on repeated failures.
 
 ## One-time installation (VPS, as root)
 

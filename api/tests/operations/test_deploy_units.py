@@ -29,7 +29,7 @@ def test_scheduler_unit_follows_the_api_and_runs_the_unchanged_runtime() -> None
     assert "EnvironmentFile=-/opt/eden/shared/phase1-contract.env" in lines
     assert service["Restart"] == "always"
     assert service["MemoryHigh"] == "infinity"
-    assert service["MemoryMax"] == "600M"
+    assert service["MemoryMax"] == "1G"
     assert service["MemorySwapMax"] == "0"
     assert service["Environment"] == "MALLOC_ARENA_MAX=2"
     assert unit["Install"]["WantedBy"] == "multi-user.target"

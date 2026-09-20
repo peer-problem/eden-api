@@ -1,0 +1,13 @@
+[mariadbd]
+default_time_zone=+00:00
+bind-address=127.0.0.1
+skip-name-resolve
+# Fixed shared-host budget. Do not scale this cache with total host RAM.
+innodb_buffer_pool_size=512M
+innodb_buffer_pool_size_max=512M
+innodb_buffer_pool_size_auto_min=256M
+key_buffer_size=16M
+max_connections=120
+max_allowed_packet=256M
+character-set-server=utf8mb4
+collation-server=utf8mb4_unicode_ci
