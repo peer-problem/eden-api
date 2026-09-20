@@ -404,12 +404,7 @@ def test_openapi_query_defaults_and_bounds_match_phase_one(contract_client: Test
     assert trends["keyword"]["schema"]["maxLength"] == 200
     assert _enum(trends["country"]["schema"]) == {"all"}
     assert trends["country"]["schema"]["default"] == "all"
-    assert _enum(_array_items(trends["social_sources"]["schema"])) == {
-        "youtube",
-        "instagram",
-        "reddit",
-        "facebook",
-    }
+    assert _enum(_array_items(trends["social_sources"]["schema"])) == {"youtube", "naver"}
     assert _enum(trends["period"]["schema"]) == {"7d", "30d", "90d"}
     assert trends["period"]["schema"]["default"] == "30d"
     assert _enum(trends["time_unit"]["schema"]) == {"day", "week", "month"}
@@ -505,12 +500,7 @@ def test_openapi_query_defaults_and_bounds_match_phase_one(contract_client: Test
         "tourism_balance",
         "social_interest",
     }
-    assert _enum(_array_items(inbound["social_sources"]["schema"])) == {
-        "youtube",
-        "instagram",
-        "reddit",
-        "facebook",
-    }
+    assert _enum(_array_items(inbound["social_sources"]["schema"])) == {"youtube"}
 
     alerts = _parameters(openapi, "/v1/markets/{country}/alerts")
     assert alerts["country"]["required"] is True

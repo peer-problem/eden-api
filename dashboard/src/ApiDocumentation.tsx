@@ -2,7 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type ReactN
 import { createPortal } from "react-dom";
 import { AnchorButton, Button, Icon, Spinner } from "@blueprintjs/core";
 import { API_BASE, OPENAPI_URL, PUBLIC_API_ORIGIN } from "./api";
-import { countries, regions } from "./data";
+import {
+  collectedTrendKeywordOptions,
+  countries,
+  defaultCountryForTrendKeyword,
+  isOfficialTrendKeyword,
+  regions,
+  SOCIAL_TREND_KEYWORDS,
+} from "./data";
 import type { Envelope, PlaceList } from "./types";
 import { JsonCode, ResponseReading } from "./responseReading";
 import { Combobox, Dropdown } from "./ui";
@@ -21,6 +28,7 @@ import {
   type OpenApiParameter,
   type OpenApiSchema,
 } from "./apiDocs";
+import { isWorkspaceParameter, workspaceLinkForRequest, type WorkspaceLink } from "./explorer/publicQueries";
 
 type PageSelection = "guide" | string;
 type DetailTab = "request" | "code" | "response" | "schema";
@@ -133,7 +141,7 @@ const PARAMETER_COPY: Record<string, ParameterCopy> = {
   },
   social_sources: {
     label: "소셜미디어 자료",
-    description: "조회에 포함할 소셜미디어 자료를 선택하세요. 선택하지 않으면 YouTube를 사용합니다.",
+    description: "트렌드는 YouTube와 NAVER를 고를 수 있습니다. 방한 시장은 YouTube만 있습니다. 선택하지 않으면 YouTube를 사용합니다.",
   },
   period: {
     label: "조회 기간",
@@ -280,17 +288,7 @@ const OPTION_COPY: Record<string, string> = {
   ja: "일본어",
   "zh-CN": "중국어 간체",
   youtube: "YouTube",
-  instagram: "Instagram",
-  reddit: "Reddit",
-  facebook: "Facebook",
-};
-
-const TREND_KEYWORDS: Record<string, string[]> = {
-  CN: ["韩国旅游", "首尔旅游", "济州岛旅游"],
-  JP: ["韓国旅行", "ソウル旅行", "済州島旅行"],
-  TW: ["韓國旅遊", "首爾旅遊", "濟州島旅遊"],
-  US: ["Korea travel", "Seoul travel", "Jeju travel"],
-  PH: ["Korea travel", "Seoul travel", "Jeju travel"],
+  naver: "NAVER",
 };
 
 const PARAMETER_TONES: Record<string, string> = {
@@ -367,11 +365,12 @@ function parameterOptions(
   if (parameter.name === "currency")
     return countries.map((country) => ({ value: country.currency, label: `${country.name} ${country.currency}` }));
   if (parameter.name === "keyword" && operation.path === "/v1/trends") {
-    const country = values.country;
-    const keywords = country && country !== "all"
-      ? TREND_KEYWORDS[country] ?? []
-      : [...new Set(Object.values(TREND_KEYWORDS).flat())];
-    return keywords.map((keyword) => ({ value: keyword, label: keyword }));
+    return collectedTrendKeywordOptions();
+  }
+  if (parameter.name === "social_sources") {
+    const allowed =
+      operation.path === "/v1/markets/inbound" ? ["youtube"] : ["youtube", "naver"];
+    return allowed.map((value) => ({ value, label: optionLabel(value) }));
   }
   const enums = schemaEnum(parameter.schema);
   if (enums.length) return enums.map((value) => ({ value, label: optionLabel(value) }));
@@ -669,12 +668,14 @@ function ParameterControl({
   values,
   value,
   onChange,
+  onOpenWorkspace,
 }: {
   operation: ApiOperation;
   parameter: OpenApiParameter;
   values: Record<string, string>;
   value: string;
   onChange: (value: string) => void;
+  onOpenWorkspace?: () => void;
 }) {
   const copy = parameterCopy(operation, parameter);
   const options = parameterOptions(operation, parameter, values);
@@ -687,14 +688,28 @@ function ParameterControl({
       : [...selected, option];
     onChange(next.join(", "));
   };
+  const fieldKey = (
+    <>
+      <span className="docs-field-title">{copy.label}</span>
+      <code>{parameter.name}</code>
+    </>
+  );
   return (
     <div className="docs-field" data-param-tone={parameterTone(parameter.name)}>
       <div className="docs-field-heading">
         <div>
-          <span className="docs-field-key">
-            <span className="docs-field-title">{copy.label}</span>
-            <code>{parameter.name}</code>
-          </span>
+          {onOpenWorkspace ? (
+            <button
+              type="button"
+              className="docs-field-key"
+              onClick={onOpenWorkspace}
+              aria-label={`${copy.label} 작업 공간`}
+            >
+              {fieldKey}
+            </button>
+          ) : (
+            <span className="docs-field-key">{fieldKey}</span>
+          )}
           {parameter.required && <span className="docs-required">필수</span>}
         </div>
         {meta && <span>{meta}</span>}
@@ -880,16 +895,24 @@ function SchemaTree({
   );
 }
 
+function envelopeSources(body: unknown) {
+  if (!body || typeof body !== "object" || !("meta" in body)) return [];
+  const sources = (body as { meta?: { sources?: { source_id?: string }[] } }).meta?.sources;
+  return (sources ?? []).map((source) => source.source_id).filter((id): id is string => Boolean(id));
+}
+
 function EndpointDetail({
   document,
   operation,
   inline = false,
   onPreviewChange,
+  onOpenWorkspace,
 }: {
   document: OpenApiDocument;
   operation: ApiOperation;
   inline?: boolean;
   onPreviewChange?: (operation: ApiOperation, url: string, values: Record<string, string>) => void;
+  onOpenWorkspace?: (target: WorkspaceLink) => void;
 }) {
   const friendly = endpointCopy(operation);
   const [tab, setTab] = useState<DetailTab>("request");
@@ -963,6 +986,14 @@ function EndpointDetail({
   };
 
   const displayedResponse = live?.body ?? firstExample(operation);
+  const workspaceLink = workspaceLinkForRequest(
+    operation.path,
+    values,
+    envelopeSources(live?.body),
+  );
+  const openWorkspace = () => {
+    if (workspaceLink) onOpenWorkspace?.(workspaceLink);
+  };
   return (
     <article className={`docs-endpoint-detail ${inline ? "is-inline" : ""}`}>
       {!inline && (
@@ -977,17 +1008,19 @@ function EndpointDetail({
           </div>
         </header>
       )}
-      <div className="docs-tabs" role="tablist" aria-label="API 상세">
-        {([
-          ["request", "요청"],
-          ["code", "코드"],
-          ["response", "응답"],
-          ["schema", "필드"],
-        ] as const).map(([id, name]) => (
-          <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "is-active" : undefined} onClick={() => setTab(id)}>
-            {name}
-          </button>
-        ))}
+      <div className="docs-detail-nav">
+        <div className="docs-tabs" role="tablist" aria-label="API 상세">
+          {([
+            ["request", "요청"],
+            ["code", "코드"],
+            ["response", "응답"],
+            ["schema", "필드"],
+          ] as const).map(([id, name]) => (
+            <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "is-active" : undefined} onClick={() => setTab(id)}>
+              {name}
+            </button>
+          ))}
+        </div>
       </div>
       {tab === "request" && (
         <section className="docs-panel">
@@ -1000,11 +1033,25 @@ function EndpointDetail({
                   parameter={parameter}
                   values={values}
                   value={values[parameter.name] ?? ""}
+                  onOpenWorkspace={
+                    workspaceLink && onOpenWorkspace && isWorkspaceParameter(parameter.name)
+                      ? openWorkspace
+                      : undefined
+                  }
                   onChange={(value) => {
                     setValues((current) => {
                       const next = { ...current, [parameter.name]: value };
                       if (operation.path === "/v1/trends" && parameter.name === "country" && value !== "all") {
-                        next.keyword = TREND_KEYWORDS[value]?.[0] ?? current.keyword;
+                        const allowed = SOCIAL_TREND_KEYWORDS[value] ?? [];
+                        if (
+                          !isOfficialTrendKeyword(current.keyword) &&
+                          !allowed.includes(current.keyword)
+                        ) {
+                          next.keyword = allowed[0] ?? current.keyword;
+                        }
+                      }
+                      if (operation.path === "/v1/trends" && parameter.name === "keyword") {
+                        next.country = defaultCountryForTrendKeyword(value) ?? "all";
                       }
                       return next;
                     });
@@ -1060,7 +1107,18 @@ function EndpointDetail({
               <code>{live.requestUrl}</code>
             </div>
           )}
-          <ResponseReading value={displayedResponse} />
+          <ResponseReading
+            value={displayedResponse}
+            onSources={
+              workspaceLink && onOpenWorkspace
+                ? (meta) =>
+                    onOpenWorkspace({
+                      ...workspaceLink,
+                      sources: meta.sources.map((source) => source.source_id).filter(Boolean),
+                    })
+                : undefined
+            }
+          />
           {displayedResponse !== undefined && (
             <div className="docs-json-source">
               <div className="docs-json-source-toolbar">
@@ -1134,13 +1192,36 @@ function ApiPicker({
 function RequestUrlPreview({
   operation,
   url,
+  onOpenWorkspace,
 }: {
   operation?: ApiOperation;
   url: string;
+  onOpenWorkspace?: () => void;
 }) {
   const parsed = new URL(url);
   const templateSegments = operation?.path.split("/") ?? [];
   const actualSegments = parsed.pathname.split("/");
+  const token = (name: string, label: string) => {
+    const tone = parameterTone(name);
+    if (onOpenWorkspace && isWorkspaceParameter(name)) {
+      return (
+        <button
+          type="button"
+          className="docs-url-token"
+          data-param-tone={tone}
+          onClick={onOpenWorkspace}
+          aria-label={`${name} 작업 공간`}
+        >
+          {label}
+        </button>
+      );
+    }
+    return (
+      <span className="docs-url-token" data-param-tone={tone}>
+        {label}
+      </span>
+    );
+  };
   return (
     <code className="docs-request-url">
       <span className="docs-url-origin">{parsed.origin}/</span>
@@ -1150,17 +1231,14 @@ function RequestUrlPreview({
         return (
           <span key={`${segment}-${index}`}>
             {index > 0 && "/"}
-            <span
-              className={parameterName ? "docs-url-token" : undefined}
-              data-param-tone={parameterName ? parameterTone(parameterName) : undefined}
-            >{segment}</span>
+            {parameterName ? token(parameterName, segment) : segment}
           </span>
         );
       })}
       {[...parsed.searchParams.entries()].map(([name, value], index) => (
         <span className="docs-url-query" key={`${name}-${value}-${index}`}>
           {index === 0 ? "?" : "&"}
-          <span className="docs-url-token" data-param-tone={parameterTone(name)}>{name}={value}</span>
+          {token(name, `${name}=${value}`)}
         </span>
       ))}
     </code>
@@ -1170,23 +1248,33 @@ function RequestUrlPreview({
 export default function ApiDocumentation({
   workspaceActionsTarget,
   onEndpointTitleChange,
+  onOpenWorkspace,
 }: {
   workspaceActionsTarget?: HTMLElement | null;
   onEndpointTitleChange?: (title?: string) => void;
+  onOpenWorkspace?: (target: WorkspaceLink) => void;
 }) {
   const [document, setDocument] = useState<OpenApiDocument>();
   const [error, setError] = useState<string>();
   const [selection, setSelection] = useState<PageSelection>("");
   const [previewUrl, setPreviewUrl] = useState(`${PUBLIC_API_ORIGIN}/`);
   const [previewOperation, setPreviewOperation] = useState<ApiOperation>();
+  const [previewValues, setPreviewValues] = useState<Record<string, string>>({});
   const operations = useMemo(() => document ? readOperations(document) : [], [document]);
   const selectedOperation = selection === "guide"
     ? undefined
     : operations.find((operation) => operation.id === selection) ?? operations[0];
-  const handlePreviewChange = useCallback((operation: ApiOperation, url: string) => {
+  const handlePreviewChange = useCallback((operation: ApiOperation, url: string, values: Record<string, string>) => {
     setPreviewOperation(operation);
     setPreviewUrl(url);
+    setPreviewValues(values);
   }, []);
+  const previewWorkspaceLink = previewOperation
+    ? workspaceLinkForRequest(previewOperation.path, previewValues)
+    : null;
+  const openPreviewWorkspace = previewWorkspaceLink && onOpenWorkspace
+    ? () => onOpenWorkspace(previewWorkspaceLink)
+    : undefined;
   useLayoutEffect(() => {
     if (selection === "guide" || !selectedOperation) {
       onEndpointTitleChange?.(undefined);
@@ -1245,7 +1333,11 @@ export default function ApiDocumentation({
       )}
       <div className="docs-example-bar">
         <span>API 예시</span>
-        <RequestUrlPreview operation={previewOperation} url={previewUrl} />
+        <RequestUrlPreview
+          operation={previewOperation}
+          url={previewUrl}
+          onOpenWorkspace={openPreviewWorkspace}
+        />
         <Button minimal small icon="duplicate" aria-label="요청 URL 복사" onClick={() => copyText(previewUrl)} />
       </div>
       <div className="docs-layout is-list-page">
@@ -1263,6 +1355,7 @@ export default function ApiDocumentation({
                 operation={selectedOperation}
                 inline
                 onPreviewChange={handlePreviewChange}
+                onOpenWorkspace={onOpenWorkspace}
               />
             </section>
           ) : selection === "guide" ? (

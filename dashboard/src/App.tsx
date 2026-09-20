@@ -9,6 +9,7 @@ import {
   Tooltip,
 } from "@blueprintjs/core";
 import { date, regionName, regions } from "./data";
+import type { WorkspaceLink } from "./explorer/publicQueries";
 import type { Meta } from "./types";
 import { Properties, Sources } from "./ui";
 import { getModelContext, registerExplorerTools } from "./webmcp";
@@ -111,6 +112,23 @@ export default function App() {
       view: "database",
       pipeline,
       sources: meta.sources.map((source) => source.source_id).filter(Boolean).join(","),
+      place: "",
+    });
+    setInspector(null);
+    setDetailOpen(false);
+  };
+  const showWorkspace = (target: WorkspaceLink) => {
+    writeUrl({
+      view: "database",
+      pipeline: target.pipeline,
+      table: target.table,
+      records: "1",
+      sources: target.sources?.filter(Boolean).join(",") ?? "",
+      area: target.area ?? "",
+      keyword: target.keyword ?? "",
+      country: target.country ?? "",
+      period: target.period ?? "",
+      content_id: target.place ?? "",
       place: "",
     });
     setInspector(null);
@@ -371,6 +389,7 @@ export default function App() {
                 <ApiDocumentation
                   workspaceActionsTarget={workspaceActionsTarget}
                   onEndpointTitleChange={setDocsCrumb}
+                  onOpenWorkspace={showWorkspace}
                 />
               ) : view.id === "database" ? (
                 <DatabaseWorkspace {...viewProps} />

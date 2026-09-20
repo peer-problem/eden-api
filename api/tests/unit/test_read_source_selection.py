@@ -31,9 +31,9 @@ def test_inbound_freshness_uses_selected_blocks_and_social_sources() -> None:
         "inbound_markets",
         {
             "include": ["visitors", "social_interest"],
-            "social_sources": ["reddit"],
+            "social_sources": ["youtube"],
         },
-    ) == ("SRC_KTO_INBOUND_STATS", "SRC_REDDIT")
+    ) == ("SRC_KTO_INBOUND_STATS", "SRC_YOUTUBE")
 
     assert _request_source_ids(
         "inbound_markets",
@@ -78,6 +78,11 @@ def test_excluded_source_watermark_does_not_age_the_response() -> None:
 
 def test_trend_area_requests_list_the_official_resource_demand_source() -> None:
     assert _request_source_ids("trends", {"social_sources": ["youtube"]}) == ("SRC_YOUTUBE",)
+    assert _request_source_ids("trends", {"social_sources": ["naver"]}) == ("SRC_NAVER_TREND",)
+    assert _request_source_ids("trends", {"social_sources": ["youtube", "naver"]}) == (
+        "SRC_NAVER_TREND",
+        "SRC_YOUTUBE",
+    )
     assert _request_source_ids("trends", {"area_code": "eden_area_seoul"}) == (
         "SRC_KTO_RESOURCE_DEMAND",
         "SRC_YOUTUBE",

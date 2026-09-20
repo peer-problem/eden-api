@@ -301,7 +301,7 @@ def build_trend_view(
         if not source_rows:
             source_availability[source_id] = {
                 "availability": "unavailable",
-                "reason": "요청 키워드 및 범위의 관측이 없습니다.",
+                "reason": None,
             }
             continue
         score = source_scores.get(source_id)
@@ -310,8 +310,6 @@ def build_trend_view(
             "아닌 재생 가능 지역입니다."
             if source_id == "SRC_YOUTUBE"
             else None
-            if score is not None
-            else "정규화 모집단이 부족합니다."
         )
         source_metrics.append(
             {
@@ -369,9 +367,7 @@ def build_trend_view(
     return (
         data,
         availability,
-        None
-        if availability == Availability.AVAILABLE
-        else "일부 social signal 원천 또는 정규화 점수를 제공할 수 없습니다.",
+        None,
     )
 
 

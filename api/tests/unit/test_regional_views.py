@@ -90,7 +90,7 @@ def test_region_insight_ignores_unselected_and_attraction_dates() -> None:
     assert data["demand"] is None
     assert data["sources"] == ["SRC_KTO_REGIONAL_VISITORS"]
     assert availability == Availability.PARTIAL
-    assert reason is not None
+    assert reason is None
     RegionInsightData.model_validate(data)
 
 
@@ -237,7 +237,7 @@ def test_timeseries_missing_requested_buckets_reduce_completeness() -> None:
     assert len(data["series"]) == 7
     assert data["summary"]["completeness_ratio"] == round(1 / 7, 6)
     assert availability == Availability.PARTIAL
-    assert reason == "시계열의 일부 날짜가 없습니다."
+    assert reason is None
 
 
 @pytest.mark.parametrize("foreign_days", [0, 3, 7])
@@ -306,10 +306,11 @@ def test_region_demand_is_partial_when_a_sourced_dimension_is_missing() -> None:
         "diversity": [],
     }
 
-    data, availability, _reason = build_region_insight_view(
+    data, availability, reason = build_region_insight_view(
         product, {"include": ["demand"], "period": "7d"}
     )
 
     assert data["demand"]["availability"] == "partial"
     assert data["demand"]["reason"] == "일부 수요 차원이 없습니다."
     assert availability == Availability.PARTIAL
+    assert reason is None

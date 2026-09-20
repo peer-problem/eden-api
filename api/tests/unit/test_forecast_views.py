@@ -87,7 +87,7 @@ def test_forecast_preserves_official_values_without_arbitrary_adjustments() -> N
     assert outside_source_horizon["festivals"] is None
     assert outside_source_horizon["holiday"] is None
     assert availability == Availability.PARTIAL
-    assert reason == "요청 2일 중 1일의 전망만 있습니다."
+    assert reason is None
     VisitorForecastData.model_validate(data)
 
 
@@ -166,7 +166,7 @@ def test_forecast_missing_requested_adjustments_are_null_and_partial() -> None:
     assert day["adjustment_factors"] == {}
     assert day["availability"] == "partial"
     assert availability == Availability.PARTIAL
-    assert reason == "일부 날짜에서 요청한 참고 원천이 없습니다."
+    assert reason is None
 
 
 def test_area_forecast_averages_its_attractions_deterministically() -> None:
@@ -409,7 +409,7 @@ def test_dates_past_the_reference_coverage_window_stay_missing() -> None:
     assert second["availability"] == "partial"
     assert second["reason"] == "일부 참고 정보가 없습니다: festivals, holidays"
     assert availability == Availability.PARTIAL
-    assert reason == "일부 날짜에서 요청한 참고 원천이 없습니다."
+    assert reason is None
 
 
 def test_event_rows_still_win_over_empty_coverage() -> None:

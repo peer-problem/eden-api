@@ -51,7 +51,7 @@ export default function PlaceDetail({
               '위도 / 경도',
               place?.location
                 ? `${place.location.lat}, ${place.location.lng}`
-                : '위치 자료 없음',
+                : null,
             ],
           ]}
         />
@@ -79,9 +79,6 @@ export default function PlaceDetail({
             </p>
           </section>
         )}
-        {!place?.overview && (
-          <p className="inline-note">현재 게시된 장소 소개문이 없습니다.</p>
-        )}
         {place?.hub?.is_hub && (
           <section className="inspector-section">
             <h3>중심 관광지</h3>
@@ -91,9 +88,9 @@ export default function PlaceDetail({
             ]} />
           </section>
         )}
-        <section className="inspector-section">
-          <h3>관련 장소</h3>
-          {place?.related_places?.length ? (
+        {!!place?.related_places?.length && (
+          <section className="inspector-section">
+            <h3>관련 장소</h3>
             <div className="related-list">
               {place.related_places.map((p) => (
                 <Button
@@ -107,13 +104,11 @@ export default function PlaceDetail({
                 </Button>
               ))}
             </div>
-          ) : (
-            <p>현재 게시된 관련 장소가 없습니다.</p>
-          )}
-        </section>
-        <section className="inspector-section">
-          <h3>주변 상점</h3>
-          {place?.nearby_shops?.length ? (
+          </section>
+        )}
+        {!!place?.nearby_shops?.length && (
+          <section className="inspector-section">
+            <h3>주변 상점</h3>
             <ul className="shop-list">
               {place.nearby_shops.map((shop) => (
                 <li key={shop.shop_id}>
@@ -124,10 +119,8 @@ export default function PlaceDetail({
                 </li>
               ))}
             </ul>
-          ) : (
-            <p>현재 게시된 주변 상점이 없습니다.</p>
-          )}
-        </section>
+          </section>
+        )}
         {resource.response && (
           <details className="detail-sources">
             <summary>

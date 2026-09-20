@@ -29,9 +29,10 @@ EXCLUDED_SOCIAL_SOURCE_IDS = frozenset(
 )
 REQUESTABLE_SOCIAL_SOURCES = {
     "youtube": "SRC_YOUTUBE",
-    "instagram": "SRC_INSTAGRAM",
-    "reddit": "SRC_REDDIT",
-    "facebook": "SRC_FACEBOOK",
+    "naver": "SRC_NAVER_TREND",
+}
+INBOUND_SOCIAL_SOURCES = {
+    "youtube": "SRC_YOUTUBE",
 }
 
 

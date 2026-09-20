@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPublicQuery, publicQueriesFor } from './explorer/publicQueries';
+import { buildPublicQuery, isWorkspaceParameter, publicQueriesFor, workspaceLinkForRequest, workspaceTargetForPath } from './explorer/publicQueries';
 
 const options = { area: '1100000000', country: 'JP', period: '30d', keyword: 'Korea & travel', place: '', avoidCrowds: false };
 test('internal-only tables do not request data; published storage uses its product API', () => {
@@ -40,6 +40,53 @@ test('place exploration uses the place list and detail endpoints', () => {
   const request = buildPublicQuery('place', { ...options, place: '123' });
   assert.ok(request.path?.startsWith('/places/'));
   assert.equal(request.body, undefined);
+});
+
+test('each public API opens its workspace table', () => {
+  assert.deepEqual(workspaceTargetForPath('/v1/trends'), {
+    pipeline: 'trends',
+    table: 'social_observation',
+  });
+  assert.deepEqual(workspaceTargetForPath('/v1/regions/{area_code}/insights'), {
+    pipeline: 'regional',
+    table: 'regional_visit_observation',
+  });
+  assert.deepEqual(workspaceTargetForPath('/v1/forecasts/visitors'), {
+    pipeline: 'forecast',
+    table: 'forecast_input',
+  });
+  assert.deepEqual(workspaceTargetForPath('/v1/markets/{country}/alerts'), {
+    pipeline: 'inbound',
+    table: 'market_alerts',
+  });
+  assert.equal(workspaceTargetForPath('/v1/unknown'), null);
+  assert.deepEqual(
+    workspaceLinkForRequest(
+      '/v1/regions/{area_code}/insights',
+      { area_code: '5000000000', period: '90d' },
+      ['SRC_KTO_REGIONAL_VISITORS'],
+    ),
+    {
+      pipeline: 'regional',
+      table: 'regional_visit_observation',
+      sources: ['SRC_KTO_REGIONAL_VISITORS'],
+      area: '5000000000',
+      keyword: undefined,
+      country: undefined,
+      place: undefined,
+      period: '90d',
+    },
+  );
+});
+
+test('only identity parameters open a workspace table', () => {
+  assert.equal(isWorkspaceParameter('area_code'), true);
+  assert.equal(isWorkspaceParameter('country'), true);
+  assert.equal(isWorkspaceParameter('countries'), true);
+  assert.equal(isWorkspaceParameter('keyword'), true);
+  assert.equal(isWorkspaceParameter('content_id'), true);
+  assert.equal(isWorkspaceParameter('period'), false);
+  assert.equal(isWorkspaceParameter('limit'), false);
 });
 
 test('inbound country tables can query official notices', () => {

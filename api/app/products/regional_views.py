@@ -286,7 +286,7 @@ def build_region_insight_view(
         if any(state != Availability.UNAVAILABLE for state in states)
         else Availability.UNAVAILABLE
     )
-    reason = None if availability == Availability.AVAILABLE else "일부 지역 데이터 블록이 없습니다."
+    reason = None
     sources = []
     if "visitors" in selected and area_visit_rows:
         sources.append("SRC_KTO_REGIONAL_VISITORS")
@@ -479,7 +479,5 @@ def build_visitor_timeseries_view(
             "sources": ["SRC_TOURISM_ADMISSION" if attraction else "SRC_KTO_REGIONAL_VISITORS"],
         },
         availability,
-        None if availability == Availability.AVAILABLE
-        else "요청한 방문자 유형의 관측이 없습니다." if availability == Availability.UNAVAILABLE
-        else "시계열의 일부 날짜가 없습니다.",
+        None,
     )

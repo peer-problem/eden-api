@@ -31,7 +31,13 @@ export function JsonCode({ value }: { value: unknown }) {
   );
 }
 
-export function ResponseReading({ value }: { value: unknown }) {
+export function ResponseReading({
+  value,
+  onSources,
+}: {
+  value: unknown;
+  onSources?: (meta: Meta) => void;
+}) {
   if (value === undefined) {
     return <p className="docs-empty">요청 탭에서 데이터를 조회하면 실제 응답이 표시됩니다.</p>;
   }
@@ -42,7 +48,35 @@ export function ResponseReading({ value }: { value: unknown }) {
       </pre>
     );
   }
+  if (isEnvelope(value)) {
+    return (
+      <div className="docs-response-read">
+        {renderNode(value.data, "data", 1)}
+        <ResponseMeta value={value.meta} onSources={onSources} />
+      </div>
+    );
+  }
   return <div className="docs-response-read">{renderNode(value, "", 0)}</div>;
+}
+
+function ResponseMeta({
+  value,
+  onSources,
+}: {
+  value: unknown;
+  onSources?: (meta: Meta) => void;
+}) {
+  if (!isRecord(value)) return null;
+  if (typeof value.availability === "string" && Array.isArray(value.sources)) {
+    const meta = value as unknown as Meta;
+    return (
+      <MetaLine
+        meta={meta}
+        onSources={onSources ? () => onSources(meta) : undefined}
+      />
+    );
+  }
+  return renderObject(value, 4);
 }
 
 function renderNode(value: unknown, key: string, depth: number): ReactNode {
@@ -51,7 +85,7 @@ function renderNode(value: unknown, key: string, depth: number): ReactNode {
     return (
       <>
         {renderNode(value.data, "data", depth + 1)}
-        {renderMeta(value.meta)}
+        <ResponseMeta value={value.meta} />
       </>
     );
   }
@@ -144,14 +178,6 @@ function renderRecords(rows: Record<string, unknown>[], key: string) {
       </DataTable>
     </ResponseGroup>
   );
-}
-
-function renderMeta(value: unknown) {
-  if (!isRecord(value)) return null;
-  if (typeof value.availability === "string" && Array.isArray(value.sources)) {
-    return <MetaLine meta={value as unknown as Meta} />;
-  }
-  return renderObject(value, 4);
 }
 
 function formatRecordish(key: string, value: unknown): ReactNode {
