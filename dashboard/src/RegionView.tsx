@@ -1,14 +1,16 @@
-import { Button, HTMLSelect, InputGroup, Tab, Tabs } from '@blueprintjs/core';
+import { Button, HTMLSelect, Tab, Tabs } from '@blueprintjs/core';
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { request, useResource, type Resource } from './api';
 import { date, number, regionName, regions } from './data';
 import { RegionMap } from './RegionMap';
+import { sigunguFor, sigunguName } from './sigungu';
 import type { Envelope, Forecast, Insights, Meta, Timeseries } from './types';
 import {
   DataTable,
   MetaLine,
   MultiLineChart,
+  Picker,
   Section,
   State,
   Status,
@@ -379,18 +381,20 @@ function Outlook({
   update: ViewProps['update'];
   showSources: (meta: Meta) => void;
 }) {
+  // KTO 공식 집중률은 시군구 단위로만 수집되므로 시도 코드로는 항상 unavailable이다.
+  // 선택한 시도의 시군구 중에서만 고르게 하고, 지정이 없으면 첫 시군구를 조회한다.
+  const options = sigunguFor(area);
   const requestedArea = params.get('forecastArea');
-  const forecastArea = requestedArea && /^\d{10}$/.test(requestedArea)
-    && requestedArea.startsWith(area.slice(0, 2)) ? requestedArea : area;
-  const [draftArea, setDraftArea] = useState(forecastArea);
-  useEffect(() => setDraftArea(forecastArea), [forecastArea]);
+  const forecastArea = options.some((item) => item.code === requestedArea)
+    ? requestedArea!
+    : options[0]?.code ?? area;
   const resource = useResource<Forecast>(
     `/forecasts/visitors?area_code=${encodeURIComponent(forecastArea)}&days=7`,
   );
   const daily = resource.response?.data?.daily ?? [];
   return (
     <Section
-      title="7일 방문 수요 참고"
+      title={`7일 방문 수요 참고 · ${sigunguName(forecastArea)}`}
       extra={
         <MetaLine
           meta={resource.response?.meta}
@@ -400,39 +404,34 @@ function Outlook({
         />
       }
     >
-      <form
-        className="toolbar view-toolbar"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (/^\d{10}$/.test(draftArea) && draftArea.startsWith(area.slice(0, 2))) {
-            update({ forecastArea: draftArea === area ? '' : draftArea });
-          }
-        }}
-      >
+      <div className="toolbar view-toolbar">
         <label className="filter">
-          <span>지역 코드</span>
-          <InputGroup
-            aria-label="방문 전망 지역 코드"
-            value={draftArea}
-            onChange={(event) => setDraftArea(event.target.value)}
-            maxLength={10}
-            placeholder="시군구 코드 10자리"
+          <span>시군구</span>
+          <Picker
+            label="방문 전망 시군구"
+            value={forecastArea}
+            options={options}
+            onChange={(code) =>
+              update({ forecastArea: code === options[0]?.code ? '' : code })
+            }
           />
         </label>
-        <Button type="submit" disabled={!/^\d{10}$/.test(draftArea) || !draftArea.startsWith(area.slice(0, 2))}>
-          조회
-        </Button>
-        <span className="section-note">시군구 코드는 공식 집중률, 시도 코드는 과거 동일 요일 참고값</span>
-      </form>
+        <span className="section-note">
+          공식 집중률은 {regionName(area)} 안의 시군구 단위로 제공됩니다.
+        </span>
+      </div>
       <State resource={resource} empty={!daily.length}>
-        <div className="compact-data-scope">
-          <span className="mono">
-            {resource.response?.data?.data_area_code ?? '—'}
-          </span>
-          <span>
-            {spatialResolutionName(resource.response?.data?.spatial_resolution)}
-          </span>
-        </div>
+        {(resource.response?.data?.data_area_code
+          || resource.response?.data?.spatial_resolution) && (
+          <div className="compact-data-scope">
+            <span className="mono">
+              {resource.response?.data?.data_area_code ?? '—'}
+            </span>
+            <span>
+              {spatialResolutionName(resource.response?.data?.spatial_resolution)}
+            </span>
+          </div>
+        )}
         <DataTable
           label="방문 수요 참고 자료"
           headers={[

@@ -19,15 +19,18 @@ export const regions = [
   ['4800000000', '경상남도'],
   ['5000000000', '제주특별자치도'],
 ].map(([code, name]) => ({ code, name }));
+// currency는 /markets/inbound?currency= 에 넣는 값으로, 환율 원천(KEXIM, BOK ECOS)이 실제로 수집하는 통화만 둔다.
 export const countries = [
-  { code: 'JP', name: '일본' },
-  { code: 'CN', name: '중국' },
-  { code: 'TW', name: '대만' },
-  { code: 'US', name: '미국' },
-  { code: 'PH', name: '필리핀' },
+  { code: 'JP', name: '일본', currency: 'JPY' },
+  { code: 'CN', name: '중국', currency: 'CNY' },
+  { code: 'TW', name: '대만', currency: 'TWD' },
+  { code: 'US', name: '미국', currency: 'USD' },
+  { code: 'PH', name: '필리핀', currency: 'PHP' },
 ];
 export const countryName = (code: string) =>
   countries.find((c) => c.code === code)?.name ?? code;
+export const currencyFor = (code: string) =>
+  countries.find((c) => c.code === code)?.currency ?? 'USD';
 export const regionName = (code: string) =>
   regions.find((r) => r.code === code)?.name ?? code;
 export const number = (value: number | null | undefined, unit = '') =>
