@@ -22,7 +22,7 @@ export interface DemandOutlookRow {
   kind: DemandKind;
 }
 
-export type WeekdayValues = [
+export type WeekdayValues = readonly [
   number,
   number,
   number,
@@ -46,7 +46,7 @@ export const FORECAST_LOOKAHEAD_DAYS = 30;
 export const TREND_OUTLOOK_LABEL = '추세 예측';
 
 const DAY = 86_400_000;
-const generatedFile = generated as RegionOutlookFile;
+const generatedFile = generated as unknown as RegionOutlookFile;
 
 export function outlookPackFor(area: string): RegionOutlookPack | undefined {
   return generatedFile.areas[area];
@@ -72,7 +72,7 @@ export function weekdayMeans(
       ? values.reduce((sum, value) => sum + value, 0) / values.length
       : fallback;
     return roundValue(raw, decimals);
-  }) as WeekdayValues;
+  }) as unknown as WeekdayValues;
 }
 
 export function buildVisitorOutlook(
@@ -106,7 +106,7 @@ export function buildVisitorOutlook(
       : projectWeekday(recent, iso);
 
   if (!last || lastIndex == null) {
-    const extra: TrendPoint[] = [];
+    const extra: Array<TrendPoint & { value: number }> = [];
     const byDate: Record<string, number> = {};
     let cursor = todayIso;
     const end = addDaysIso(todayIso, horizon - 1);
@@ -226,7 +226,7 @@ function roundValue(value: number, decimals: number, max?: number): number {
 }
 
 function packValue(
-  values: number[],
+  values: readonly number[],
   iso: string,
   decimals = 0,
   max?: number,
