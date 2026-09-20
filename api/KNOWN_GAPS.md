@@ -30,7 +30,7 @@
 - **passengers**: 인천공항 국가별 항공통계 서비스(B551177/AviationStatsByCountry)의 `getTotalNumberOfPassenger`가 국가별 월간 도착 및 출발 여객 수를 제공한다(2026-07 기준 57개국, 라이브 확인). 같은 서비스 키로 되며 수집을 추가했다.
 - **avg_stay_nights, age_index**: 관광공사 데이터랩 공개 API(AreaTarDemDsService, AreaTarDivService)는 관광체류강도 및 관광소비강도 및 관광객 다양성 및 소비 다양성 및 국제적 다양성 지수만 준다. 숙박일수와 연령 구성은 데이터랩 웹에만 있고 오픈 API에는 없다. 원천 없음 유지.
 - **concentration_rate(시계열), expected_visitors, confidence**: 공개 원천 없음.
-- **search_ratio**: 2026-09-17 NAVER 검색 트렌드(NCP API Hub)를 켰다. 외국어 시장 키워드에는 데이터가 없어 한국어 지역 여행 키워드 18개("서울 여행" 등)를 하루 5개씩 순환 수집한다. 운영에서 켜지려면 루트 `.env`에 `NAVER_STORAGE_POLICY_APPROVED=true`가 있어야 한다(저장 및 재게시 권리 확인 플래그).
+- **search_ratio**: 2026-09-17 NAVER 검색 트렌드(NCP API Hub)를 켰다. 외국어 시장 키워드에는 데이터가 없어 한국어 지역 여행 키워드 18개("서울 여행" 등)를 하루 5개씩 순환 수집한다. 운영에서 켜지려면 `.ops/.env`에 `NAVER_STORAGE_POLICY_APPROVED=true`가 있어야 한다(저장 및 재게시 권리 확인 플래그).
 - **destination_searches**: 절대 검색 수는 어떤 원천도 주지 않는다.
 
 ## 데이터 품질로 격리된 항목

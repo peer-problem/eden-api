@@ -18,7 +18,7 @@ npm test
 npm run build
 ```
 
-The static build is written to `dist/`. In development, public API requests use a same-origin Vite proxy to `https://api.edenapi.org`; static builds default to `https://api.edenapi.org/v1`. To use another backend, set `VITE_EDEN_API_URL` in `.env.local` (see `.env.example`) and restart Vite. Vite-prefixed values are public browser configuration; never put secrets there.
+The static build is written to `dist/`. In development, public API requests use a same-origin Vite proxy to `https://api.edenapi.org`; static builds default to `https://api.edenapi.org/v1`. To use another backend, set `VITE_EDEN_API_URL` in the private `../.ops/.env` (see `.env.example`) and restart Vite. Vite-prefixed values are public browser configuration; never put secrets there.
 
 ## Implemented flows
 

@@ -1,4 +1,4 @@
-"""Maintenance commands used by the two private .ops launchers."""
+"""Maintenance commands used by the private .ops launchers."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def main() -> int:
             generate(Path(args.args[0]), Path(args.args[1]))
         except Exception:
             raise SystemExit(
-                "Deployment env generation failed; check root .env (values omitted)"
+                "Deployment env generation failed; check .ops/.env (values omitted)"
             ) from None
         return 0
 

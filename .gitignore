@@ -18,4 +18,5 @@ tmp/
 releases/
 
 /HANDOFF.md
+# Private launchers and the single manually maintained .env source.
 /.ops/

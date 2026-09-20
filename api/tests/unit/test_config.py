@@ -19,6 +19,21 @@ def _settings(**overrides: object) -> Settings:
     return Settings(**values)  # type: ignore[arg-type]
 
 
+def test_settings_ignore_implicit_dotenv_and_use_launcher_environment(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("DB_HOST=127.0.0.1\nSCHEDULER_ENABLED=true\n")
+    monkeypatch.setenv("DB_HOST", "db.example.test")
+    monkeypatch.setenv("DB_USER", "developer")
+    monkeypatch.setenv("DB_PASSWORD", "test-only")
+    monkeypatch.delenv("SCHEDULER_ENABLED", raising=False)
+
+    settings = Settings()
+
+    assert settings.DB_HOST == "db.example.test"
+    assert settings.DB_USER == "developer"
+    assert settings.SCHEDULER_ENABLED is False
+
+
 @pytest.mark.parametrize("name", ["SOURCE_WORKERS", "PRODUCT_WORKERS"])
 def test_phase_one_rejects_multiple_workers(name: str) -> None:
     with pytest.raises(ValidationError, match="exactly one"):

@@ -1,9 +1,11 @@
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { resolve } from "node:path";
 
 export default defineConfig(({ mode }) => {
   // These settings stay in the Vite server. They are never VITE_* browser vars.
-  const local = loadEnv(mode, process.cwd(), "EDEN_");
+  const envDir = resolve(import.meta.dirname, "..", ".ops");
+  const local = loadEnv(mode, envDir, "EDEN_");
   const upstream = local.EDEN_EXPLORER_UPSTREAM;
   const token = local.EDEN_EXPLORER_TOKEN;
   const explorerGuard: Plugin = {
@@ -26,6 +28,7 @@ export default defineConfig(({ mode }) => {
     },
   };
   return {
+    envDir,
     plugins: [react(), explorerGuard],
     server: {
       host: "127.0.0.1",

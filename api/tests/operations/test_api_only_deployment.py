@@ -120,7 +120,7 @@ def test_local_deployment_commands_use_only_the_requested_destination(tmp_path, 
         (root / directory).mkdir(parents=True)
     script = root / ".ops/deploy.sh"
     script.write_text(DEPLOY_SCRIPT.read_text())
-    (root / ".ops/run.sh").write_text("unused")
+    (root / ".ops/api_and_client.sh").write_text("unused")
     values = {
         "ENVIRONMENT": "production", "DB_HOST": "db.example.test", "DB_PORT": "3306",
         "DB_NAME": "eden", "DB_USER": "reader", "DB_PASSWORD": "reader-secret",
@@ -131,7 +131,7 @@ def test_local_deployment_commands_use_only_the_requested_destination(tmp_path, 
         "VPS_USERNAME": "deployer", "VPS_PASSWORD": "ssh-secret",
         "VPS_HOST_FINGERPRINT": "SHA256:expected", "VERCEL_DEPLOY_KEY": "vercel-secret",
     }
-    (root / ".env").write_text(render_environment(values))
+    (root / ".ops/.env").write_text(render_environment(values))
     bodies = {
         "brew": 'printf "%s\\n" "$TEST_TOOLS"',
         "uv": 'shift; while [ "$1" != python ]; do shift; done; shift; '

@@ -153,7 +153,7 @@ Fixed market statistics and seeded country language/currency defaults are remove
 - FX requires an explicit `currency`; country defaults are not inferred.
 - Collected historical data can still be returned with `stale=true`. Source-derived totals, averages and normalization remain supported.
 
-Deploy the new reader code, then apply `../.ops/run.sh migrate upgrade 20260917_0011` with collection paused. This cleanup branches directly from `20260911_0009` and does not apply the separately gated snapshot contract migration. Do not use `upgrade heads` to bypass that gate. It removes the fixed cohort table and country defaults, clears rank-derived relation scores and retires old metric definitions. It preserves collected observations and raw evidence.
+Deploy the new reader code, then apply `../.ops/api_and_client.sh migrate upgrade 20260917_0011` with collection paused. This cleanup branches directly from `20260911_0009` and does not apply the separately gated snapshot contract migration. Do not use `upgrade heads` to bypass that gate. It removes the fixed cohort table and country defaults, clears rank-derived relation scores and retires old metric definitions. It preserves collected observations and raw evidence.
 
 ## How It Works
 
@@ -182,12 +182,12 @@ Run the commands in this section from `api/`. Use Python 3.12 and `uv`. MariaDB 
 uv sync --frozen
 ```
 
-Obtain the repository root development `.env` and machine-specific `.ops/` launchers from a project maintainer. Credentials and server connection settings are not included in the repository.
+Obtain the private `.ops/.env` and machine-specific `.ops/` launchers from a project maintainer. Credentials and server connection settings are not included in the repository.
 
 ```bash
-../.ops/run.sh check
-../.ops/run.sh db-check
-../.ops/run.sh
+../.ops/api_and_client.sh check
+../.ops/api_and_client.sh db-check
+../.ops/api_and_client.sh api
 ```
 
 The development launcher connects to the existing remote MariaDB through an SSH tunnel. It does not create a local database. The API runs at `127.0.0.1:8000` with the scheduler disabled. Local documentation is available at `http://127.0.0.1:8000/docs`.
@@ -220,11 +220,13 @@ tests/             # Contract, integration, unit, and operations checks
 <details>
 <summary><strong>Maintainer Operations and Deployment</strong></summary>
 
-The repository root `.env` is the only manually maintained configuration source and must have mode `600`. Do not load it with shell `source`. API reads, ingestion writes, and migrations use separate database accounts.
+The private `.ops/.env` is the only manually maintained configuration source and must have mode `600`. Do not load it with shell `source`. API reads, ingestion writes, and migrations use separate database accounts.
+
+The API receives environment variables from the private launcher locally and from systemd in production. It does not automatically read a `.env` in the working directory. The entire `.ops/` directory stays outside Git.
 
 ```bash
 # Inspect migration status without changing the schema
-../.ops/run.sh migrate current
+../.ops/api_and_client.sh migrate current
 
 # Check configuration and connectivity
 ../.ops/deploy.sh env-check
@@ -234,10 +236,10 @@ The repository root `.env` is the only manually maintained configuration source 
 ../.ops/deploy.sh deploy
 ```
 
-Deployment generates production configuration from the root `.env`. It verifies the SSH host fingerprint, database TLS, and account separation. Failed readiness checks restore the previous release and configuration. `preflight` does not deploy to production.
+Deployment generates production configuration from the private `.ops/.env`. It verifies the SSH host fingerprint, database TLS, and account separation. Failed readiness checks restore the previous release and configuration. `preflight` does not deploy to production.
 
 Schema changes require a separate request. Database backup and restore commands are disabled. Public API documentation is served at `/docs`; internal readiness is available on loopback at `/internal/readiness`.
 
-The seed cleanup advances the production database from `20260911_0009` to `20260917_0011`. Deployment does not run migrations; apply the explicit target with `../.ops/run.sh migrate` in the order described above. The Phase 1 storage-contract migration `20260829_0007` is gated behind the soak evidence described in the root README and has not been applied; databases that complete it advance to the merge revision `20260911_0010`.
+The seed cleanup advances the production database from `20260911_0009` to `20260917_0011`. Deployment does not run migrations; apply the explicit target with `../.ops/api_and_client.sh migrate` in the order described above. The Phase 1 storage-contract migration `20260829_0007` is gated behind the soak evidence described in the root README and has not been applied; databases that complete it advance to the merge revision `20260911_0010`.
 
 </details>

@@ -15,7 +15,8 @@ LOCAL_HOSTS = {"localhost", "localhost.localdomain", "127.0.0.1", "::1"}
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Private launchers load .ops/.env; production uses systemd EnvironmentFile.
+        env_file=None,
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=True,

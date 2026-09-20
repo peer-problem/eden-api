@@ -17,7 +17,7 @@ DEPLOYMENT_KEYS = {"DB_NETWORK_MODE", "DB_ALLOWED_CIDRS"}
 def render_environment(values: dict[str, str]) -> str:
     # Literal newlines work in both systemd EnvironmentFile and python-dotenv.
     # JSON's escaped newline would remain a backslash and n in systemd.
-    lines = ["# Generated from project root .env. Do not edit."]
+    lines = ["# Generated from .ops/.env. Do not edit."]
     for key, value in sorted(values.items()):
         if "\0" in value:
             raise ValueError("NUL bytes are not supported in environment values")
