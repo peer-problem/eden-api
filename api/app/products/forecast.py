@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_, select
+from sqlalchemy import Numeric, cast, distinct, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.domain.enums import Availability
@@ -24,6 +24,7 @@ INHERITED_REFERENCE_SOURCES = ("SRC_KMA_FORECAST", "SRC_HOLIDAY")
 REFERENCE_HORIZON_DAYS = 90
 REFERENCE_DEFAULT_MAX_AGE_SECONDS = 7 * 24 * 3600
 SEOUL = ZoneInfo("Asia/Seoul")
+BASE_FORECAST_SOURCE = "SRC_KTO_VISITOR_FORECAST"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,86 @@ def reference_coverage(
             continue
         coverage[source_id] = {"from": today.isoformat(), "through": through.isoformat()}
     return coverage
+
+
+def aggregated_sigungu_forecasts(
+    session: Session,
+    area: Area,
+    start: datetime,
+    end: datetime,
+) -> list[dict[str, object]]:
+    """Average a province's official sigungu attraction forecasts per date.
+
+    The KTO forecast is collected per attraction under sigungu codes, so a
+    province never has its own base forecast rows. Instead of answering
+    ``unavailable`` for a province, publish one synthetic base row per date
+    holding the mean concentration rate of every attraction in its sigungu,
+    together with how many sigungu and attractions were averaged. Weather,
+    festival and holiday rows are never aggregated this way.
+    """
+    if area.level != "sido":
+        return []
+    child_areas = select(Area.eden_area_id).where(
+        Area.parent_area_id == area.eden_area_id,
+        Area.active.is_(True),
+    )
+    rate = cast(
+        func.json_extract(ForecastInput.source_forecast, "$.concentration_rate"),
+        Numeric(10, 4),
+    )
+    rows = session.execute(
+        select(
+            ForecastInput.forecast_date,
+            func.count(ForecastInput.input_id),
+            func.count(distinct(ForecastInput.area_id)),
+            func.avg(rate),
+            func.max(ForecastInput.observed_at),
+            func.max(ForecastInput.source_updated_at),
+            func.max(ForecastInput.ingested_at),
+        )
+        .where(
+            ForecastInput.area_id.in_(child_areas),
+            ForecastInput.source_id == BASE_FORECAST_SOURCE,
+            ForecastInput.forecast_date >= start,
+            ForecastInput.forecast_date < end,
+            rate.is_not(None),
+        )
+        .group_by(ForecastInput.forecast_date)
+        .order_by(ForecastInput.forecast_date)
+    ).all()
+    aggregated: list[dict[str, object]] = []
+    for forecast_date, places, sigungu, mean_rate, observed, updated, ingested in rows:
+        if not places or mean_rate is None:
+            continue
+        aggregated.append(
+            {
+                "input_id": None,
+                "source_id": BASE_FORECAST_SOURCE,
+                "forecast_date": _aware(forecast_date).isoformat(),
+                "place_id": None,
+                "source_forecast": {
+                    "place_name": None,
+                    "concentration_rate": round(float(mean_rate), 4),
+                    "expected_visitors": None,
+                    "sample_count": int(places),
+                    "sigungu_count": int(sigungu),
+                    "basis": (
+                        f"시도 내 시군구 {int(sigungu)}곳, 관광지 {int(places)}곳의 "
+                        "공식 집중률 평균"
+                    ),
+                    "aggregated_from": "sigungu",
+                },
+                "weather": None,
+                "festivals": None,
+                "holiday": None,
+                "availability": "available",
+                "quality_flags": ["aggregated_from_sigungu"],
+                "observed_at": _aware(observed),
+                "source_updated_at": _aware(updated),
+                "ingested_at": _aware(ingested),
+            }
+        )
+    return aggregated
 
 
 def build_forecast_snapshots(
@@ -133,16 +214,65 @@ def build_forecast_snapshots(
                     .order_by(ForecastInput.forecast_date, ForecastInput.source_id)
                 ).all()
             )
-            if not rows:
+            aggregated = aggregated_sigungu_forecasts(session, area, start, end)
+            if not rows and not aggregated:
                 continue
 
+        inputs: list[dict[str, object]] = [
+            {
+                "input_id": row.input_id,
+                "source_id": row.source_id,
+                "forecast_date": _aware(row.forecast_date).isoformat(),
+                "place_id": row.place_id,
+                "source_forecast": row.source_forecast,
+                "weather": (
+                    {
+                        **row.weather,
+                        "grid_source": ("parent_area" if row.area_id != area_id else "area_center"),
+                    }
+                    if row.weather is not None
+                    else None
+                ),
+                "festivals": row.festivals,
+                "holiday": row.holiday,
+                "availability": row.availability,
+                "quality_flags": row.quality_flags,
+            }
+            for row in rows
+        ]
+        audit_rows: list[tuple[str, datetime, datetime, datetime]] = [
+            (
+                row.source_id,
+                _aware(row.observed_at),
+                _aware(row.source_updated_at),
+                _aware(row.ingested_at),
+            )
+            for row in rows
+        ]
+        for entry in aggregated:
+            audit_rows.append(
+                (
+                    str(entry["source_id"]),
+                    entry.pop("observed_at"),  # type: ignore[arg-type]
+                    entry.pop("source_updated_at"),  # type: ignore[arg-type]
+                    entry.pop("ingested_at"),  # type: ignore[arg-type]
+                )
+            )
+            inputs.append(entry)
+
         watermarks: dict[str, datetime] = {}
-        for row in rows:
-            current = _aware(row.source_updated_at)
-            watermarks[row.source_id] = max(watermarks.get(row.source_id, current), current)
-        has_base = any(row.source_id == "SRC_KTO_VISITOR_FORECAST" for row in rows)
+        for source_id, _observed, updated, _ingested in audit_rows:
+            watermarks[source_id] = max(watermarks.get(source_id, updated), updated)
+        has_base = any(source_id == BASE_FORECAST_SOURCE for source_id, *_ in audit_rows)
         has_inherited_weather = any(
             row.source_id == "SRC_KMA_FORECAST" and row.area_id != area_id for row in rows
+        )
+        sigungu_count = max(
+            (
+                int(entry["source_forecast"]["sigungu_count"])  # type: ignore[index]
+                for entry in aggregated
+            ),
+            default=0,
         )
         availability = Availability.AVAILABLE if has_base else Availability.PARTIAL
         calculated_at = datetime.now(UTC)
@@ -153,54 +283,37 @@ def build_forecast_snapshots(
                 data={
                     "area_code": area.administrative_code or area.eden_area_id,
                     "eden_area_id": area.eden_area_id,
+                    "spatial_resolution": area.level,
                     "reference_coverage": coverage,
-                    "inputs": [
-                        {
-                            "input_id": row.input_id,
-                            "source_id": row.source_id,
-                            "forecast_date": _aware(row.forecast_date).isoformat(),
-                            "place_id": row.place_id,
-                            "source_forecast": row.source_forecast,
-                            "weather": (
-                                {
-                                    **row.weather,
-                                    "grid_source": (
-                                        "parent_area" if row.area_id != area_id else "area_center"
-                                    ),
-                                }
-                                if row.weather is not None
-                                else None
-                            ),
-                            "festivals": row.festivals,
-                            "holiday": row.holiday,
-                            "availability": row.availability,
-                            "quality_flags": row.quality_flags,
-                        }
-                        for row in rows
-                    ],
+                    "inputs": inputs,
                 },
                 metadata={
                     "max_acceptable_age_seconds": FORECAST_MAX_AGE_SECONDS,
+                    # Sigungu rows behind a province aggregate are referenced by their
+                    # own sigungu snapshots, so retention keeps them without repeating
+                    # thousands of ids here.
                     "normalized_references": {
                         "forecast_input": [str(row.input_id) for row in rows]
                     },
                     "spatial_resolution": ("sido" if has_inherited_weather else area.level),
                     "weather_spatial_resolution": ("sido" if has_inherited_weather else area.level),
                     "reason": None if has_base else "권위적 방문 예측 원천이 없습니다.",
+                    "aggregated_sigungu_count": sigungu_count,
                 },
                 input_watermarks=watermarks,
                 formula_versions={
                     "forecast_product": FORECAST_PRODUCT_VERSION,
                     "visitor_forecast": FORECAST_FORMULA_VERSION,
                 },
-                observed_at=max(_aware(row.observed_at) for row in rows),
-                source_updated_at=max(_aware(row.source_updated_at) for row in rows),
-                ingested_at=max(_aware(row.ingested_at) for row in rows),
+                observed_at=max(observed for _source, observed, _u, _i in audit_rows),
+                source_updated_at=max(updated for _s, _o, updated, _i in audit_rows),
+                ingested_at=max(ingested for _s, _o, _u, ingested in audit_rows),
                 calculated_at=calculated_at,
                 availability=availability,
                 quality_flags=(
                     *(("missing_authoritative_forecast",) if not has_base else ()),
                     *(("inherited_sido_weather",) if has_inherited_weather else ()),
+                    *(("aggregated_from_sigungu",) if aggregated else ()),
                 ),
                 raw_record_ids=(),
             )

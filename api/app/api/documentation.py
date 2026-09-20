@@ -172,6 +172,8 @@ PARAMETER_DESCRIPTIONS = {
     "period": "최신 확보 관측을 끝점으로 하는 조회 기간. 미수집 구간은 결측으로 표시합니다.",
     "time_unit": ("트렌드 관측의 집계 간격. day/week/month이며 고유 영상 수를 뜻하지 않습니다."),
     "limit": "반환 항목 수. 기본값과 최대값은 schema에 표시됩니다.",
+    "offset": "건너뛸 항목 수. total과 함께 페이지를 이동합니다.",
+    "q": "관광지 제목 검색어. 요청 언어 제목, 없으면 한국어 제목에서 부분 일치합니다.",
     "visitor_type": ("all은 전체, domestic은 내국인, foreign은 외국인 방문 지표입니다."),
     "compare": ("이전 동일 길이 기간 또는 전년 동기 비교. 완전한 비교 관측이 없으면 null입니다."),
     "include": (
@@ -238,7 +240,11 @@ FIELD_DESCRIPTIONS = {
     "requested_area_code": (
         "원래 요청한 지역. 시도 대체 자료를 요청 지역의 관측으로 해석하지 마세요."
     ),
-    "data_area_code": "실제 전망 산출에 사용한 지역 코드.",
+    "data_area_code": (
+        "실제 전망 산출에 사용한 지역 코드. 시도 요청은 시군구 평균이며 시도 코드입니다."
+    ),
+    "query": "적용한 관광지 제목 검색어. 없으면 null.",
+    "offset": "건너뛴 항목 수.",
     "fallback": "요청 언어와 실제 반환 언어가 다르면 true.",
     "adjustment_factors": "현재 전망은 임의의 날씨 및 행사 보정을 하지 않으므로 빈 객체.",
 }
@@ -307,7 +313,7 @@ FIELD_DESCRIPTIONS.update(
         "inbound_score": "검증된 종합 지수 원천이 없어 항상 null. 임의 가중치를 사용하지 않음.",
         "interest_index": "비교 가능한 관측의 관광 관심 참고 지수(0~100). 비교 부족 시 null.",
         "is_hub": "관광거점 공식 원천에서 거점으로 분류했는지 여부.",
-        "items": "필터와 정렬을 적용한 실제 공지 목록. 없으면 빈 목록.",
+        "items": "필터와 정렬을 적용한 실제 목록. 없으면 빈 목록.",
         "keyword": "NFKC 정규화하고 양끝 공백을 제거한 수집 검색어.",
         "language": "반환 콘텐츠의 실제 언어 코드.",
         "language_original": "공지 원문의 실제 언어 코드.",
@@ -383,7 +389,10 @@ FIELD_DESCRIPTIONS.update(
         "timezone": "날짜 해석 기본 시간대. Asia/Seoul.",
         "title": "실제로 반환한 언어의 콘텐츠 제목.",
         "title_original": "공지 원문의 제목. 번역 여부와 무관하게 제공.",
-        "total": "선택한 방문 유형의 관측 합계(연인원). 고유 인원 수가 아니며 없으면 null.",
+        "total": (
+            "선택한 방문 유형의 관측 합계(연인원, 고유 인원 수가 아님) 또는 목록 조회의 전체 "
+            "건수. 없으면 null."
+        ),
         "tourism_balance_period": "한국 전체 관광수지의 최신 관측 월(YYYY-MM). 없으면 null.",
         "tourism_balance_scope": "관광수지 적용 범위. 국가별 양자 수지가 아닌 한국 전체.",
         "translation_availability": "요청 언어 번역 제공 여부. 불가여도 원문은 제공 가능.",

@@ -1,5 +1,11 @@
 # 변경 기록
 
+## 대시보드 연동 보완 (2026-09-20)
+
+- 시도 코드로 요청한 `GET /v1/forecasts/visitors`가 항상 unavailable이던 것을 고쳤다. KTO 공식 집중률은 시군구 단위로만 수집되므로 시도 게시본에 소속 시군구 전체 관광지의 날짜별 평균을 합성 기본 행으로 넣고, `sample_count`와 `basis`("시도 내 시군구 N곳, 관광지 M곳의 공식 집중률 평균")로 근거를 밝힌다. 시군구 행은 시군구 게시본이 참조하므로 시도 게시본의 `normalized_references`는 시도 자체 행만 담는다. 품질 플래그 `aggregated_from_sigungu`와 메타데이터 `aggregated_sigungu_count`를 추가했다.
+- 스키마와 문서에만 있고 항상 null이던 `requested_area_code`(지역 인사이트, 방문 시계열, 방문 전망)와 `data_area_code`, `spatial_resolution`(방문 전망)을 채운다. `requested_area_code`는 클라이언트가 보낸 식별자를 그대로 돌려주고, 나머지는 게시본 지역의 코드와 공간 단위다. 조회 키는 바뀌지 않는다.
+- `GET /v1/places`를 추가했다. 시도 또는 시군구의 canonical 관광지를 제목 순으로 반환하며, 시도 요청은 소속 시군구의 관광지를 포함한다. `lang`으로 제목 언어를 고르되 없으면 한국어로 대체하고 항목마다 실제 `language`를 표시한다. `q`는 제목 부분 일치, `limit`(1~100, 기본 20)과 `offset`(0~10,000)으로 `total` 안에서 페이지를 이동한다. 병합된 별칭 관광지와 한국어 제목이 없는 관광지는 목록에 없다. 공개 API는 8개가 된다.
+
 ## 데이터 정책 변경 (2026-09-17)
 
 - 사용자 승인으로 `POST /v1/recommendations/destinations`와 대시보드 추천 화면을 삭제했다. 공개 API는 7개이며 삭제된 경로는 404를 반환한다.
