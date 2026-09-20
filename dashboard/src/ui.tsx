@@ -171,7 +171,7 @@ export function Combobox({
   const filtered = exact ? options : filterComboboxOptions(options, value);
   useEffect(() => {
     if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
+    const onPointerDown = (event: globalThis.PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown);
