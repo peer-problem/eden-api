@@ -1000,14 +1000,17 @@ def test_scheduler_resumes_original_raw_after_backoff_and_scope_changes(
         assert session.get(ProductRefreshRequest, "forecast").status == "pending"
 
 
-def test_all_seven_public_routes_read_built_or_normalized_database_products(
+def test_all_eight_public_routes_read_built_or_normalized_database_products(
     pipeline: Pipeline,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def network_forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("public read path attempted a network socket")
 
-    monkeypatch.setattr(socket, "socket", network_forbidden)
+    # Block connections rather than socket construction: on Windows asyncio's
+    # event loop builds its self-pipe through socket.socketpair(), which is
+    # pure Python there and would hang the test client instead of failing.
+    monkeypatch.setattr(socket.socket, "connect", network_forbidden)
     requests: list[tuple[str, str, dict[str, object] | None]] = [
         (
             "GET",
@@ -1022,6 +1025,7 @@ def test_all_seven_public_routes_read_built_or_normalized_database_products(
         ),
         ("GET", "/v1/regions/11/insights", {"period": "30d"}),
         ("GET", "/v1/places/tour-1", {"lang": "ja"}),
+        ("GET", "/v1/places", {"area_code": "11", "lang": "ja", "q": "景福"}),
         ("GET", "/v1/forecasts/visitors", {"area_code": "11", "days": 2}),
         (
             "GET",
@@ -1052,12 +1056,23 @@ def test_all_seven_public_routes_read_built_or_normalized_database_products(
 
     assert bodies[0]["data"]["sources"] == ["SRC_YOUTUBE"]
     assert bodies[1]["data"]["visitors"]["total"] == 100
+    assert bodies[1]["data"]["requested_area_code"] == "11"
     assert bodies[2]["data"]["title"] == "景福宮"
-    assert len(bodies[3]["data"]["daily"]) == 2
-    assert bodies[4]["data"]["summary"]["total"] == 100
-    assert bodies[5]["data"]["markets"][0]["visitors"] is not None
-    assert bodies[5]["data"]["markets"][0]["arriving_flights"] is not None
-    assert bodies[6]["data"]["items"][0]["type"] == "entry"
+    assert bodies[3]["data"]["total"] == 1
+    assert bodies[3]["data"]["requested_area_code"] == "11"
+    assert bodies[3]["data"]["items"][0]["content_id"] == PLACE_ID
+    assert bodies[3]["data"]["items"][0]["title"] == "景福宮"
+    assert bodies[3]["data"]["items"][0]["language"] == "ja"
+    assert bodies[3]["data"]["items"][0]["area"]["area_code"] == "11"
+    assert len(bodies[4]["data"]["daily"]) == 2
+    assert bodies[4]["data"]["requested_area_code"] == "11"
+    assert bodies[4]["data"]["data_area_code"] == "11"
+    assert bodies[4]["data"]["spatial_resolution"] == "sido"
+    assert bodies[5]["data"]["summary"]["total"] == 100
+    assert bodies[5]["data"]["requested_area_code"] == "11"
+    assert bodies[6]["data"]["markets"][0]["visitors"] is not None
+    assert bodies[6]["data"]["markets"][0]["arriving_flights"] is not None
+    assert bodies[7]["data"]["items"][0]["type"] == "entry"
 
 
 def test_excluded_stale_block_does_not_make_region_response_stale(
@@ -1215,6 +1230,7 @@ def test_all_public_routes_return_explicit_unavailable_without_products() -> Non
         ("get", "/v1/trends", {"keyword": "none"}),
         ("get", "/v1/regions/11/insights", None),
         ("get", "/v1/places/tour-1", None),
+        ("get", "/v1/places", {"area_code": "11"}),
         ("get", "/v1/forecasts/visitors", {"area_code": "11"}),
         ("get", "/v1/visitors/timeseries", {"area_code": "11"}),
         ("get", "/v1/markets/inbound", [("countries", "JP")]),
@@ -1229,6 +1245,197 @@ def test_all_public_routes_return_explicit_unavailable_without_products() -> Non
             assert payload["data"] is None, path
             assert payload["meta"]["availability"] == "unavailable", path
             assert payload["meta"]["reason"], path
+
+
+def test_place_list_pages_titles_and_falls_back_to_korean(pipeline: Pipeline) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with pipeline.session_factory.begin() as session:
+        session.add(
+            Area(
+                eden_area_id="eden_area_phase1_jongno",
+                administrative_code="11110",
+                name_ko="종로구",
+                parent_area_id=AREA_ID,
+                level="sigungu",
+                active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        for suffix, title in (("gogung", "국립고궁박물관"), ("merged", "합쳐진 이름")):
+            session.add(
+                Place(
+                    eden_place_id=f"eden_place_phase1_{suffix}_list",
+                    area_id="eden_area_phase1_jongno",
+                    category="A02060100",
+                    lat=None,
+                    lng=None,
+                    merge_status="active" if suffix == "gogung" else "merged",
+                    canonical_place_id=None if suffix == "gogung" else PLACE_ID,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            session.add(
+                PlaceLocalization(
+                    eden_place_id=f"eden_place_phase1_{suffix}_list",
+                    language="ko",
+                    title=title,
+                    address=None,
+                    overview=None,
+                    is_fallback=False,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+
+    # A province request includes its sigungu places; merged aliases are hidden.
+    response = pipeline.client.get("/v1/places", params={"area_code": "11", "lang": "en"})
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["meta"]["availability"] == "available"
+    assert payload["meta"]["spatial_resolution"] == "sido"
+    assert payload["data"]["total"] == 3
+    assert payload["data"]["language"] == "en"
+    assert [item["title"] for item in payload["data"]["items"]] == [
+        "경복궁",
+        "국립고궁박물관",
+        "국립민속박물관",
+    ]
+    # No English localization exists, so every item says which language it carries.
+    assert {item["language"] for item in payload["data"]["items"]} == {"ko"}
+    assert payload["data"]["items"][1]["area"] == {
+        "area_code": "11110",
+        "eden_area_id": "eden_area_phase1_jongno",
+        "name": "종로구",
+        "spatial_resolution": "sigungu",
+    }
+    assert payload["data"]["items"][1]["location"] is None
+    assert payload["data"]["sources"] == ["SRC_TOUR_KO"]
+
+    # Sigungu requests, search, and paging narrow the same list.
+    response = pipeline.client.get("/v1/places", params={"area_code": "11110"})
+    assert [item["content_id"] for item in response.json()["data"]["items"]] == [
+        "eden_place_phase1_gogung_list"
+    ]
+    response = pipeline.client.get("/v1/places", params={"area_code": "11", "q": "박물%"})
+    assert response.json()["meta"]["availability"] == "unavailable"
+    assert response.json()["data"] is None
+    response = pipeline.client.get("/v1/places", params={"area_code": "11", "q": "박물"})
+    assert response.json()["data"]["total"] == 2
+    response = pipeline.client.get(
+        "/v1/places", params={"area_code": "11", "limit": 1, "offset": 1}
+    )
+    payload = response.json()
+    assert payload["data"]["total"] == 3
+    assert [item["title"] for item in payload["data"]["items"]] == ["국립고궁박물관"]
+    response = pipeline.client.get("/v1/places", params={"area_code": "11", "offset": 5})
+    assert response.json()["meta"]["availability"] == "partial"
+    assert response.json()["data"]["items"] == []
+    response = pipeline.client.get("/v1/places", params={"area_code": "11", "q": "   "})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "BLANK_QUERY"
+
+
+def test_province_forecast_averages_its_sigungu_attraction_forecasts(
+    pipeline: Pipeline,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.domain.enums import Availability
+    from app.products import forecast
+
+    today = datetime.now(SEOUL).date()
+    start = datetime.combine(today, datetime.min.time())
+    audit = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=1)
+    with pipeline.session_factory.begin() as session:
+        # The fixture's own province rows become plain sigungu rows here so
+        # the province only has an aggregate to answer with.
+        for row in session.scalars(
+            select(ForecastInput).where(ForecastInput.source_id == FORECAST_SOURCE)
+        ):
+            session.delete(row)
+        for code, name in (("11110", "종로구"), ("11140", "중구")):
+            session.add(
+                Area(
+                    eden_area_id=f"eden_area_phase1_{code}",
+                    administrative_code=code,
+                    name_ko=name,
+                    parent_area_id=AREA_ID,
+                    level="sigungu",
+                    active=True,
+                    created_at=audit,
+                    updated_at=audit,
+                )
+            )
+        rates = {
+            ("11110", "경복궁"): (40.0, 60.0),
+            ("11110", "창덕궁"): (50.0, 70.0),
+            ("11140", "남산"): (90.0, 20.0),
+        }
+        for (code, place_name), values in rates.items():
+            for offset, rate in enumerate(values):
+                session.add(
+                    ForecastInput(
+                        area_id=f"eden_area_phase1_{code}",
+                        forecast_date=start + timedelta(days=offset),
+                        source_forecast={
+                            "place_name": place_name,
+                            "concentration_rate": rate,
+                            "expected_visitors": None,
+                        },
+                        **_fact_audit(FORECAST_SOURCE, audit),
+                    )
+                )
+
+    candidates = []
+    monkeypatch.setattr(
+        forecast.SnapshotPublisher,
+        "publish",
+        lambda _self, candidate: candidates.append(candidate),
+    )
+    build_forecast_snapshots(pipeline.session_factory)
+    province = next(item for item in candidates if item.data["eden_area_id"] == AREA_ID)
+    aggregated = [
+        row
+        for row in province.data["inputs"]
+        if row["source_id"] == FORECAST_SOURCE and row.get("place_id") is None
+    ]
+    assert [row["source_forecast"]["concentration_rate"] for row in aggregated] == [60.0, 50.0]
+    assert aggregated[0]["source_forecast"]["sample_count"] == 3
+    assert aggregated[0]["source_forecast"]["sigungu_count"] == 2
+    assert aggregated[0]["input_id"] is None
+    assert province.availability == Availability.AVAILABLE
+    assert province.metadata["reason"] is None
+    assert province.metadata["aggregated_sigungu_count"] == 2
+    assert "aggregated_from_sigungu" in province.quality_flags
+    assert province.data["spatial_resolution"] == "sido"
+    # Only the province's own rows are provenance references; the sigungu
+    # snapshots reference the attraction rows themselves.
+    assert all(
+        reference.isdigit()
+        for reference in province.metadata["normalized_references"]["forecast_input"]
+    )
+    sigungu = next(
+        item for item in candidates if item.data["eden_area_id"] == "eden_area_phase1_11110"
+    )
+    assert "aggregated_from_sigungu" not in sigungu.quality_flags
+
+    monkeypatch.undo()
+    publisher = forecast.SnapshotPublisher(pipeline.session_factory)
+    for candidate in candidates:
+        publisher.publish(candidate)
+    response = pipeline.client.get("/v1/forecasts/visitors", params={"area_code": "11", "days": 2})
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["meta"]["availability"] in {"available", "partial"}
+    assert payload["data"]["requested_area_code"] == "11"
+    assert payload["data"]["data_area_code"] == "11"
+    assert payload["data"]["spatial_resolution"] == "sido"
+    first, second = payload["data"]["daily"]
+    assert (first["method"], first["source_concentration_rate"]) == ("official", 60.0)
+    assert (second["method"], second["source_concentration_rate"]) == ("official", 50.0)
+    assert first["sample_count"] == 3
+    assert first["basis"] == "시도 내 시군구 2곳, 관광지 3곳의 공식 집중률 평균"
 
 
 @pytest.mark.parametrize("inherited", [False, True])

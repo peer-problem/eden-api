@@ -52,6 +52,19 @@ PUBLIC_REQUESTS = (
     ),
     (
         "get",
+        "/v1/places",
+        {"params": {"area_code": "11", "q": "궁"}},
+        "place_list",
+        {
+            "area_code": "eden-area:11",
+            "lang": "ko",
+            "q": "궁",
+            "limit": 20,
+            "offset": 0,
+        },
+    ),
+    (
+        "get",
         "/v1/forecasts/visitors",
         {"params": {"area_code": "11"}},
         "visitor_forecast",
@@ -380,7 +393,7 @@ def test_unexpected_repository_failure_has_stable_safe_500_error(
     assert "source-body" not in serialized
 
 
-def test_all_seven_route_calls_are_socket_free(
+def test_all_eight_route_calls_are_socket_free(
     contract_client: TestClient,
     fake_read_repository: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -394,7 +407,7 @@ def test_all_seven_route_calls_are_socket_free(
         response = contract_client.request(method, path, **kwargs)
         assert response.status_code == 200, (method, path, response.text)
 
-    assert len(fake_read_repository.calls) == 7
+    assert len(fake_read_repository.calls) == 8
 
 
 @pytest.mark.parametrize("keyword", ["   ", "\t\n", "\u3000"])

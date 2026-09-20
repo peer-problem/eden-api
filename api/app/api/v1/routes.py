@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -15,6 +16,7 @@ from app.api.v1.schemas import (
     Language,
     PeriodShort,
     PlaceData,
+    PlaceListData,
     RegionInsightData,
     TrendData,
     VisitorForecastData,
@@ -67,6 +69,13 @@ def _resolve_area(repository: ReadRepository, identifier: str) -> str:
             detail=("AREA_NOT_FOUND", "지역을 찾을 수 없습니다."),
         )
     return resolution.eden_area_id
+
+
+def _with_requested_area(result: ReadResult, area_code: str) -> ReadResult:
+    """Echo the identifier the client sent, next to the area the data belongs to."""
+    if not isinstance(result.data, dict):
+        return result
+    return replace(result, data={**result.data, "requested_area_code": area_code})
 
 
 def _envelope[ModelT: BaseModel](
@@ -179,7 +188,53 @@ def get_region_insights(
         compare=compare,
         include=selected,
     )
-    return _envelope(request, repository.fetch("region_insights", key), RegionInsightData)
+    return _envelope(
+        request,
+        _with_requested_area(repository.fetch("region_insights", key), area_code),
+        RegionInsightData,
+    )
+
+
+@router.get(
+    "/places",
+    response_model=Envelope[PlaceListData],
+    tags=["places"],
+    summary="관광지 목록 조회",
+    description=(
+        "지역의 게시된 관광지를 제목 순으로 조회합니다. 시도 코드는 그 시도에 속한 "
+        "시군구의 관광지를 모두 포함합니다. 요청 언어 제목이 없으면 한국어 제목을 "
+        "반환하며 각 항목의 language로 실제 언어를 확인하세요. 상세는 "
+        "`/v1/places/{content_id}`로 조회합니다."
+    ),
+)
+def list_places(
+    request: Request,
+    repository: RepositoryDep,
+    area_code: Annotated[str, Query(min_length=1, max_length=64, examples=["1100000000"])],
+    lang: Annotated[Language, Query()] = "ko",
+    q: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
+) -> Envelope[PlaceListData]:
+    query = normalize_keyword(q) if q is not None else None
+    if query is not None and not query:
+        raise HTTPException(
+            status_code=422,
+            detail=("BLANK_QUERY", "검색어는 공백만으로 이루어질 수 없습니다."),
+        )
+    resolved_area = _resolve_area(repository, area_code)
+    key = lookup_key(
+        area_code=resolved_area,
+        lang=lang,
+        q=query,
+        limit=limit,
+        offset=offset,
+    )
+    return _envelope(
+        request,
+        _with_requested_area(repository.fetch("place_list", key), area_code),
+        PlaceListData,
+    )
 
 
 @router.get(
@@ -258,7 +313,11 @@ def get_visitor_forecast(
         ny=ny,
         include=sorted(include or ["weather", "festivals", "holidays"]),
     )
-    return _envelope(request, repository.fetch("visitor_forecast", key), VisitorForecastData)
+    return _envelope(
+        request,
+        _with_requested_area(repository.fetch("visitor_forecast", key), area_code),
+        VisitorForecastData,
+    )
 
 
 @router.get(
@@ -289,7 +348,11 @@ def get_visitor_timeseries(
         visitor_type=visitor_type,
         attraction_name=attraction_name,
     )
-    return _envelope(request, repository.fetch("visitor_timeseries", key), VisitorTimeseriesData)
+    return _envelope(
+        request,
+        _with_requested_area(repository.fetch("visitor_timeseries", key), area_code),
+        VisitorTimeseriesData,
+    )
 
 
 @router.get(

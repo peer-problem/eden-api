@@ -262,6 +262,9 @@ def build_forecast_view(
     return (
         {
             "area_code": product["area_code"],
+            "requested_area_code": scope.get("requested_area_code"),
+            "data_area_code": product["area_code"],
+            "spatial_resolution": product.get("spatial_resolution"),
             "eden_area_id": product.get("eden_area_id"),
             "place_name": place_name,
             "horizon_days": days,

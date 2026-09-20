@@ -193,6 +193,28 @@ class PlaceData(ApiModel):
     sources: list[str]
 
 
+class PlaceListItem(ApiModel):
+    content_id: str
+    title: str
+    language: Language
+    category: str | None = None
+    address: str | None = None
+    location: Location | None = None
+    area: AreaSummary
+
+
+class PlaceListData(ApiModel):
+    area: AreaSummary
+    requested_area_code: str | None = None
+    language: Language
+    query: str | None = None
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+    items: list[PlaceListItem]
+    sources: list[str]
+
+
 class Weather(ApiModel):
     temperature_c: float | None = None
     precipitation_probability_pct: float | None = Field(default=None, ge=0, le=100)

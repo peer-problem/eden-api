@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 PUBLIC_OPERATIONS = {
     "/v1/trends": "get",
     "/v1/regions/{area_code}/insights": "get",
+    "/v1/places": "get",
     "/v1/places/{content_id}": "get",
     "/v1/forecasts/visitors": "get",
     "/v1/visitors/timeseries": "get",
@@ -31,6 +32,7 @@ EXPECTED_PARAMETER_NAMES = {
         "compare",
         "include",
     },
+    "/v1/places": {"area_code", "lang", "q", "limit", "offset"},
     "/v1/places/{content_id}": {
         "content_id",
         "lang",
@@ -113,8 +115,31 @@ EXPECTED_DATA_FIELDS = {
         "nearby_shops",
         "sources",
     },
+    "PlaceListData": {
+        "area",
+        "requested_area_code",
+        "language",
+        "query",
+        "total",
+        "limit",
+        "offset",
+        "items",
+        "sources",
+    },
+    "PlaceListItem": {
+        "content_id",
+        "title",
+        "language",
+        "category",
+        "address",
+        "location",
+        "area",
+    },
     "VisitorForecastData": {
         "area_code",
+        "requested_area_code",
+        "data_area_code",
+        "spatial_resolution",
         "place_name",
         "horizon_days",
         "daily",
@@ -305,7 +330,7 @@ def _array_items(schema: dict[str, Any]) -> dict[str, Any]:
     return next(variant["items"] for variant in _schema_variants(schema) if "items" in variant)
 
 
-def test_openapi_exposes_exactly_the_seven_phase_one_operations(
+def test_openapi_exposes_exactly_the_eight_public_operations(
     contract_client: TestClient,
 ) -> None:
     openapi = contract_client.get("/openapi.json").json()
@@ -423,6 +448,23 @@ def test_openapi_query_defaults_and_bounds_match_phase_one(contract_client: Test
     }
     assert places["related_limit"]["schema"]["default"] == 5
     assert _enum(_array_items(places["include"]["schema"])) == {"related", "shops", "hub"}
+
+    place_list = _parameters(openapi, "/v1/places")
+    assert place_list["area_code"]["required"] is True
+    assert _enum(place_list["lang"]["schema"]) == {"ko", "en", "ja", "zh-CN"}
+    assert place_list["lang"]["schema"]["default"] == "ko"
+    assert place_list["q"]["schema"]["anyOf"][0]["maxLength"] == 100
+    bounds = ("minimum", "maximum", "default")
+    assert {key: place_list["limit"]["schema"][key] for key in bounds} == {
+        "minimum": 1,
+        "maximum": 100,
+        "default": 20,
+    }
+    assert {key: place_list["offset"]["schema"][key] for key in bounds} == {
+        "minimum": 0,
+        "maximum": 10_000,
+        "default": 0,
+    }
 
     forecasts = _parameters(openapi, "/v1/forecasts/visitors")
     assert forecasts["area_code"]["required"] is True

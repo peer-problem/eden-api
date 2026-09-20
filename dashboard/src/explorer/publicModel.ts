@@ -5,8 +5,8 @@ import schema from './catalog.json';
 const metrics: Record<string, Record<string, [string, string, string][]>> = {
   regional: {
     regional_visit_observation: [['visitors.total', '전체 방문', '명'], ['visitors.domestic', '내국인 방문', '명'], ['visitors.foreign', '외국인 방문', '명'], ['visitors.change_rate', '기간 대비', '%']],
-    regional_demand_observation: [['demand.stay_index', '체류 지수', '지수'], ['demand.spend_index', '소비 지수', '지수'], ['demand.avg_stay_nights', '평균 숙박', '박']],
-    regional_diversity_observation: [['diversity.age_index', '연령 다양성', '지수'], ['diversity.nationality_index', '국적 다양성', '지수']],
+    regional_demand_observation: [['demand.stay_index', '체류 지수', '지수'], ['demand.spend_index', '소비 지수', '지수']],
+    regional_diversity_observation: [['diversity.nationality_index', '국적 다양성', '지수']],
   },
   inbound: {
     inbound_visitor_observation: [['markets[].visitors', '방한 방문자', '명'], ['markets[].visitor_change_rate', '방문 증감', '%']],
@@ -57,8 +57,6 @@ const calculationNotes: Record<string, string> = {
   'visitors.change_rate': '(현재−비교 기간)/비교 기간 ×100 · compare 지정·양쪽 기간 자료 필요',
   'demand.stay_index': '최근 월 체류 강도 평균 · 0–100 범위',
   'demand.spend_index': '최근 월 소비 강도 평균 · 0–100 범위',
-  'demand.avg_stay_nights': '현재 원천 연결 없음 · 값이 없으면 null',
-  'diversity.age_index': '현재 원천 연결 없음 · 값이 없으면 null',
   'diversity.nationality_index': '최근 월 국제적 다양성 평균 · 0–100 범위',
 };
 export const publicMetricNames = new Set(Object.values(metrics).flatMap((group) => Object.keys(group)));

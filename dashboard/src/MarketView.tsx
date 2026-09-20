@@ -1,7 +1,7 @@
 import { Button, Checkbox, HTMLSelect } from '@blueprintjs/core';
 import { useState } from 'react';
 import { useResource } from './api';
-import { countries, countryName, date, number, safeUrl } from './data';
+import { countries, countryName, currencyFor, date, number, safeUrl } from './data';
 import type { Alerts, Market, Markets } from './types';
 import { DataTable, MetaLine, Picker, Section, State } from './ui';
 import type { ViewProps } from './RegionView';
@@ -21,9 +21,9 @@ export default function MarketView({
   )
     ? params.get('marketPeriod')!
     : '12m';
-  const currency = params.get('marketCurrency') || '';
-  const query = new URLSearchParams({ period });
-  if (currency) query.set('currency', currency);
+  // 환율은 currency를 지정해야만 오므로 미지정 시 첫 선택 국가의 통화를 기본값으로 쓴다.
+  const currency = params.get('marketCurrency') || currencyFor(active[0]);
+  const query = new URLSearchParams({ period, currency });
   active.forEach((c) => query.append('countries', c));
   const resource = useResource<Markets>(`/markets/inbound?${query}`);
   const [sort, setSort] = useState<'country' | 'visitors'>('country');
@@ -79,10 +79,10 @@ export default function MarketView({
             aria-label="환율 통화"
             value={currency}
             onChange={(e) => update({ marketCurrency: e.target.value })}
-            options={[
-              { label: '통화 선택', value: '' },
-              ...['CNY', 'JPY', 'TWD', 'USD', 'PHP'].map((value) => ({ label: value, value })),
-            ]}
+            options={countries.map((c) => ({
+              label: `${c.currency} (${c.name})`,
+              value: c.currency,
+            }))}
           />
         </label>
         <div className="toolbar-spacer" />
@@ -122,7 +122,7 @@ export default function MarketView({
               '증감률',
               '도착 항공편',
               '승객',
-              '환율 (KRW)',
+              `환율 (1 ${currency} = KRW)`,
             ]}
           >
             {markets.map((m) => (

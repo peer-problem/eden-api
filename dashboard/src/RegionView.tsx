@@ -1,14 +1,17 @@
-import { Button, HTMLSelect, InputGroup, Tab, Tabs } from '@blueprintjs/core';
+import { Button, HTMLSelect, Tab, Tabs } from '@blueprintjs/core';
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { request, useResource, type Resource } from './api';
 import { date, number, regionName, regions } from './data';
+import PlaceList from './PlaceList';
 import { RegionMap } from './RegionMap';
+import { sigunguFor, sigunguName } from './sigungu';
 import type { Envelope, Forecast, Insights, Meta, Timeseries } from './types';
 import {
   DataTable,
   MetaLine,
   MultiLineChart,
+  Picker,
   Section,
   State,
   Status,
@@ -21,6 +24,8 @@ export interface ViewProps {
   workspaceActionsTarget?: HTMLElement | null;
 }
 
+const REGION_SCOPED_PARAMS = { forecastArea: '', placeArea: '', placeQuery: '', placePage: '' };
+
 type RegionSeriesStore = Record<string, Envelope<Timeseries>>;
 
 export default function RegionView({
@@ -28,12 +33,13 @@ export default function RegionView({
   update,
   showSources,
   workspaceActionsTarget,
-}: ViewProps) {
+  showPlace,
+}: ViewProps & { showPlace: (contentId: string) => void }) {
   const area = params.get('area') || regions[0].code;
   const period = ['7d', '30d', '90d'].includes(params.get('period') || '')
     ? params.get('period')!
     : '30d';
-  const tab = ['history', 'outlook'].includes(params.get('tab') || '')
+  const tab = ['history', 'outlook', 'places'].includes(params.get('tab') || '')
     ? params.get('tab')!
     : 'history';
   const insightsResource = useResource<Insights>(
@@ -84,7 +90,7 @@ export default function RegionView({
                 small
                 active={region.code === area}
                 aria-pressed={region.code === area}
-                onClick={() => update({ area: region.code, forecastArea: '' })}
+                onClick={() => update({ area: region.code, ...REGION_SCOPED_PARAMS })}
               >
                 {region.name}
               </Button>
@@ -107,7 +113,7 @@ export default function RegionView({
       </div>
 
       <div className="region-overview">
-        <RegionMap value={area} onChange={(area) => update({ area, forecastArea: '' })} />
+        <RegionMap value={area} onChange={(area) => update({ area, ...REGION_SCOPED_PARAMS })} />
         <RegionComparison
           selectedCode={area}
           responses={seriesStore.responses}
@@ -136,6 +142,19 @@ export default function RegionView({
           id="outlook"
           title="방문 수요 참고"
           panel={<Outlook area={area} params={params} update={update} showSources={showSources} />}
+        />
+        <Tab
+          id="places"
+          title="관광지"
+          panel={
+            <PlaceList
+              area={area}
+              params={params}
+              update={update}
+              showSources={showSources}
+              showPlace={showPlace}
+            />
+          }
         />
       </Tabs>
     </>
@@ -222,9 +241,6 @@ function RegionComparison({
   loading: boolean;
   error?: string;
 }) {
-  const useVisitorCount = Object.values(responses).some((response) =>
-    response.data?.series.some((point) => point.total != null),
-  );
   const chartSeries = regions.flatMap((region) => {
     const response = responses[region.code];
     if (!response?.data?.series.length) return [];
@@ -235,7 +251,7 @@ function RegionComparison({
         label: region.name,
         points: points.map((point) => ({
           date: point.period_start,
-          value: useVisitorCount ? point.total : point.concentration_rate,
+          value: point.total,
         })),
       },
     ];
@@ -268,7 +284,7 @@ function RegionComparison({
           label="17개 시도 방문 추이"
           series={chartSeries}
           selectedCode={selectedCode}
-          unit={useVisitorCount ? '명' : '%'}
+          unit="명"
           height={276}
         />
       )}
@@ -379,18 +395,20 @@ function Outlook({
   update: ViewProps['update'];
   showSources: (meta: Meta) => void;
 }) {
+  // KTO 공식 집중률은 시군구 단위로 수집되고, 시도 요청은 API가 소속 시군구 전체의
+  // 평균을 돌려준다. 시도 전체를 기본으로 두고 시군구를 골라 좁힐 수 있게 한다.
+  const options = [{ code: area, name: `${regionName(area)} 전체` }, ...sigunguFor(area)];
   const requestedArea = params.get('forecastArea');
-  const forecastArea = requestedArea && /^\d{10}$/.test(requestedArea)
-    && requestedArea.startsWith(area.slice(0, 2)) ? requestedArea : area;
-  const [draftArea, setDraftArea] = useState(forecastArea);
-  useEffect(() => setDraftArea(forecastArea), [forecastArea]);
+  const forecastArea = options.some((item) => item.code === requestedArea)
+    ? requestedArea!
+    : area;
   const resource = useResource<Forecast>(
     `/forecasts/visitors?area_code=${encodeURIComponent(forecastArea)}&days=7`,
   );
   const daily = resource.response?.data?.daily ?? [];
   return (
     <Section
-      title="7일 방문 수요 참고"
+      title={`7일 방문 수요 참고 · ${forecastArea === area ? regionName(area) : sigunguName(forecastArea)}`}
       extra={
         <MetaLine
           meta={resource.response?.meta}
@@ -400,39 +418,32 @@ function Outlook({
         />
       }
     >
-      <form
-        className="toolbar view-toolbar"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (/^\d{10}$/.test(draftArea) && draftArea.startsWith(area.slice(0, 2))) {
-            update({ forecastArea: draftArea === area ? '' : draftArea });
-          }
-        }}
-      >
+      <div className="toolbar view-toolbar">
         <label className="filter">
-          <span>지역 코드</span>
-          <InputGroup
-            aria-label="방문 전망 지역 코드"
-            value={draftArea}
-            onChange={(event) => setDraftArea(event.target.value)}
-            maxLength={10}
-            placeholder="시군구 코드 10자리"
+          <span>시군구</span>
+          <Picker
+            label="방문 전망 시군구"
+            value={forecastArea}
+            options={options}
+            onChange={(code) => update({ forecastArea: code === area ? '' : code })}
           />
         </label>
-        <Button type="submit" disabled={!/^\d{10}$/.test(draftArea) || !draftArea.startsWith(area.slice(0, 2))}>
-          조회
-        </Button>
-        <span className="section-note">시군구 코드는 공식 집중률, 시도 코드는 과거 동일 요일 참고값</span>
-      </form>
+        <span className="section-note">
+          시도 전체는 소속 시군구 관광지의 공식 집중률 평균입니다.
+        </span>
+      </div>
       <State resource={resource} empty={!daily.length}>
-        <div className="compact-data-scope">
-          <span className="mono">
-            {resource.response?.data?.data_area_code ?? '—'}
-          </span>
-          <span>
-            {spatialResolutionName(resource.response?.data?.spatial_resolution)}
-          </span>
-        </div>
+        {(resource.response?.data?.data_area_code
+          || resource.response?.data?.spatial_resolution) && (
+          <div className="compact-data-scope">
+            <span className="mono">
+              {resource.response?.data?.data_area_code ?? '—'}
+            </span>
+            <span>
+              {spatialResolutionName(resource.response?.data?.spatial_resolution)}
+            </span>
+          </div>
+        )}
         <DataTable
           label="방문 수요 참고 자료"
           headers={[
@@ -454,13 +465,6 @@ function Outlook({
               </td>
               <td>
                 {day.method === 'official' ? '공식 전망' : '자료 없음'}
-                {day.basis_period && (
-                  <small className="cell-detail">
-                    {date(day.basis_period.start)}부터{' '}
-                    {date(day.basis_period.end)} / 표본{' '}
-                    {number(day.sample_count)}
-                  </small>
-                )}
                 {day.basis && <small className="cell-detail">{day.basis}</small>}
               </td>
               <td>

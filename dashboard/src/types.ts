@@ -46,13 +46,11 @@ export interface Insights {
         data_period: string | null;
         stay_index: number | null;
         spend_index: number | null;
-        avg_stay_nights: number | null;
       })
     | null;
   diversity:
     | (Block & {
         data_period: string | null;
-        age_index: number | null;
         nationality_index: number | null;
       })
     | null;
@@ -72,7 +70,6 @@ export interface SeriesPoint {
   total: number | null;
   domestic: number | null;
   foreign: number | null;
-  concentration_rate: number | null;
 }
 export interface Timeseries {
   area: Area;
@@ -84,9 +81,7 @@ export interface ForecastDay extends Block {
   date: string;
   source_concentration_rate: number | null;
   demand_score: number | null;
-  expected_visitors: number | null;
   method: string | null;
-  basis_period: { start: string; end: string } | null;
   sample_count: number | null;
   basis: string | null;
   weather: (Block & {
@@ -123,9 +118,7 @@ export interface Market {
     semantics: string | null;
     posts: number | null;
     views: number | null;
-    score: number | null;
   }> | null;
-  inbound_score: number | null;
   fx:
     | (Block & {
         currency: string;
@@ -178,6 +171,26 @@ export interface Trend {
   }[];
   rising_keywords: { keyword: string; score: number }[];
 }
+export interface PlaceListItem {
+  content_id: string;
+  title: string;
+  language: string;
+  category: string | null;
+  address: string | null;
+  location: { lat: number; lng: number } | null;
+  area: Area;
+}
+export interface PlaceList {
+  area: Area;
+  requested_area_code: string | null;
+  language: string;
+  query: string | null;
+  total: number;
+  limit: number;
+  offset: number;
+  items: PlaceListItem[];
+  sources: string[];
+}
 export interface Place {
   content_id: string;
   title: string;
@@ -194,6 +207,6 @@ export interface Place {
     | { shop_id: string; name: string; category: string; distance_m: number }[]
     | null;
   related_places:
-    | { content_id: string; title: string; relation_type: string; rank: number | null; score: number | null; score_as_of: string }[]
+    | { content_id: string; title: string; relation_type: string; rank: number | null; score_as_of: string }[]
     | null;
 }

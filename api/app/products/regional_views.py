@@ -297,6 +297,7 @@ def build_region_insight_view(
     return (
         {
             "area": product["area"],
+            "requested_area_code": scope.get("requested_area_code"),
             "reference_information": product.get("reference_information"),
             "period": period,
             "basis_period": {"start": start.isoformat(), "end": end.isoformat()},
@@ -457,6 +458,7 @@ def build_visitor_timeseries_view(
     return (
         {
             "area": product["area"],
+            "requested_area_code": scope.get("requested_area_code"),
             "period": period,
             "basis_period": {"start": start.isoformat(), "end": end.isoformat()},
             "granularity": granularity,

@@ -10,8 +10,8 @@ from sys import getsizeof
 from threading import Lock
 from typing import Protocol
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from app.domain.enums import Availability, SourceStatus, SpatialResolution
 from app.domain.time import kst_now
@@ -67,6 +67,12 @@ ENDPOINT_SOURCES: dict[str, tuple[str, ...]] = {
         "SRC_KTO_PLACE_HUB",
         "SRC_KTO_PLACE_RELATED",
         "SRC_SEMAS_SHOPS",
+    ),
+    "place_list": (
+        "SRC_TOUR_KO",
+        "SRC_TOUR_EN",
+        "SRC_TOUR_JA",
+        "SRC_TOUR_ZH_CN",
     ),
     "visitor_forecast": (
         "SRC_KTO_VISITOR_FORECAST",
@@ -174,6 +180,9 @@ def _request_source_ids(endpoint: str, scope: dict[str, object]) -> tuple[str, .
         }
         source_ids.update(sources_by_block[block] for block in blocks if block in sources_by_block)
         return tuple(sorted(source_ids))
+    if endpoint == "place_list":
+        language = str(scope.get("lang", "ko"))
+        return tuple(sorted({"SRC_TOUR_KO", PLACE_LANGUAGE_SOURCES.get(language, "SRC_TOUR_KO")}))
     if endpoint == "visitor_forecast":
         source_ids = {"SRC_KTO_VISITOR_FORECAST"}
         selected = scope.get("include")
@@ -542,6 +551,8 @@ class MariaDBReadRepository:
                 return self._fetch_regional_view(session, endpoint, key)
             if endpoint == "place_detail":
                 return self._fetch_place_detail(session, key)
+            if endpoint == "place_list":
+                return self._fetch_place_list(session, key)
             if endpoint == "visitor_forecast":
                 return self._fetch_forecast_view(session, key)
             snapshot = self._current_snapshot(session, endpoint, key)
@@ -942,6 +953,139 @@ class MariaDBReadRepository:
                 "related_score": "inverse_rank_v1",
                 "nearby_distance": "haversine_wgs84_v1",
             },
+            sources=source_rows,
+        )
+
+    def _fetch_place_list(self, session: Session, key: str) -> ReadResult:
+        """List canonical places of an area straight from the normalized tables."""
+        scope = json.loads(key)
+        area_id = str(scope["area_code"])
+        requested_language = str(scope.get("lang", "ko"))
+        limit = int(scope.get("limit", 20))
+        offset = int(scope.get("offset", 0))
+        query_text = str(scope.get("q") or "").strip()
+        source_rows = self._source_metadata(session, _request_source_ids("place_list", scope))
+        area = session.get(Area, area_id)
+        if area is None:
+            return ReadResult(
+                data=None,
+                availability=Availability.UNAVAILABLE,
+                reason="지역 기준정보가 없습니다.",
+                as_of=None,
+                calculated_at=None,
+                max_acceptable_age_seconds=None,
+                spatial_resolution=SpatialResolution.NONE,
+                sources=source_rows,
+            )
+        # A province request covers the places of its sigungu as well.
+        member_areas = {
+            row.eden_area_id: row
+            for row in session.scalars(
+                select(Area).where(
+                    or_(Area.eden_area_id == area_id, Area.parent_area_id == area_id)
+                )
+            )
+        }
+        requested = aliased(PlaceLocalization)
+        korean = aliased(PlaceLocalization)
+        title = func.coalesce(requested.title, korean.title)
+        address = func.coalesce(requested.address, korean.address)
+        language = func.coalesce(requested.language, korean.language)
+        listing = (
+            select(
+                Place,
+                title.label("title"),
+                address.label("address"),
+                language.label("language"),
+            )
+            .outerjoin(
+                requested,
+                (requested.eden_place_id == Place.eden_place_id)
+                & (requested.language == requested_language),
+            )
+            .outerjoin(
+                korean,
+                (korean.eden_place_id == Place.eden_place_id) & (korean.language == "ko"),
+            )
+            .where(
+                Place.area_id.in_(list(member_areas)),
+                Place.merge_status == "active",
+                Place.canonical_place_id.is_(None),
+                title.is_not(None),
+            )
+        )
+        if query_text:
+            escaped = (
+                query_text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            listing = listing.where(title.ilike(f"%{escaped}%", escape="\\"))
+        total = int(session.scalar(select(func.count()).select_from(listing.subquery())) or 0)
+        if total == 0:
+            return ReadResult(
+                data=None,
+                availability=Availability.UNAVAILABLE,
+                reason="조건에 맞는 게시된 관광지가 없습니다.",
+                as_of=None,
+                calculated_at=None,
+                max_acceptable_age_seconds=None,
+                spatial_resolution=SpatialResolution(area.level),
+                sources=source_rows,
+            )
+        rows = session.execute(
+            listing.order_by(title, Place.eden_place_id).limit(limit).offset(offset)
+        ).all()
+
+        def area_summary(value: Area) -> dict[str, object]:
+            return {
+                "area_code": value.administrative_code or value.eden_area_id,
+                "eden_area_id": value.eden_area_id,
+                "name": value.name_ko,
+                "spatial_resolution": value.level,
+            }
+
+        items = []
+        for place, item_title, item_address, item_language in rows:
+            has_location = place.lat is not None and place.lng is not None
+            items.append(
+                {
+                    "content_id": place.eden_place_id,
+                    "title": item_title,
+                    "language": item_language,
+                    "category": place.category,
+                    "address": item_address,
+                    "location": (
+                        {"lat": float(place.lat), "lng": float(place.lng)} if has_location else None
+                    ),
+                    "area": area_summary(member_areas.get(place.area_id, area)),
+                }
+            )
+        source_ids = {"SRC_TOUR_KO"}
+        source_ids.update(
+            PLACE_LANGUAGE_SOURCES.get(str(item["language"]), "SRC_TOUR_KO") for item in items
+        )
+        as_of = max((_as_aware_utc(place.updated_at) for place, *_ in rows), default=None)
+        data = {
+            "area": area_summary(area),
+            "language": requested_language,
+            "query": query_text or None,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "items": items,
+            "sources": sorted(source_ids),
+        }
+        if not items:
+            availability, reason = Availability.PARTIAL, "offset이 전체 관광지 수를 넘었습니다."
+        else:
+            availability, reason = Availability.AVAILABLE, None
+        return ReadResult(
+            data=data,
+            availability=availability,
+            reason=reason,
+            as_of=as_of,
+            calculated_at=as_of,
+            max_acceptable_age_seconds=3 * 24 * 3600,
+            spatial_resolution=SpatialResolution(area.level),
             sources=source_rows,
         )
 

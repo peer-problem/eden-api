@@ -450,3 +450,57 @@ def test_malformed_coverage_is_ignored() -> None:
     assert data["daily"][0]["festivals"] is None
     assert data["daily"][0]["holiday"] is None
     assert availability == Availability.PARTIAL
+
+
+def test_forecast_view_echoes_area_codes_and_uses_an_aggregated_province_row() -> None:
+    product = {
+        "area_code": "1100000000",
+        "spatial_resolution": "sido",
+        "inputs": [
+            {
+                "input_id": None,
+                "source_id": "SRC_KTO_VISITOR_FORECAST",
+                "forecast_date": "2026-08-29T00:00:00+00:00",
+                "place_id": None,
+                "source_forecast": {
+                    "place_name": None,
+                    "concentration_rate": 61.25,
+                    "expected_visitors": None,
+                    "sample_count": 120,
+                    "sigungu_count": 25,
+                    "basis": "시도 내 시군구 25곳, 관광지 120곳의 공식 집중률 평균",
+                    "aggregated_from": "sigungu",
+                },
+            },
+            {
+                "input_id": 7,
+                "source_id": "SRC_KTO_VISITOR_FORECAST",
+                "forecast_date": "2026-08-29T00:00:00+00:00",
+                "place_id": "eden_place_1",
+                "source_forecast": {
+                    "place_name": "광화문",
+                    "concentration_rate": 99.0,
+                    "expected_visitors": None,
+                },
+            },
+        ],
+    }
+    scope = {
+        "days": 1,
+        "include": ["weather", "festivals", "holidays"],
+        "requested_area_code": "11",
+    }
+
+    data, availability, _reason = build_forecast_view(product, scope, today=date(2026, 8, 29))
+
+    assert data["requested_area_code"] == "11"
+    assert data["data_area_code"] == "1100000000"
+    assert data["spatial_resolution"] == "sido"
+    (day,) = data["daily"]
+    # The province aggregate wins over any single attraction row.
+    assert day["source_concentration_rate"] == 61.25
+    assert day["method"] == "official"
+    assert day["sample_count"] == 120
+    assert day["basis"] == "시도 내 시군구 25곳, 관광지 120곳의 공식 집중률 평균"
+    assert availability == Availability.PARTIAL
+    VisitorForecastData.model_validate(data)

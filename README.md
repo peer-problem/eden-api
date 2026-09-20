@@ -10,16 +10,17 @@
 
 ## API 제공 범위 (2026-09-17, API v0.3.0)
 
-공개 엔드포인트 7개의 구현 범위입니다. 구현 여부와 실제 수집 여부는 다르며, 자료가 없으면 `null` 또는 `unavailable`로 응답합니다. 2026-09-17 DB 확인 시 NAVER 관측, 장소 소개문, 국가별 항공 여객 수는 아직 없었습니다. 원천이 없는 필드와 사유는 [API 문서](api/README.md#fields-that-are-not-provided), 수집 제한은 [알려진 제한](api/KNOWN_GAPS.md)에 있습니다.
+공개 엔드포인트 8개의 구현 범위입니다. 구현 여부와 실제 수집 여부는 다르며, 자료가 없으면 `null` 또는 `unavailable`로 응답합니다. 2026-09-17 DB 확인 시 NAVER 관측, 장소 소개문, 국가별 항공 여객 수는 아직 없었습니다. 원천이 없는 필드와 사유는 [API 문서](api/README.md#fields-that-are-not-provided), 수집 제한은 [알려진 제한](api/KNOWN_GAPS.md)에 있습니다.
 
 | 엔드포인트 | 상태 | 제공하는 것 | 미제공 / 제한 |
 | --- | --- | --- | --- |
 | `GET /v1/trends` | 수집 범위 내 지원 | YouTube 검색 표본과 KTO 관광자원 수요 지수. KTO 저장 키워드는 `관광서비스수요`, `문화자연자원 수요` | NAVER는 수집 경로만 준비됨. 사전 수집되지 않은 키워드는 unavailable |
 | `GET /v1/regions/{area_code}/insights` | 완성 (시도 단위) | 일별 방문자(내 및 외국인, 원천 발표 지연 약 30일), 관광 체류 및 소비 강도, 국적 다양성, `compare=previous_period`로 증감률 | 요청 지역에 관측이 없으면 unavailable. `avg_stay_nights`, `age_index`는 원천 없음 |
 | `GET /v1/visitors/timeseries` | 완성 (시도 단위, 일 및 주 및 월) | 방문자 시계열과 요약 | `concentration_rate`는 원천 없음. `attraction_name`(관광지별)은 원천이 없어 항상 unavailable |
-| `GET /v1/forecasts/visitors` | 완성 | 시군구: 관광지별 KTO 공식 집중률의 평균(`sample_count` 표시). 공식 전망이 없으면 unavailable. 기상청 단기예보, 축제, 공휴일 | `expected_visitors`, `confidence`는 원천 없음 |
+| `GET /v1/forecasts/visitors` | 완성 | 시군구: 관광지별 KTO 공식 집중률의 평균(`sample_count` 표시). 시도: 소속 시군구 전체 관광지의 평균(`basis`에 시군구·관광지 수). 공식 전망이 없으면 unavailable. 기상청 단기예보, 축제, 공휴일. `requested_area_code`, `data_area_code`, `spatial_resolution`으로 요청 지역과 자료 지역을 구분 | `expected_visitors`, `confidence`는 원천 없음 |
 | `GET /v1/markets/inbound` | 지원, 여객 수 수집 대기 | 월별 방한객과 도착 항공편. 향후 운항 일정, 환율, 한국 전체 관광수지, YouTube 검색 표본 | 여객 수는 DB에 아직 없음. YouTube 점수는 국가 신호로 사용하지 않음 |
 | `GET /v1/markets/{country}/alerts` | 저장 자료 지원 | 공식 공지 원문과 출처 링크. 기존에 저장된 번역 및 AI 요약 | 신규 유료 보강은 중단. 번역이 없는 공지는 원문으로 fallback |
+| `GET /v1/places` | 완성 | 시도 또는 시군구의 관광지 목록(제목 순, 언어별 제목과 한국어 fallback, 제목 검색, `limit`/`offset` 페이지) | 한국어 제목이 없는 관광지는 목록에 없음 |
 | `GET /v1/places/{content_id}` | 지원, 일부 수집 대기 | 장소명과 위치, 다국어 제목, 중심 관광지 순위, 연관 장소, 주변 상점 | 소개문은 DB에 아직 없음. 장소별 번역과 연관 데이터의 제공 범위가 다름 |
 
 수집 원천 36개 중 26개가 켜져 있습니다. 꺼진 10개(Instagram 및 Facebook 및 Reddit 및 X 및 TikTok 및 Weibo 및 Douyin 및 Xiaohongshu 및 LINE 및 관광지 입장객)는 어댑터가 없거나 외부 승인이 필요합니다.
