@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from time import monotonic
 
-from app.ingestion.retention import retain_observations
+from sqlalchemy import Column, DateTime, Integer, MetaData, Table, create_engine, event
+
+from app.ingestion.retention import _unprotected_candidates, retain_observations
 
 
 class FakeReferences:
@@ -83,3 +86,56 @@ def test_completed_scan_still_closes_the_cursor_before_deleting() -> None:
     assert references.closed == 1
     assert references.consumed == 2
     assert factory.begun == 0
+
+
+def test_large_protected_set_uses_bounded_sql_and_pages_past_protected_rows() -> None:
+    engine = create_engine("sqlite://")
+    metadata = MetaData()
+    facts = Table(
+        "facts", metadata,
+        Column("id", Integer, primary_key=True),
+        Column("observed_at", DateTime, nullable=False),
+    )
+    metadata.create_all(engine)
+    old = datetime(2024, 1, 1)
+    with engine.begin() as connection:
+        connection.execute(facts.insert(), [
+            {"id": identifier, "observed_at": old}
+            for identifier in [*range(1, 551), 70_001, 70_002, 70_003]
+        ])
+    queries = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def record_query(_conn, _cursor, statement, parameters, _context, _many):
+        queries.append((statement, len(parameters)))
+
+    with engine.connect() as connection:
+        result = _unprotected_candidates(
+            connection, facts.c.id, facts.c.observed_at, datetime(2025, 1, 1),
+            {str(value) for value in range(1, 70_001)},
+            batch_size=2, deadline=monotonic() + 5, pause_reason=None,
+        )
+    assert result == [70_001, 70_002]
+    assert len(queries) == 2
+    assert all("NOT IN" not in sql and count <= 6 for sql, count in queries)
+    engine.dispose()
+
+
+def test_candidate_scan_discards_partial_batch_when_paused() -> None:
+    class Session:
+        def scalars(self, _statement):
+            return self
+
+        def all(self):
+            # The first page has one deletable row and 499 protected rows.
+            return list(range(500))
+
+    facts = Table(
+        "facts", MetaData(), Column("id", Integer), Column("observed_at", DateTime),
+    )
+    reasons = iter([None, "capacity_sample_stale"])
+    assert _unprotected_candidates(
+        Session(), facts.c.id, facts.c.observed_at, datetime(2025, 1, 1),
+        {str(value) for value in range(1, 500)},
+        batch_size=2, deadline=monotonic() + 5, pause_reason=lambda: next(reasons),
+    ) == []

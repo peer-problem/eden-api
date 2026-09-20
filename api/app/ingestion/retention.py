@@ -13,6 +13,41 @@ from sqlalchemy import delete, exists, func, or_, select
 from app.repositories import models as m
 
 
+def _unprotected_candidates(
+    session,
+    column,
+    date_column,
+    cutoff,
+    protected: set[str],
+    *,
+    batch_size: int,
+    deadline: float,
+    pause_reason: Callable[[], str | None] | None,
+) -> list:
+    """Page past protected rows without binding the full reference set into SQL."""
+    identifiers = []
+    after = None
+    scan_size = 500
+    while len(identifiers) < batch_size:
+        if monotonic() >= deadline or (pause_reason and pause_reason()):
+            return []
+        statement = select(column).where(date_column < cutoff)
+        if after is not None:
+            statement = statement.where(column > after)
+        # Retention date columns have no leading index on several large tables.
+        # Primary-key order avoids re-sorting the entire table for every page.
+        rows = session.scalars(statement.order_by(column).limit(scan_size)).all()
+        for identifier in rows:
+            after = identifier
+            if str(identifier) not in protected:
+                identifiers.append(identifier)
+                if len(identifiers) == batch_size:
+                    return identifiers
+        if len(rows) < scan_size:
+            break
+    return identifiers
+
+
 def retain_observations(
     factory,
     *,
@@ -88,18 +123,16 @@ def retain_observations(
         column = getattr(model, key)
         name = model.__tablename__
         with factory.begin() as session:
-            candidates = list(
-                session.scalars(
-                    select(column)
-                    .where(
-                        getattr(model, date_field) < cutoff,
-                        column.not_in(protected[name]),
-                    )
-                    .order_by(getattr(model, date_field), column)
-                    .limit(batch_size)
-                )
+            identifiers = _unprotected_candidates(
+                session,
+                column,
+                getattr(model, date_field),
+                cutoff,
+                protected[name],
+                batch_size=batch_size,
+                deadline=deadline,
+                pause_reason=pause_reason,
             )
-            identifiers = [value for value in candidates if str(value) not in protected[name]]
             if not identifiers:
                 continue
             # Edges are not database cascades. Delete a bounded batch first and
