@@ -224,9 +224,6 @@ function RegionComparison({
   loading: boolean;
   error?: string;
 }) {
-  const useVisitorCount = Object.values(responses).some((response) =>
-    response.data?.series.some((point) => point.total != null),
-  );
   const chartSeries = regions.flatMap((region) => {
     const response = responses[region.code];
     if (!response?.data?.series.length) return [];
@@ -237,7 +234,7 @@ function RegionComparison({
         label: region.name,
         points: points.map((point) => ({
           date: point.period_start,
-          value: useVisitorCount ? point.total : point.concentration_rate,
+          value: point.total,
         })),
       },
     ];
@@ -270,7 +267,7 @@ function RegionComparison({
           label="17개 시도 방문 추이"
           series={chartSeries}
           selectedCode={selectedCode}
-          unit={useVisitorCount ? '명' : '%'}
+          unit="명"
           height={276}
         />
       )}
@@ -453,13 +450,6 @@ function Outlook({
               </td>
               <td>
                 {day.method === 'official' ? '공식 전망' : '자료 없음'}
-                {day.basis_period && (
-                  <small className="cell-detail">
-                    {date(day.basis_period.start)}부터{' '}
-                    {date(day.basis_period.end)} / 표본{' '}
-                    {number(day.sample_count)}
-                  </small>
-                )}
                 {day.basis && <small className="cell-detail">{day.basis}</small>}
               </td>
               <td>
