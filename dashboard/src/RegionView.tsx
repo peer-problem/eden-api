@@ -1,16 +1,16 @@
-import { Button, HTMLSelect, Tab, Tabs } from '@blueprintjs/core';
-import { useCallback, useEffect, useState } from 'react';
+import { Button, Tab, Tabs } from '@blueprintjs/core';
 import { createPortal } from 'react-dom';
-import { request, useResource, type Resource } from './api';
-import { date, number, regionName, regions } from './data';
+import { useResource, type Resource } from './api';
+import { currentDate, date, number, regionName, regions } from './data';
 import PlaceList from './PlaceList';
 import { RegionMap } from './RegionMap';
 import { sigunguFor, sigunguName } from './sigungu';
-import type { Envelope, Forecast, Insights, Meta, Timeseries } from './types';
+import type { Forecast, Insights, Meta, Timeseries } from './types';
 import {
   DataTable,
+  Dropdown,
+  LineChart,
   MetaLine,
-  MultiLineChart,
   Picker,
   Section,
   State,
@@ -20,13 +20,11 @@ import {
 export interface ViewProps {
   params: URLSearchParams;
   update: (values: Record<string, string>) => void;
-  showSources: (meta: Meta) => void;
+  showSources: (meta: Meta, pipeline: string) => void;
   workspaceActionsTarget?: HTMLElement | null;
 }
 
 const REGION_SCOPED_PARAMS = { forecastArea: '', placeArea: '', placeQuery: '', placePage: '' };
-
-type RegionSeriesStore = Record<string, Envelope<Timeseries>>;
 
 export default function RegionView({
   params,
@@ -45,21 +43,13 @@ export default function RegionView({
   const insightsResource = useResource<Insights>(
     `/regions/${encodeURIComponent(area)}/insights?period=${period}&compare=previous_period`,
   );
-  const seriesStore = useAllRegionTimeseries(period);
-  const selectedSeriesResource: Resource<Timeseries> = {
-    loading: seriesStore.loading,
-    response: seriesStore.responses[area],
-    error:
-      !seriesStore.loading && !seriesStore.responses[area]
-        ? seriesStore.error ?? '선택한 지역의 시계열 자료를 불러오지 못했습니다.'
-        : undefined,
-    retry: seriesStore.retry,
-  };
-  const meta =
-    seriesStore.responses[area]?.meta ?? insightsResource.response?.meta;
+  const seriesResource = useResource<Timeseries>(
+    `/visitors/timeseries?area_code=${encodeURIComponent(area)}&period=${period}&granularity=day`,
+  );
+  const meta = seriesResource.response?.meta ?? insightsResource.response?.meta;
   const refresh = () => {
     insightsResource.retry();
-    seriesStore.retry();
+    seriesResource.retry();
   };
 
   return (
@@ -67,11 +57,11 @@ export default function RegionView({
       {workspaceActionsTarget &&
         createPortal(
           <div className="region-workspace-actions">
-            <MetaLine meta={meta} onSources={() => meta && showSources(meta)} />
+            <MetaLine meta={meta} onSources={() => meta && showSources(meta, 'regional')} />
             <Button
               variant="minimal"
               icon="refresh"
-              loading={insightsResource.loading || seriesStore.loading}
+              loading={insightsResource.loading || seriesResource.loading}
               onClick={refresh}
             >
               새로고침
@@ -99,10 +89,10 @@ export default function RegionView({
         </div>
         <label className="filter region-period-filter">
           <span>기간</span>
-          <HTMLSelect
-            aria-label="조회 기간"
+          <Dropdown
+            label="조회 기간"
             value={period}
-            onChange={(event) => update({ period: event.target.value })}
+            onChange={(value) => update({ period: value })}
             options={[
               { label: '최근 7일', value: '7d' },
               { label: '최근 30일', value: '30d' },
@@ -114,15 +104,14 @@ export default function RegionView({
 
       <div className="region-overview">
         <RegionMap value={area} onChange={(area) => update({ area, ...REGION_SCOPED_PARAMS })} />
-        <RegionComparison
-          selectedCode={area}
-          responses={seriesStore.responses}
-          loading={seriesStore.loading}
-          error={seriesStore.error}
-        />
+        <div className="region-overview-main">
+          <RegionTrend
+            resource={seriesResource}
+            regionLabel={regionName(area)}
+          />
+          <RegionMetrics resource={insightsResource} showSources={showSources} />
+        </div>
       </div>
-
-      <RegionMetrics resource={insightsResource} showSources={showSources} />
 
       <Tabs
         id="region-tabs"
@@ -135,7 +124,7 @@ export default function RegionView({
           id="history"
           title="일별 자료"
           panel={
-            <History resource={selectedSeriesResource} showSources={showSources} />
+            <History resource={seriesResource} showSources={showSources} />
           }
         />
         <Tab
@@ -161,131 +150,34 @@ export default function RegionView({
   );
 }
 
-function useAllRegionTimeseries(period: string) {
-  const [retryCount, setRetryCount] = useState(0);
-  const key = `${period}:${retryCount}`;
-  const [state, setState] = useState<{
-    key: string;
-    loading: boolean;
-    responses: RegionSeriesStore;
-    error?: string;
-  }>({ key: '', loading: false, responses: {} });
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let active = true;
-    let timedOut = false;
-    setState({ key, loading: true, responses: {} });
-    const timer = window.setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, 20000);
-
-    Promise.allSettled(
-      regions.map((region) =>
-        request<Timeseries>(
-          `/visitors/timeseries?area_code=${encodeURIComponent(region.code)}&period=${period}&granularity=day`,
-          controller.signal,
-        ),
-      ),
-    )
-      .then((results) => {
-        if (!active) return;
-        const responses = results.reduce<RegionSeriesStore>(
-          (found, result, index) => {
-            if (result.status === 'fulfilled') {
-              found[regions[index].code] = result.value;
-            }
-            return found;
-          },
-          {},
-        );
-        setState({
-          key,
-          loading: false,
-          responses,
-          error:
-            Object.keys(responses).length === 0
-              ? timedOut
-                ? '시도 비교 자료의 응답 대기 시간이 지났습니다.'
-                : '시도 비교 자료를 불러오지 못했습니다.'
-              : undefined,
-        });
-      })
-      .finally(() => window.clearTimeout(timer));
-
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [key, period]);
-
-  const retry = useCallback(() => setRetryCount((count) => count + 1), []);
-  return {
-    ...(state.key === key
-      ? state
-      : { key, loading: true, responses: {} as RegionSeriesStore }),
-    retry,
-  };
-}
-
-function RegionComparison({
-  selectedCode,
-  responses,
-  loading,
-  error,
+function RegionTrend({
+  resource,
+  regionLabel,
 }: {
-  selectedCode: string;
-  responses: RegionSeriesStore;
-  loading: boolean;
-  error?: string;
+  resource: Resource<Timeseries>;
+  regionLabel: string;
 }) {
-  const chartSeries = regions.flatMap((region) => {
-    const response = responses[region.code];
-    if (!response?.data?.series.length) return [];
-    const points = response.data.series;
-    return [
-      {
-        code: region.code,
-        label: region.name,
-        points: points.map((point) => ({
-          date: point.period_start,
-          value: point.total,
-        })),
-      },
-    ];
-  });
-  const loadedCount = chartSeries.length;
+  const points =
+    resource.response?.data?.series?.map((point) => ({
+      date: point.period_start,
+      value: point.total,
+    })) ?? [];
 
   return (
-    <section className="region-comparison" aria-labelledby="region-comparison-title">
-      <div className="region-comparison-heading">
-        <div>
-          <h2 id="region-comparison-title">17개 시도 방문 추이</h2>
-          <span>{regionName(selectedCode)} 강조</span>
+    <section className="region-trend" aria-labelledby="region-trend-title">
+      <h2 id="region-trend-title">{regionLabel} 방문 추이</h2>
+      {resource.loading ? (
+        <div className="region-trend-state" role="status">
+          {regionLabel} 추이를 불러오는 중
         </div>
-        <div className="comparison-legend" aria-label="그래프 범례">
-          <span className="selected">선택 지역</span>
-          <span>다른 지역</span>
-          {!loading && loadedCount > 0 && loadedCount < regions.length && (
-            <span>{loadedCount}/{regions.length}개 표시</span>
-          )}
-        </div>
-      </div>
-      {loading ? (
-        <div className="comparison-state" role="status">
-          17개 시도 추이를 불러오는 중
-        </div>
-      ) : error ? (
-        <div className="comparison-state" role="alert">{error}</div>
+      ) : resource.error ? (
+        <div className="region-trend-state" role="alert">{resource.error}</div>
       ) : (
-        <MultiLineChart
-          label="17개 시도 방문 추이"
-          series={chartSeries}
-          selectedCode={selectedCode}
+        <LineChart
+          label={`${regionLabel} 방문 추이`}
+          points={points}
           unit="명"
-          height={276}
+          height={188}
         />
       )}
     </section>
@@ -311,31 +203,38 @@ function RegionMetrics({ resource, showSources }: {
     return <p className="inline-note">{resource.response?.meta.reason ?? '현재 게시된 지역 지표가 없습니다.'}</p>;
   }
 
+  const month = (value?: string | null) => value?.replaceAll('-', '.') ?? null;
   const metrics = [
-    ['전체', number(data.visitors?.total, '명')],
-    ['내국인', number(data.visitors?.domestic, '명')],
-    ['외국인', number(data.visitors?.foreign, '명')],
-    ['이전 기간 대비', number(data.comparison?.change_rate, '%')],
-    ['체류', number(data.demand?.stay_index)],
-    ['소비', number(data.demand?.spend_index)],
-    ['국적 다양성', number(data.diversity?.nationality_index)],
+    { label: '전체', value: number(data.visitors?.total, '명'), primary: true },
+    { label: '내국인', value: number(data.visitors?.domestic, '명'), primary: true },
+    { label: '외국인', value: number(data.visitors?.foreign, '명'), primary: true },
+    { label: '이전 기간 대비', value: number(data.comparison?.change_rate, '%'), primary: true },
+    { label: '체류', value: number(data.demand?.stay_index), period: month(data.demand?.data_period) },
+    { label: '소비', value: number(data.demand?.spend_index), period: month(data.demand?.data_period) },
+    { label: '국적 다양성', value: number(data.diversity?.nationality_index), period: month(data.diversity?.data_period) },
   ];
   return (
     <>
       <dl className="region-stat-band" aria-label={`${data.area.name} 지역 지표`}>
-        {metrics.map(([label, value], index) => (
-          <div key={label} className={index < 4 ? 'primary' : undefined}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
+        {metrics.map((metric) => (
+          <div key={metric.label} className={metric.primary ? 'primary' : undefined}>
+            <dt>{metric.label}</dt>
+            <dd>{metric.value}</dd>
+            {metric.period && <p className="region-stat-period">{metric.period}</p>}
           </div>
         ))}
       </dl>
       <div className="region-metric-context">
         <p className="section-note">
-          {data.basis_period && <span>방문 집계: {date(data.basis_period.start)}부터 {date(data.basis_period.end)}까지</span>}
-          {data.comparison && <span>비교 기준: {date(data.comparison.baseline_start)}부터 {date(data.comparison.baseline_end)}까지</span>}
+          {data.basis_period && <span>최신 공개 방문 자료: {date(data.basis_period.start)}부터 {date(data.basis_period.end)}까지</span>}
+          {data.comparison && <span>직전 비교 기간: {date(data.comparison.baseline_start)}부터 {date(data.comparison.baseline_end)}까지</span>}
+          <span>조회일: {currentDate()} / 방문 자료는 약 30일 늦게 발표됩니다</span>
         </p>
-        <MetaLine meta={resource.response?.meta} onSources={() => resource.response && showSources(resource.response.meta)} />
+        <MetaLine
+          meta={resource.response?.meta}
+          showAsOf={false}
+          onSources={() => resource.response && showSources(resource.response.meta, 'regional')}
+        />
       </div>
       {resource.response?.meta.reason && <p className="inline-note">{resource.response.meta.reason}</p>}
     </>
@@ -347,9 +246,10 @@ function History({
   showSources,
 }: {
   resource: Resource<Timeseries>;
-  showSources: (meta: Meta) => void;
+  showSources: ViewProps['showSources'];
 }) {
   const series = resource.response?.data?.series ?? [];
+  const summary = resource.response?.data?.summary;
   const latestFirst = [...series].sort((a, b) =>
     b.period_start.localeCompare(a.period_start),
   );
@@ -360,12 +260,21 @@ function History({
         <MetaLine
           meta={resource.response?.meta}
           onSources={() =>
-            resource.response && showSources(resource.response.meta)
+            resource.response && showSources(resource.response.meta, 'regional')
           }
         />
       }
     >
       <State resource={resource} empty={!series.length}>
+        {summary && (
+          <p className="section-note">
+            <span>기간 합계 {number(summary.total, '명')}</span>
+            <span>최고 방문 {number(summary.peak_visitors, '명')}</span>
+            <span>
+              완결률 {summary.completeness_ratio == null ? '—' : number(summary.completeness_ratio * 100, '%')}
+            </span>
+          </p>
+        )}
         <DataTable
           label="일별 방문 자료"
           headers={['기준일', '전체 방문', '내국인', '외국인']}
@@ -393,7 +302,7 @@ function Outlook({
   area: string;
   params: URLSearchParams;
   update: ViewProps['update'];
-  showSources: (meta: Meta) => void;
+  showSources: ViewProps['showSources'];
 }) {
   // KTO 공식 집중률은 시군구 단위로 수집되고, 시도 요청은 API가 소속 시군구 전체의
   // 평균을 돌려준다. 시도 전체를 기본으로 두고 시군구를 골라 좁힐 수 있게 한다.
@@ -413,7 +322,7 @@ function Outlook({
         <MetaLine
           meta={resource.response?.meta}
           onSources={() =>
-            resource.response && showSources(resource.response.meta)
+            resource.response && showSources(resource.response.meta, 'forecast')
           }
         />
       }
@@ -469,7 +378,7 @@ function Outlook({
               </td>
               <td>
                 {day.weather?.availability === 'available'
-                  ? `${number(day.weather.temperature_c, '°C')} / ${day.weather.condition ?? '상태 없음'}`
+                  ? `${number(day.weather.temperature_c, '°C')} / ${day.weather.condition ?? '상태 없음'} / 강수 ${number(day.weather.precipitation_probability_pct, '%')}`
                   : '자료 없음'}
               </td>
               <td>

@@ -4,6 +4,7 @@ import {
   buildRequestTarget,
   codeSamples,
   initialParameterValues,
+  isArraySchema,
   readOperations,
   type OpenApiDocument,
 } from "./apiDocs";
@@ -47,6 +48,18 @@ test("request URLs replace path values and repeat array query keys", () => {
     "https://api.edenapi.org/v1/markets/JP/alerts?types=visa&types=entry&limit=20",
   );
   assert.match(codeSamples(operation, target).javascript, /fetch\("https:\/\/api\.edenapi\.org/);
+});
+
+test("nullable array parameters remain multi-select request values", () => {
+  assert.equal(
+    isArraySchema({
+      anyOf: [
+        { type: "array", items: { type: "string", enum: ["youtube", "instagram"] } },
+        { type: "null" },
+      ],
+    }),
+    true,
+  );
 });
 
 test("required request values fail before a network call", () => {

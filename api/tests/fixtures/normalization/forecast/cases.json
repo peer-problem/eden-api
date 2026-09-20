@@ -1,9 +1,9 @@
 {
   "weather_rows": [
-    {"fcstDate": "20260829", "nx": "60", "ny": "127", "category": "TMP", "fcstValue": "0"},
-    {"fcstDate": "20260829", "nx": "60", "ny": "127", "category": "POP", "fcstValue": "0"},
-    {"fcstDate": "20260829", "nx": "60", "ny": "127", "category": "SKY", "fcstValue": "1"},
-    {"fcstDate": "20260830", "nx": "60", "ny": "127", "category": "PTY", "fcstValue": "1"}
+    {"fcstDate": "20260829", "fcstTime": "1200", "nx": "60", "ny": "127", "category": "TMP", "fcstValue": "0"},
+    {"fcstDate": "20260829", "fcstTime": "1200", "nx": "60", "ny": "127", "category": "POP", "fcstValue": "0"},
+    {"fcstDate": "20260829", "fcstTime": "1200", "nx": "60", "ny": "127", "category": "SKY", "fcstValue": "1"},
+    {"fcstDate": "20260830", "fcstTime": "1200", "nx": "60", "ny": "127", "category": "PTY", "fcstValue": "1"}
   ],
   "forecast_rows": [
     {"baseYmd": "20260829", "cnctrRate": "0", "areaCode": "11"},
@@ -12,6 +12,7 @@
   ],
   "malformed_weather_row": {
     "fcstDate": "2026-08-29",
+    "fcstTime": "1200",
     "nx": "60",
     "ny": "127",
     "category": "TMP",

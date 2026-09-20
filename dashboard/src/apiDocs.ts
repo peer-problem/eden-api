@@ -146,7 +146,9 @@ function splitArray(value: string): string[] {
 }
 
 export function isArraySchema(schema?: OpenApiSchema): boolean {
-  return schema?.type === "array" || Boolean(schema?.items);
+  if (!schema) return false;
+  if (schema.type === "array" || Boolean(schema.items)) return true;
+  return [...(schema.anyOf ?? []), ...(schema.oneOf ?? [])].some((variant) => isArraySchema(variant));
 }
 
 export function schemaEnum(schema?: OpenApiSchema): string[] {

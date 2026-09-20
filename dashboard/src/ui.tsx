@@ -8,7 +8,7 @@ import {
   Tag,
 } from '@blueprintjs/core';
 import { Select } from '@blueprintjs/select';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { availabilityName, date, number } from './data';
 import type { Meta, Source } from './types';
 import type { Resource } from './api';
@@ -62,6 +62,212 @@ export function Picker({
     </Select>
   );
 }
+
+export interface DropdownOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+
+export function Dropdown({
+  label,
+  value,
+  options,
+  onChange,
+  disabled = false,
+  fill = false,
+}: {
+  label: string;
+  value: string;
+  options: DropdownOption[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  fill?: boolean;
+}) {
+  const selected = options.find((option) => option.value === value);
+  const filterable = options.length > 8;
+  return (
+    <Select
+      items={options}
+      filterable={filterable}
+      itemPredicate={filterable
+        ? (query, item) => item.label.toLowerCase().includes(query.trim().toLowerCase())
+        : undefined}
+      itemRenderer={(item, { handleClick, handleFocus, modifiers }) => (
+        <MenuItem
+          key={item.value}
+          text={item.label}
+          active={modifiers.active}
+          disabled={item.disabled}
+          selected={item.value === value}
+          onClick={handleClick}
+          onFocus={handleFocus}
+          roleStructure="listoption"
+        />
+      )}
+      onItemSelect={(item) => {
+        if (!item.disabled) onChange(item.value);
+      }}
+      inputProps={{
+        placeholder: `${label} 검색`,
+        'aria-label': `${label} 검색`,
+      }}
+      noResults={<MenuItem disabled text="검색 결과 없음" roleStructure="listoption" />}
+      popoverProps={{
+        minimal: true,
+        matchTargetWidth: true,
+        placement: 'bottom-start',
+        popoverClassName: 'eden-select-popover',
+      }}
+    >
+      <Button
+        type="button"
+        className="eden-select-button"
+        aria-label={label}
+        aria-haspopup="listbox"
+        text={selected?.label ?? value}
+        endIcon="chevron-down"
+        disabled={disabled}
+        fill={fill}
+      />
+    </Select>
+  );
+}
+
+export function filterComboboxOptions(options: DropdownOption[], query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return options;
+  return options.filter((option) =>
+    `${option.label} ${option.value}`.toLowerCase().includes(needle),
+  );
+}
+
+export function Combobox({
+  label,
+  value,
+  options,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  options: DropdownOption[];
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  const listId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const exact = options.some((option) => option.value === value);
+  const filtered = exact ? options : filterComboboxOptions(options, value);
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [open]);
+  useEffect(() => {
+    setHighlight(0);
+  }, [value, open]);
+  const choose = (next: string) => {
+    onChange(next);
+    setOpen(false);
+  };
+  const move = (delta: number) => {
+    if (!filtered.length) return;
+    setHighlight((current) => (current + delta + filtered.length) % filtered.length);
+  };
+  return (
+    <div className="eden-combobox-wrap" ref={rootRef}>
+      <div className={`eden-combobox${open ? ' is-open' : ''}`}>
+        <input
+          value={value}
+          placeholder={placeholder}
+          autoComplete="off"
+          spellCheck={false}
+          role="combobox"
+          aria-label={label}
+          aria-expanded={open}
+          aria-controls={listId}
+          aria-autocomplete="list"
+          aria-activedescendant={
+            open && filtered[highlight] ? `${listId}-${filtered[highlight].value}` : undefined
+          }
+          onChange={(event) => {
+            onChange(event.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              if (!open) setOpen(true);
+              else move(1);
+            } else if (event.key === 'ArrowUp') {
+              event.preventDefault();
+              if (!open) setOpen(true);
+              else move(-1);
+            } else if (event.key === 'Enter' && open && filtered[highlight]) {
+              event.preventDefault();
+              choose(filtered[highlight].value);
+            } else if (event.key === 'Escape') {
+              setOpen(false);
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="eden-combobox-toggle"
+          aria-label={`${label} 예시`}
+          aria-expanded={open}
+          aria-controls={listId}
+          tabIndex={-1}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <Icon icon="chevron-down" size={12} />
+        </button>
+      </div>
+      {open && (
+        <ul className="eden-combobox-list" id={listId} role="listbox" aria-label={`${label} 예시`}>
+          {filtered.length === 0 ? (
+            <li className="eden-combobox-empty" role="presentation">
+              {value.trim() ? '목록에 없는 값입니다. 입력한 값을 그대로 사용합니다.' : '예시를 불러오는 중이거나 없습니다.'}
+            </li>
+          ) : (
+            filtered.map((option, index) => (
+              <li key={option.value} role="presentation">
+                <button
+                  type="button"
+                  id={`${listId}-${option.value}`}
+                  role="option"
+                  aria-selected={option.value === value}
+                  className={
+                    index === highlight
+                      ? option.value === value
+                        ? 'is-active is-selected'
+                        : 'is-active'
+                      : option.value === value
+                        ? 'is-selected'
+                        : undefined
+                  }
+                  onMouseEnter={() => setHighlight(index)}
+                  onClick={() => choose(option.value)}
+                >
+                  <span>{option.label}</span>
+                  {option.label !== option.value && <code>{option.value}</code>}
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function Status({ value, stale }: { value?: string; stale?: boolean }) {
   return <Tag minimal>{stale ? '갱신 지연' : availabilityName(value)}</Tag>;
 }
@@ -98,14 +304,10 @@ export function State<T>({
     );
   if (!resource.response?.data || resource.response.meta.availability === 'unavailable' || empty)
     return (
-      <NonIdealState
-        icon="database"
-        title="표시할 자료가 없습니다"
-        description={
-          resource.response?.meta.reason ||
-          '현재 조회 조건으로 제공되는 자료가 없습니다. 조건을 변경해 주세요.'
-        }
-      />
+      <p className="inline-note" role="status">
+        {resource.response?.meta.reason ||
+          '현재 조회 조건으로 제공되는 자료가 없습니다.'}
+      </p>
     );
   return <>
     {resource.response.meta.reason && (
@@ -117,16 +319,20 @@ export function State<T>({
 export function MetaLine({
   meta,
   onSources,
+  showAsOf = true,
 }: {
   meta?: Meta;
   onSources?: () => void;
+  showAsOf?: boolean;
 }) {
   return (
     <div className="meta-line">
-      <span>
-        <Icon icon="calendar" size={12} />{' '}
-        {meta ? date(meta.as_of) : '기준일 확인 전'}
-      </span>
+      {showAsOf && (
+        <span>
+          <Icon icon="calendar" size={12} />{' '}
+          {meta ? date(meta.as_of) : '기준일 확인 전'}
+        </span>
+      )}
       {meta && <Status value={meta.availability} stale={meta.stale} />}
       {meta && onSources && (
         <Button variant="minimal" small icon="database" onClick={onSources}>
@@ -262,6 +468,32 @@ export function DataTable({
     </div>
   );
 }
+export function chartTickIndexes(
+  pointCount: number,
+  width: number,
+  minLabelWidth = 88,
+): number[] {
+  if (pointCount <= 0) return [];
+  if (pointCount === 1) return [0];
+  const last = pointCount - 1;
+  const plotWidth = Math.max(width - 100, minLabelWidth);
+  const minIndexGap = Math.max(1, Math.ceil(minLabelWidth / (plotWidth / last)));
+  if (minIndexGap === 1) {
+    return Array.from({ length: pointCount }, (_, index) => index);
+  }
+  const indexes = [0];
+  for (let index = minIndexGap; index < last; index += minIndexGap) {
+    indexes.push(index);
+  }
+  if (indexes[indexes.length - 1] !== last) {
+    if (last - indexes[indexes.length - 1] < minIndexGap && indexes.length > 1) {
+      indexes.pop();
+    }
+    indexes.push(last);
+  }
+  return indexes;
+}
+
 export function LineChart({
   points,
   unit,
@@ -277,14 +509,13 @@ export function LineChart({
   const [measuredWidth, setMeasuredWidth] = useState(790);
   const chartHeight = height ?? 270;
   useEffect(() => {
-    if (!height || !chartRef.current || typeof ResizeObserver === 'undefined')
-      return;
+    if (!chartRef.current || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(([entry]) => {
-      setMeasuredWidth(Math.max(entry.contentRect.width, 320));
+      setMeasuredWidth(Math.max(entry.contentRect.width, 240));
     });
     observer.observe(chartRef.current);
     return () => observer.disconnect();
-  }, [height]);
+  }, []);
   const available = points.flatMap((p) => (p.value == null ? [] : [p.value]));
   if (!available.length)
     return (
@@ -303,7 +534,7 @@ export function LineChart({
   const min = Math.max(0, observedMin - padding);
   const max = observedMax + padding;
   const span = max - min;
-  const chartWidth = height ? measuredWidth : 790;
+  const chartWidth = measuredWidth;
   const x = (i: number) =>
     65 + i * ((chartWidth - 100) / Math.max(points.length - 1, 1));
   const plotBottom = chartHeight - 52;
@@ -363,13 +594,11 @@ export function LineChart({
               </circle>
             ),
         )}
-        {[0, Math.floor((points.length - 1) / 2), points.length - 1]
-          .filter((v, i, a) => a.indexOf(v) === i)
-          .map((i) => (
-            <text key={i} x={x(i)} y={chartHeight - 23} textAnchor="middle">
-              {date(points[i].date)}
-            </text>
-          ))}
+        {chartTickIndexes(points.length, chartWidth).map((i) => (
+          <text key={i} x={x(i)} y={chartHeight - 23} textAnchor="middle">
+            {date(points[i].date)}
+          </text>
+        ))}
         <text x="65" y="17">
           {unit}
         </text>
@@ -378,166 +607,3 @@ export function LineChart({
   );
 }
 
-export interface ComparisonSeries {
-  code: string;
-  label: string;
-  points: { date: string; value: number | null }[];
-}
-
-export function MultiLineChart({
-  series,
-  selectedCode,
-  unit,
-  label,
-  height = 276,
-}: {
-  series: ComparisonSeries[];
-  selectedCode: string;
-  unit: string;
-  label: string;
-  height?: number;
-}) {
-  const chartRef = useRef<HTMLDivElement>(null);
-  const [measuredWidth, setMeasuredWidth] = useState(720);
-  useEffect(() => {
-    if (!chartRef.current || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(([entry]) => {
-      setMeasuredWidth(Math.max(entry.contentRect.width, 360));
-    });
-    observer.observe(chartRef.current);
-    return () => observer.disconnect();
-  }, []);
-
-  const dates = Array.from(
-    new Set(series.flatMap((item) => item.points.map((point) => point.date))),
-  ).sort();
-  const available = series.flatMap((item) =>
-    item.points.flatMap((point) =>
-      point.value == null ? [] : [point.value],
-    ),
-  );
-  if (!available.length || !dates.length) {
-    return (
-      <NonIdealState
-        icon="timeline-line-chart"
-        title="시계열 자료가 없습니다"
-        description="관측값이 제공되면 이곳에 추이가 표시됩니다."
-      />
-    );
-  }
-
-  const observedMax = Math.max(...available);
-  const observedMin = Math.min(...available);
-  const observedSpan = observedMax - observedMin;
-  const padding = observedSpan
-    ? observedSpan * 0.08
-    : Math.max(Math.abs(observedMax) * 0.05, 1);
-  const min = Math.max(0, observedMin - padding);
-  const max = observedMax + padding;
-  const span = Math.max(max - min, 1);
-  const chartWidth = measuredWidth;
-  const plotLeft = 64;
-  const plotRight = chartWidth - 24;
-  const plotTop = 24;
-  const plotBottom = height - 38;
-  const x = (index: number) =>
-    plotLeft +
-    index * ((plotRight - plotLeft) / Math.max(dates.length - 1, 1));
-  const y = (value: number) =>
-    plotBottom - ((value - min) / span) * (plotBottom - plotTop);
-  const valuesByCode = new Map(
-    series.map((item) => [
-      item.code,
-      new Map(item.points.map((point) => [point.date, point.value])),
-    ]),
-  );
-  const pathFor = (code: string) => {
-    const values = valuesByCode.get(code);
-    let drawing = false;
-    return dates.reduce((path, currentDate, index) => {
-      const value = values?.get(currentDate);
-      if (value == null) {
-        drawing = false;
-        return path;
-      }
-      const command = drawing ? 'L' : 'M';
-      drawing = true;
-      return `${path}${command}${x(index)} ${y(value)} `;
-    }, '');
-  };
-  const orderedSeries = [
-    ...series.filter((item) => item.code !== selectedCode),
-    ...series.filter((item) => item.code === selectedCode),
-  ];
-  const selected = series.find((item) => item.code === selectedCode);
-
-  return (
-    <div ref={chartRef} className="chart comparison-chart" style={{ height }}>
-      <svg
-        viewBox={`0 0 ${chartWidth} ${height}`}
-        role="img"
-        aria-label={`${label}. ${series.length}개 지역을 비교하며 ${selected?.label ?? selectedCode} 지역을 강조합니다. 단위 ${unit}.`}
-      >
-        <title>{label}</title>
-        {[0, 1, 2, 3, 4].map((index) => {
-          const value = min + (span * index) / 4;
-          return (
-            <g key={index}>
-              <line
-                x1={plotLeft}
-                y1={y(value)}
-                x2={plotRight}
-                y2={y(value)}
-                className="chart-grid"
-              />
-              <text x={plotLeft - 9} y={y(value) + 4} textAnchor="end">
-                {new Intl.NumberFormat('ko-KR', {
-                  notation: 'compact',
-                  maximumFractionDigits: 1,
-                }).format(value)}
-              </text>
-            </g>
-          );
-        })}
-        {orderedSeries.map((item) => (
-          <path
-            key={item.code}
-            d={pathFor(item.code)}
-            data-region-code={item.code}
-            className={
-              item.code === selectedCode
-                ? 'comparison-chart-line is-selected'
-                : 'comparison-chart-line'
-            }
-          >
-            <title>{item.label}</title>
-          </path>
-        ))}
-        {selected?.points.map((point) => {
-          const index = dates.indexOf(point.date);
-          return point.value == null || index < 0 ? null : (
-            <circle
-              key={point.date}
-              cx={x(index)}
-              cy={y(point.value)}
-              r="2.6"
-              className="comparison-chart-point"
-            >
-              <title>{`${selected.label} · ${date(point.date)} · ${number(point.value, unit)}`}</title>
-            </circle>
-          );
-        })}
-        {[0, Math.floor((dates.length - 1) / 2), dates.length - 1]
-          .filter((value, index, values) => values.indexOf(value) === index)
-          .map((index) => (
-            <text key={index} x={x(index)} y={height - 12} textAnchor="middle">
-              {date(dates[index])}
-            </text>
-          ))}
-        <text x={plotLeft} y="14">
-          {unit}
-        </text>
-      </svg>
-    </div>
-  );
-}

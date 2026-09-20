@@ -31,6 +31,57 @@ HOLIDAY_SOURCE = "SRC_HOLIDAY"
 _AREA_NAME_BOUNDARY = r"0-9A-Za-z가-힣"
 
 
+def _festival_event_key(area_id: str, name: str) -> str:
+    normalized_name = " ".join(name.casefold().split())
+    return f"{area_id}:{normalized_name}"
+
+
+def _replace_festival_schedule(
+    session: Session,
+    raw: RawRecord,
+    *,
+    area_id: str,
+    event_key: str,
+    name: str,
+) -> None:
+    """Remove an event's superseded dates before inserting its current schedule."""
+    observed_at = _database_time(raw.observed_at)
+    source_updated_at = _database_time(raw.source_updated_at)
+    ingested_at = _database_time(raw.ingested_at)
+    rows = session.scalars(
+        select(ForecastInput).where(
+            ForecastInput.source_id == FESTIVAL_SOURCE,
+            ForecastInput.area_id == area_id,
+            ForecastInput.place_id.is_(None),
+            ForecastInput.festivals.is_not(None),
+        )
+    )
+    for existing in rows:
+        if (source_updated_at, ingested_at) < (
+            existing.source_updated_at,
+            existing.ingested_at,
+        ):
+            continue
+        festivals = list(existing.festivals or [])
+        retained = [
+            item
+            for item in festivals
+            if not (
+                item.get("event_key") == event_key
+                or (item.get("event_key") is None and item.get("name") == name)
+            )
+        ]
+        if retained == festivals:
+            continue
+        existing.festivals = retained
+        existing.observed_at = observed_at
+        existing.source_updated_at = source_updated_at
+        existing.ingested_at = ingested_at
+        existing.calculated_at = datetime.now(UTC).replace(tzinfo=None)
+        session.flush()
+        _provenance(session, "forecast_input", existing.input_id, (raw.raw_record_id,))
+
+
 def _upsert_forecast_input(
     session: Session,
     raw: RawRecord,
@@ -338,6 +389,14 @@ def normalize_festival_run(session_factory: sessionmaker[Session], run_id: str) 
                             _text(row, "lnmadr", "지번주소"),
                             _text(row, "opar", "축제장소"),
                         )
+                        event_key = _festival_event_key(area_id, name)
+                        _replace_festival_schedule(
+                            session,
+                            raw,
+                            area_id=area_id,
+                            event_key=event_key,
+                            name=name,
+                        )
                         for offset in range(bounded_days):
                             _upsert_forecast_input(
                                 session,
@@ -348,6 +407,7 @@ def normalize_festival_run(session_factory: sessionmaker[Session], run_id: str) 
                                 forecast_date=start + timedelta(days=offset),
                                 festivals=[
                                     {
+                                        "event_key": event_key,
                                         "name": name,
                                         "start_date": start.date().isoformat(),
                                         "end_date": end.date().isoformat(),
@@ -426,8 +486,8 @@ def _condition(categories: dict[str, str]) -> str | None:
 
 def _weather_components(
     rows: list[dict[str, Any]],
-) -> list[tuple[datetime, int, int, str, str]]:
-    components: list[tuple[datetime, int, int, str, str]] = []
+) -> list[tuple[datetime, int, int, str, str, str]]:
+    components: list[tuple[datetime, int, int, str, str, str]] = []
     for row in rows:
         category = _text(row, "category", required=True) or ""
         value = _text(row, "fcstValue", required=True) or ""
@@ -439,11 +499,15 @@ def _weather_components(
         ny = int(_text(row, "ny", required=True) or "")
         if nx < 1 or ny < 1:
             raise ValueError("weather grid coordinates must be positive")
+        forecast_time = _text(row, "fcstTime", required=True) or ""
+        if re.fullmatch(r"(?:[01]\d|2[0-3])[0-5]\d", forecast_time) is None:
+            raise ValueError("weather forecast time must use HHMM")
         components.append(
             (
                 _date(_text(row, "fcstDate", required=True) or "", ("%Y%m%d",)),
                 nx,
                 ny,
+                forecast_time,
                 category,
                 value,
             )
@@ -452,15 +516,32 @@ def _weather_components(
 
 
 def _weather_payloads(
-    components: list[tuple[datetime, int, int, str, str]],
+    components: list[tuple[datetime, int, int, str, str, str]],
 ) -> dict[datetime, dict[str, Any]]:
-    grouped: dict[tuple[datetime, int, int], dict[str, str]] = {}
-    for forecast_date, nx, ny, category, value in components:
-        grouped.setdefault((forecast_date, nx, ny), {})[category] = value
+    grouped: dict[tuple[datetime, int, int, str], dict[str, str]] = {}
+    grids_by_date: dict[datetime, set[tuple[int, int]]] = {}
+    for forecast_date, nx, ny, forecast_time, category, value in components:
+        grouped.setdefault((forecast_date, nx, ny, forecast_time), {})[category] = value
+        grids_by_date.setdefault(forecast_date, set()).add((nx, ny))
+    if any(len(grids) > 1 for grids in grids_by_date.values()):
+        raise ValueError("one area forecast contains multiple KMA grids for a date")
+
+    candidates: dict[tuple[datetime, int, int], list[tuple[str, dict[str, str]]]] = {}
+    for (forecast_date, nx, ny, forecast_time), categories in grouped.items():
+        candidates.setdefault((forecast_date, nx, ny), []).append((forecast_time, categories))
     result: dict[datetime, dict[str, Any]] = {}
-    for (forecast_date, nx, ny), categories in grouped.items():
-        if forecast_date in result:
-            raise ValueError("one area forecast contains multiple KMA grids for a date")
+    daily_categories = {"TMP", "POP", "SKY", "PTY"}
+    for (forecast_date, nx, ny), timed_categories in candidates.items():
+        # One coherent KMA forecast instant represents the day. Prefer the instant
+        # with the broadest displayed-category coverage, then the one nearest noon.
+        forecast_time, categories = min(
+            timed_categories,
+            key=lambda item: (
+                -len(daily_categories.intersection(item[1])),
+                abs((int(item[0][:2]) * 60 + int(item[0][2:])) - 12 * 60),
+                item[0],
+            ),
+        )
         temperature = categories.get("TMP")
         precipitation = categories.get("POP")
         result[forecast_date] = {
@@ -469,6 +550,7 @@ def _weather_payloads(
                 float(Decimal(precipitation)) if precipitation is not None else None
             ),
             "condition": _condition(categories),
+            "forecast_time": forecast_time,
             "nx": nx,
             "ny": ny,
         }

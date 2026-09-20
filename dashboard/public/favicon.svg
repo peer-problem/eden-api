@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="EDEN">
+  <style>
+    .ground { fill: #1c2127; }
+    .mark { fill: #fff; }
+    @media (prefers-color-scheme: dark) {
+      .ground { fill: #f6f7f9; }
+      .mark { fill: #1c2127; }
+    }
+  </style>
+  <rect class="ground" width="32" height="32"/>
+  <path class="mark" d="M7 7h18v4H11v3h11v4H11v3h14v4H7z"/>
+</svg>

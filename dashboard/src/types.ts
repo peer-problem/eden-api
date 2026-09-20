@@ -71,11 +71,19 @@ export interface SeriesPoint {
   domestic: number | null;
   foreign: number | null;
 }
+export interface TimeseriesSummary {
+  total: number | null;
+  domestic: number | null;
+  foreign: number | null;
+  peak_visitors: number | null;
+  completeness_ratio: number | null;
+}
 export interface Timeseries {
   area: Area;
   basis_period?: Record<string, string> | null;
   series: SeriesPoint[];
   granularity: string;
+  summary?: TimeseriesSummary | null;
 }
 export interface ForecastDay extends Block {
   date: string;
@@ -123,6 +131,7 @@ export interface Market {
     | (Block & {
         currency: string;
         krw_rate: number | null;
+        change_rate: number | null;
         rate_date: string | null;
       })
     | null;

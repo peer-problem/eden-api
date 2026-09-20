@@ -169,22 +169,44 @@ class NaverTrendAdapter(SourceAdapter):
             by_name = {
                 f"{target['country']}:{index}": target for index, target in enumerate(targets)
             }
+            by_keyword = {target["keyword"]: target for target in targets}
+            skipped_results = 0
+            skipped_rows = 0
             for result in results:
-                if not isinstance(result, dict) or result.get("title") not in by_name:
+                if not isinstance(result, dict):
+                    skipped_results += 1
                     continue
-                target = by_name[str(result["title"])]
+                target = by_name.get(str(result.get("title", "")))
+                if target is None:
+                    keywords = result.get("keywords")
+                    matched = {
+                        keyword
+                        for keyword in keywords
+                        if isinstance(keyword, str) and keyword in by_keyword
+                    } if isinstance(keywords, list) else set()
+                    if len(matched) == 1:
+                        target = by_keyword[matched.pop()]
+                if target is None:
+                    skipped_results += 1
+                    continue
                 data = result.get("data")
                 if not isinstance(data, list):
+                    skipped_results += 1
                     continue
                 for row in data:
                     if not isinstance(row, dict):
+                        skipped_rows += 1
                         continue
-                    bucket = datetime.strptime(str(row.get("period")), "%Y-%m-%d").replace(
-                        tzinfo=UTC
-                    )
-                    ratio = float(row["ratio"])
-                    if not 0 <= ratio <= 100:
-                        raise ValueError("NAVER ratio is outside 0-100")
+                    try:
+                        bucket = datetime.strptime(
+                            str(row.get("period")), "%Y-%m-%d"
+                        ).replace(tzinfo=UTC)
+                        ratio = float(row["ratio"])
+                        if not 0 <= ratio <= 100:
+                            raise ValueError("NAVER ratio is outside 0-100")
+                    except (KeyError, TypeError, ValueError):
+                        skipped_rows += 1
+                        continue
                     items.append(
                         _raw_aggregate(
                             self.source_id,
@@ -195,10 +217,20 @@ class NaverTrendAdapter(SourceAdapter):
                     )
             if not items:
                 raise ValueError("NAVER returned no usable trend observations")
+            partial_errors = tuple(
+                message
+                for count, message in (
+                    (skipped_results, f"unmatched_results:{skipped_results}"),
+                    (skipped_rows, f"invalid_rows:{skipped_rows}"),
+                )
+                if count
+            )
             return FetchResult(
-                status=SourceStatus.AVAILABLE,
+                status=(SourceStatus.DEGRADED if partial_errors else SourceStatus.AVAILABLE),
                 items=tuple(items),
                 data_as_of=max(item.source_updated_at for item in items),
+                reason=("일부 NAVER 관측을 검증하지 못했습니다." if partial_errors else None),
+                partial_errors=partial_errors,
             )
         except SourceCredentialHttpError as exc:
             return FetchResult(

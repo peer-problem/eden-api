@@ -1,32 +1,38 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import {
   AnchorButton,
   Breadcrumbs,
   Button,
   Drawer,
   Icon,
+  Spinner,
   Tooltip,
 } from "@blueprintjs/core";
-import { countryName, date, number, regionName, regions } from "./data";
-import type { Market, Meta } from "./types";
-import { Properties, Sources, Status } from "./ui";
-import RegionView from "./RegionView";
-import MarketView from "./MarketView";
-import TrendView from "./TrendView";
-import PlaceDetail from "./PlaceDetail";
-import ApiDocumentation from "./ApiDocumentation";
-import DatabaseWorkspace, {
-  RecordDetail,
-  type Row,
-} from "./explorer/Workspace";
+import { date, regionName, regions } from "./data";
+import type { Meta } from "./types";
+import { Properties, Sources } from "./ui";
 import { getModelContext, registerExplorerTools } from "./webmcp";
+
+const RegionView = lazy(() => import("./RegionView"));
+const MarketView = lazy(() => import("./MarketView"));
+const TrendView = lazy(() => import("./TrendView"));
+const PlaceDetail = lazy(() => import("./PlaceDetail"));
+const ApiDocumentation = lazy(() => import("./ApiDocumentation"));
+const DatabaseWorkspace = lazy(() => import("./explorer/Workspace"));
+
+const viewLoading = (
+  <div className="resource-state" role="status">
+    <Spinner size={22} />
+    <p>화면을 불러오는 중</p>
+  </div>
+);
 
 const views = [
   { id: "docs", name: "API 문서", icon: "document-open" },
-  { id: "database", name: "데이터 작업 공간", icon: "database" },
   { id: "regions", name: "지역 탐색", icon: "map-marker" },
   { id: "markets", name: "방한 시장", icon: "globe" },
   { id: "trends", name: "관광 트렌드", icon: "timeline-line-chart" },
+  { id: "database", name: "데이터 작업 공간", icon: "database" },
 ] as const;
 function useUrl() {
   const [query, setQuery] = useState(() => window.location.search);
@@ -49,8 +55,6 @@ function useUrl() {
 }
 type Inspector =
   | { kind: "sources"; meta: Meta }
-  | { kind: "market"; market: Market }
-  | { kind: "record"; table: string; row: Row }
   | null;
 export default function App() {
   const { params, update: writeUrl } = useUrl();
@@ -71,6 +75,7 @@ export default function App() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [workspaceActionsTarget, setWorkspaceActionsTarget] =
     useState<HTMLDivElement | null>(null);
+  const [docsCrumb, setDocsCrumb] = useState<string>();
   const [isNarrow, setNarrow] = useState(
     () => matchMedia("(max-width: 1100px)").matches,
   );
@@ -101,10 +106,15 @@ export default function App() {
     writeUrl({ ...values, place: "" });
     if (isNarrow) setDetailOpen(false);
   };
-  const showSources = (meta: Meta) => {
-    if (placeId) writeUrl({ place: "" });
-    setInspector({ kind: "sources", meta });
-    setDetailOpen(true);
+  const showSources = (meta: Meta, pipeline: string) => {
+    writeUrl({
+      view: "database",
+      pipeline,
+      sources: meta.sources.map((source) => source.source_id).filter(Boolean).join(","),
+      place: "",
+    });
+    setInspector(null);
+    setDetailOpen(false);
   };
   const showPlace = (place: string) => {
     writeUrl({ place });
@@ -125,7 +135,8 @@ export default function App() {
             key={item.id}
             content={item.name}
             disabled={!compact}
-            hoverOpenDelay={650}
+            hoverOpenDelay={50}
+            transitionDuration={50}
             placement="right"
             minimal
           >
@@ -178,7 +189,8 @@ export default function App() {
         {compact ? (
           <Tooltip
             content="OpenAPI JSON"
-            hoverOpenDelay={650}
+            hoverOpenDelay={50}
+            transitionDuration={50}
             placement="right"
             minimal
           >
@@ -209,18 +221,13 @@ export default function App() {
       </div>
     </>
   );
-  const detailTitle =
-    inspector?.kind === "record"
-      ? "레코드 상세"
-      : placeId
-        ? "장소 상세"
-        : inspector?.kind === "sources"
-          ? "출처와 기준일"
-          : inspector?.kind === "market"
-            ? countryName(inspector.market.country)
-            : view.id === "regions"
-              ? regionName(area)
-              : "데이터 안내";
+  const detailTitle = placeId
+    ? "장소 상세"
+    : inspector?.kind === "sources"
+      ? "출처와 기준일"
+      : view.id === "regions"
+        ? regionName(area)
+        : "데이터 안내";
   const detail = (
     <>
       <div className="inspector-heading">
@@ -235,9 +242,9 @@ export default function App() {
         />
       </div>
       {placeId ? (
-        <PlaceDetail key={placeId} id={placeId} onSelect={showPlace} />
-      ) : inspector?.kind === "record" ? (
-        <RecordDetail table={inspector.table} row={inspector.row} />
+        <Suspense fallback={viewLoading}>
+          <PlaceDetail key={placeId} id={placeId} onSelect={showPlace} />
+        </Suspense>
       ) : inspector?.kind === "sources" ? (
         <>
           <Properties
@@ -250,8 +257,6 @@ export default function App() {
           )}
           <Sources sources={inspector.meta.sources} />
         </>
-      ) : inspector?.kind === "market" ? (
-        <MarketDetail market={inspector.market} />
       ) : (
         <>
           {view.id === "regions" && (
@@ -277,11 +282,7 @@ export default function App() {
           </div>
           <div className="inspector-section">
             <h3>상세 탐색</h3>
-            <p>
-              {view.id === "markets"
-                ? "국가 이름을 선택하면 지표와 출처가 여기에 표시됩니다."
-                : "출처 버튼을 선택하면 관측 기준일과 수집 상태를 확인할 수 있습니다."}
-            </p>
+            <p>출처 버튼을 선택하면 관측 기준일과 수집 상태를 확인할 수 있습니다.</p>
           </div>
         </>
       )}
@@ -303,15 +304,8 @@ export default function App() {
         />
         <span className="product-name">EDEN</span>
         <span className="header-divider" />
-        <span className="header-label">관광 데이터 탐색</span>
+        <span className="header-label">한국 관광 데이터 통합 API</span>
         <span className="toolbar-spacer" />
-        <Button
-          variant="minimal"
-          icon="help"
-          aria-label="API 사용 안내"
-          active={view.id === "docs"}
-          onClick={() => update({ view: "docs" })}
-        />
       </header>
       <div className="app-body">
         <aside className="sidebar sidebar-rail">
@@ -331,12 +325,13 @@ export default function App() {
                 },
                 { text: view.name },
                 ...(view.id === "regions" ? [{ text: regionName(area) }] : []),
+                ...(view.id === "docs" && docsCrumb ? [{ text: docsCrumb }] : []),
               ]}
             />
             <div className="workspace-bar-actions">
-              {view.id === "regions" && (
+              {(view.id === "regions" || view.id === "docs") && (
                 <div
-                  className="workspace-bar-region-slot"
+                  className={view.id === "docs" ? "workspace-bar-docs-slot" : "workspace-bar-region-slot"}
                   ref={setWorkspaceActionsTarget}
                 />
               )}
@@ -364,32 +359,29 @@ export default function App() {
                   ? "docs-main"
                 : view.id === "regions"
                   ? "region-main"
-                  : undefined
+                  : view.id === "markets"
+                    ? "market-main"
+                    : view.id === "trends"
+                      ? "trend-main"
+                    : undefined
             }
           >
-            {view.id === "docs" ? (
-              <ApiDocumentation />
-            ) : view.id === "database" ? (
-              <DatabaseWorkspace
-                {...viewProps}
-                showRecord={(table, row) => {
-                  setInspector({ kind: "record", table, row });
-                  setDetailOpen(true);
-                }}
-              />
-            ) : view.id === "regions" ? (
-              <RegionView {...viewProps} showPlace={showPlace} />
-            ) : view.id === "markets" ? (
-              <MarketView
-                {...viewProps}
-                showMarket={(market) => {
-                  setInspector({ kind: "market", market });
-                  setDetailOpen(true);
-                }}
-              />
-            ) : (
-              <TrendView {...viewProps} />
-            )}
+            <Suspense fallback={viewLoading}>
+              {view.id === "docs" ? (
+                <ApiDocumentation
+                  workspaceActionsTarget={workspaceActionsTarget}
+                  onEndpointTitleChange={setDocsCrumb}
+                />
+              ) : view.id === "database" ? (
+                <DatabaseWorkspace {...viewProps} />
+              ) : view.id === "regions" ? (
+                <RegionView {...viewProps} showPlace={showPlace} />
+              ) : view.id === "markets" ? (
+                <MarketView {...viewProps} />
+              ) : (
+                <TrendView {...viewProps} />
+              )}
+            </Suspense>
           </main>
           <footer className="workspace-footer">
             <span>
@@ -424,67 +416,5 @@ export default function App() {
         {detail}
       </Drawer>
     </div>
-  );
-}
-function MarketDetail({ market }: { market: Market }) {
-  return (
-    <>
-      <div className="object-kind">
-        <Icon icon="flag" /> 국가 <span className="mono">{market.country}</span>
-      </div>
-      <Properties
-        rows={[
-          ["국가", countryName(market.country)],
-          ["방문 지표", number(market.visitors)],
-          ["방문 증감률", number(market.visitor_change_rate, "%")],
-          ["도착 항공편", number(market.arriving_flights)],
-          ["도착 여객", number(market.passengers)],
-          ["환율", number(market.fx?.krw_rate, " KRW")],
-          ["환율 기준일", date(market.fx?.rate_date)],
-          ["향후 운항 일정", number(market.flight_schedule?.flights, "편")],
-          ["운항 일정 기준", market.flight_schedule?.basis_period
-            ? `${date(market.flight_schedule.basis_period.start)}부터 ${date(market.flight_schedule.basis_period.end)}까지`
-            : "—"],
-          ["한국 전체 관광수지", number(market.tourism_balance_usd, " USD")],
-          ["관광수지 기준월", market.tourism_balance_period ?? "—"],
-        ]}
-      />
-      {market.flight_schedule?.reason && (
-        <p className="inspector-note">운항 일정: {market.flight_schedule.reason}</p>
-      )}
-      {Boolean(market.flight_schedule?.major_routes.length) && (
-        <section className="inspector-section">
-          <h3>주요 도착 노선</h3>
-          <Properties rows={market.flight_schedule!.major_routes.map((route) => [
-            `${route.origin} → ${route.destination}`,
-            number(route.flights, "편"),
-          ])} />
-        </section>
-      )}
-      {market.social_interest && Object.entries(market.social_interest).length > 0 && (
-        <section className="inspector-section">
-          <h3>공개 검색 표본</h3>
-          {Object.entries(market.social_interest).map(([source, signal]) => (
-            <div className="block-status" key={source}>
-              <span className="mono">{source}</span>
-              <Status value={signal.availability} />
-              <Properties rows={[["게시물", number(signal.posts)], ["조회 수", number(signal.views)]]} />
-              {signal.reason && <p className="muted break-text">{signal.reason}</p>}
-            </div>
-          ))}
-        </section>
-      )}
-      <section className="inspector-section">
-        <h3>지표별 제공 상태</h3>
-        {Object.entries(market.source_availability).map(([name, block]) => (
-          <div className="block-status" key={name}>
-            <span className="mono">{name}</span>
-            <Status value={block.availability} />
-            {block.reason && <p className="muted break-text">{block.reason}</p>}
-          </div>
-        ))}
-      </section>
-      <Sources sources={market.sources} />
-    </>
   );
 }

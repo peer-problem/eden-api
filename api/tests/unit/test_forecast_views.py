@@ -452,6 +452,26 @@ def test_malformed_coverage_is_ignored() -> None:
     assert availability == Availability.PARTIAL
 
 
+def test_forecast_sources_follow_requested_blocks_and_coverage() -> None:
+    product = _coverage_product("2026-11-26")
+    product["inputs"].append(
+        {
+            "input_id": 3,
+            "source_id": "SRC_KMA_FORECAST",
+            "forecast_date": "2026-08-29",
+            "weather": {"condition": "clear", "nx": 60, "ny": 127},
+        }
+    )
+
+    data, _, _ = build_forecast_view(
+        product,
+        {"days": 1, "include": ["holidays"]},
+        today=date(2026, 8, 29),
+    )
+
+    assert data["sources"] == ["SRC_HOLIDAY", "SRC_KTO_VISITOR_FORECAST"]
+
+
 def test_forecast_view_echoes_area_codes_and_uses_an_aggregated_province_row() -> None:
     product = {
         "area_code": "1100000000",

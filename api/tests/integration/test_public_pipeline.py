@@ -784,6 +784,105 @@ def test_fixture_source_reaches_raw_normalized_snapshot_and_forecast_api(
     assert all(row["confidence"] is None for row in payload["data"]["daily"])
 
 
+def test_forecast_metadata_keeps_requested_sources_and_excludes_other_blocks(
+    pipeline: Pipeline,
+) -> None:
+    response = pipeline.client.get(
+        "/v1/forecasts/visitors",
+        params={"area_code": "11", "days": 1, "include": "holidays"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {source["source_id"] for source in payload["meta"]["sources"]} == {
+        "SRC_HOLIDAY",
+        "SRC_KTO_VISITOR_FORECAST",
+    }
+    assert payload["data"]["sources"] == [
+        "SRC_HOLIDAY",
+        "SRC_KTO_VISITOR_FORECAST",
+    ]
+
+
+def test_trend_metadata_uses_the_returned_keyword_observation(
+    pipeline: Pipeline,
+) -> None:
+    observed_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=60)
+    with pipeline.session_factory.begin() as session:
+        raw_id = session.scalar(select(RawRecord.raw_record_id).limit(1))
+        assert raw_id is not None
+        session.add(
+            SocialObservation(
+                raw_record_id=raw_id,
+                keyword="관광서비스수요",
+                country_id=None,
+                area_id=None,
+                bucket_start=observed_at.replace(day=1, hour=0, minute=0, second=0, microsecond=0),
+                bucket_grain="month",
+                post_count=None,
+                view_count=None,
+                reaction_count=None,
+                search_ratio=None,
+                source_score=Decimal("69.6643"),
+                **_fact_audit("SRC_KTO_RESOURCE_DEMAND", observed_at),
+            )
+        )
+    build_trend_snapshot(pipeline.session_factory)
+
+    response = pipeline.client.get(
+        "/v1/trends",
+        params={"keyword": "관광서비스수요", "country": "all", "period": "7d"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["sources"] == ["SRC_KTO_RESOURCE_DEMAND"]
+    assert [source["source_id"] for source in payload["meta"]["sources"]] == [
+        "SRC_KTO_RESOURCE_DEMAND"
+    ]
+    assert payload["meta"]["as_of"].startswith(
+        observed_at.replace(day=1).date().isoformat()
+    )
+    assert payload["meta"]["stale"] is True
+
+
+def test_tourism_balance_uses_its_block_watermark_instead_of_ecos_fx(
+    pipeline: Pipeline,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    balance_time = now - timedelta(days=60)
+    with pipeline.session_factory.begin() as session:
+        balance = session.scalar(select(TourismBalanceObservation))
+        assert balance is not None
+        balance.observed_at = balance_time
+        balance.source_updated_at = balance_time
+        balance.ingested_at = balance_time
+        balance.calculated_at = balance_time
+        session.add(
+            FxObservation(
+                currency="JPY",
+                rate_date=now.replace(hour=0, minute=0, second=0, microsecond=0),
+                krw_rate=Decimal("9.30000000"),
+                **_fact_audit("SRC_BOK_ECOS", now),
+            )
+        )
+    build_inbound_snapshots(pipeline.session_factory)
+
+    response = pipeline.client.get(
+        "/v1/markets/inbound",
+        params={"countries": "JP", "include": "tourism_balance"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["markets"][0]["tourism_balance_period"] is not None
+    assert payload["meta"]["as_of"].startswith(balance_time.date().isoformat())
+    assert payload["meta"]["sources"][0]["data_as_of"].startswith(
+        balance_time.date().isoformat()
+    )
+    assert payload["meta"]["stale"] is True
+
+
 def test_scheduled_lock_skip_is_audited_without_degrading_source_state(
     pipeline: Pipeline,
 ) -> None:

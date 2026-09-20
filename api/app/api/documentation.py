@@ -74,7 +74,8 @@ console.log(data, meta.availability, meta.as_of);
 
 - YouTube 지표는 검색 결과 영상의 공개 지표입니다. 검색 국가 조건은 시청자 국적을 뜻하지 않습니다.
 - Instagram과 Facebook 및 Reddit은 승인된 데이터가 없어 `unavailable`로 표시될 수 있습니다.
-  NAVER 검색 추세는 저장과 재제공 권리 확인 전까지 비활성 상태입니다.
+  NAVER 검색 추세는 운영자가 저장 및 재제공 정책을 승인하고 자격 증명을 설정한 환경에서만
+  수집합니다. 현재 가용성과 마지막 성공 시각은 응답의 `meta.sources`를 확인하세요.
 - X와 TikTok은 수집 대상이 아닙니다.
   Weibo와 Douyin 및 Xiaohongshu도 제외하며 LINE도 수집하지 않습니다.
 - ECOS 관광수지는 한국 전체의 월간 일반여행 수지입니다. 국가별 양자 수지가 아닙니다.

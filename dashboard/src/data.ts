@@ -39,6 +39,17 @@ export const number = (value: number | null | undefined, unit = '') =>
     : `${new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 }).format(value)}${unit}`;
 export const date = (value: string | null | undefined) =>
   value ? value.slice(0, 10).replaceAll('-', '.') : '기준일 없음';
+export const currentDate = (value = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}.${part('month')}.${part('day')}`;
+};
 export const availabilityName = (value?: string) =>
   ({
     available: '제공',

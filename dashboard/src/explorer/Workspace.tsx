@@ -2,20 +2,39 @@ import { Button, Tag } from "@blueprintjs/core";
 import {
   Background,
   Controls,
+  getNodesBounds,
   Handle,
   MarkerType,
   Position,
   ReactFlow,
+  useReactFlow,
+  useNodesInitialized,
+  useOnViewportChange,
   type BuiltInEdge,
   type Node,
   useNodesState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { fieldKey, traceField } from "./fieldTrace";
+import { fieldFocusLabel, fieldKey, pathFilterActionLabel, sourceLineage, traceField } from "./fieldTrace";
 import PublicTableData from "./PublicTableData";
 import type { ViewProps } from "../RegionView";
-import { readGraphLayout, saveGraphViewport, saveNodePosition } from "./layout";
+import {
+  canvasSizeClose,
+  defaultGraphPositions,
+  estimateProductNodeHeight,
+  estimateProviderNodeHeight,
+  estimateTableNodeHeight,
+  estimateTableNodeWidth,
+  equalColumnPositions,
+  REGIONAL_PROVIDER_NUDGE_Y,
+  fitGraphViewport,
+  INITIAL_MAX_ZOOM,
+  INITIAL_MIN_ZOOM,
+  readGraphLayout,
+  saveGraphViewport,
+  saveNodePosition,
+} from "./layout";
 import schema from "./catalog.json";
 import { publicModel } from "./publicModel";
 
@@ -132,14 +151,17 @@ const preferredPipeline: Record<string, string> = {
   area: "regional",
   area_source_map: "regional",
   place: "places",
+  place_list: "places",
   place_localization: "places",
   place_source_map: "places",
   regional_visit_observation: "regional",
   regional_demand_observation: "regional",
   regional_diversity_observation: "regional",
+  region_reference: "regional",
   forecast_input: "forecast",
   social_observation: "trends",
   inbound_visitor_observation: "inbound",
+  market_alerts: "inbound",
   flight_observation: "inbound",
   fx_observation: "inbound",
   tourism_balance_observation: "inbound",
@@ -162,8 +184,11 @@ const graphTableStage = (name: string) => {
       "country",
       "area_source_map",
       "place",
+      "place_list",
       "place_localization",
       "place_source_map",
+      "region_reference",
+      "market_alerts",
     ].includes(name)
   )
     return 2;
@@ -171,38 +196,24 @@ const graphTableStage = (name: string) => {
   return 4;
 };
 
-const displayValue = (value: JsonValue) =>
-  value !== null && typeof value === "object" ? JSON.stringify(value) : String(value);
-
-export function RecordDetail({ table, row }: { table: string; row: Row }) {
-  return (
-    <>
-      <div className="inspector-section">
-        <h3 className="mono">{table}</h3>
-      </div>
-      <dl className="record-properties">
-        {Object.entries(row).map(([key, value]) => (
-          <div key={key}>
-            <dt className="mono">{key}</dt>
-            <dd>{value == null ? <span className="muted">NULL</span> : displayValue(value)}</dd>
-          </div>
-        ))}
-      </dl>
-    </>
-  );
-}
-
 export default function Workspace({
   params,
   update,
-}: ViewProps & { showRecord: (table: string, row: Row) => void }) {
-  const requestedTable = findTable(params.get("table"));
+}: ViewProps) {
+  const sourceQuery = params.get("sources") ?? "";
+  const highlightSourceIds = useMemo(
+    () => sourceQuery.split(",").filter(Boolean),
+    [sourceQuery],
+  );
+  const requestedName = params.get("table");
   const pipelineId =
     params.get("pipeline") && offlineCatalog.pipelines.some((item) => item.id === params.get("pipeline"))
       ? params.get("pipeline")!
-      : preferredPipeline[requestedTable.name] ?? "regional";
+      : preferredPipeline[requestedName ?? ""] ?? preferredPipeline[findTable(requestedName).name] ?? "regional";
   const catalog = useMemo(() => publicModel(pipelineId) as Catalog, [pipelineId]);
-  const table = requestedTable.name === 'source_registry' ? requestedTable : catalog.tables.find((item) => item.name === requestedTable.name) ?? catalog.tables[0];
+  const table = requestedName === "source_registry"
+    ? findTable("source_registry")
+    : catalog.tables.find((item) => item.name === requestedName) ?? catalog.tables[0];
   const pipeline =
     catalog.pipelines.find((item) => item.id === pipelineId) ?? catalog.pipelines[0];
   const [recordsOpen, setRecordsOpen] = useState(false);
@@ -221,7 +232,6 @@ export default function Workspace({
   }, [catalog, pipeline]);
 
   const selectGraphTable = (name: string) => {
-    setRecordsOpen(true);
     update({
       table: name,
       pipeline: pipeline.id,
@@ -233,7 +243,6 @@ export default function Workspace({
     });
   };
   const selectSource = (sourceId: string) => {
-    setRecordsOpen(true);
     update({
       table: "source_registry",
       row: "",
@@ -260,6 +269,7 @@ export default function Workspace({
                 update({
                   pipeline: item.id,
                   table: pipelineDefaultTable[item.id],
+                  sources: "",
                   row: "",
                   dbTab: "",
                   dbOffset: "",
@@ -299,11 +309,22 @@ export default function Workspace({
           catalog={catalog}
           pipeline={pipeline}
           selectedTable={table}
+          highlightSourceIds={highlightSourceIds}
           sourceRows={[]}
           lineageLoading={false}
           onTable={selectGraphTable}
           onSource={selectSource}
         />
+        {!recordsOpen && (
+          <Button
+            className="records-open-button"
+            small
+            icon="menu-open"
+            onClick={() => setRecordsOpen(true)}
+          >
+            데이터 보기
+          </Button>
+        )}
         {recordsOpen && (
           <aside className="database-record-panel" aria-label={`${table.label} 관련 API 데이터`}>
             <PublicTableData
@@ -320,17 +341,22 @@ export default function Workspace({
   );
 }
 
-const FieldFocus = createContext({ selected: null as string | null, fields: new Set<string>(), select: (_key: string) => {} });
+const FieldFocus = createContext({
+  selected: null as string | null,
+  fields: new Set<string>(),
+  select: (_key: string, _label?: string) => {},
+});
 
 function FieldRow({ node, handle, className, children, label }: { node: string; handle: string; className: string; children: ReactNode; label?: string }) {
   const focus = useContext(FieldFocus);
   const key = fieldKey(node, handle);
   const active = focus.fields.has(key);
+  const name = label ?? `${node.replace(/^(table|step|provider):/, '')} 속성`;
   return <div role="button" tabIndex={0} aria-pressed={focus.selected === key}
-    aria-label={`${label ?? `${node.replace(/^(table|step|provider):/, '')}.${handle.replace(/^(source|target):/, '')}`} 연결 보기`}
+    aria-label={`${name} 연결 보기`}
     className={`${className} nodrag field-interactive${active ? ' field-traced' : ''}${focus.selected === key ? ' field-origin' : ''}`}
-    onClick={(event) => { event.stopPropagation(); focus.select(key); }}
-    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); focus.select(key); } }}>
+    onClick={(event) => { event.stopPropagation(); focus.select(key, name); }}
+    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); focus.select(key, name); } }}>
     {children}
   </div>;
 }
@@ -339,6 +365,7 @@ function PipelineGraph({
   catalog,
   pipeline,
   selectedTable,
+  highlightSourceIds,
   sourceRows,
   lineage,
   lineageLoading,
@@ -348,6 +375,7 @@ function PipelineGraph({
   catalog: Catalog;
   pipeline: Pipeline;
   selectedTable: CatalogTable;
+  highlightSourceIds: string[];
   sourceRows: Row[];
   lineage?: Lineage;
   lineageLoading: boolean;
@@ -355,9 +383,25 @@ function PipelineGraph({
   onSource: (sourceId: string) => void;
 }) {
   const [selectedField, setSelectedField] = useState<string | null>(null);
+  const [selectedFieldLabel, setSelectedFieldLabel] = useState<string | null>(null);
   const [onlyPath, setOnlyPath] = useState(false);
-  const [orthogonal, setOrthogonal] = useState(false);
-  useEffect(() => { setSelectedField(null); }, [pipeline.id]);
+  const selectField = (key: string, label?: string) => {
+    setSelectedField((current) => {
+      if (current === key) {
+        setSelectedFieldLabel(null);
+        setOnlyPath(false);
+        return null;
+      }
+      setSelectedFieldLabel(label ?? null);
+      return key;
+    });
+  };
+  const clearField = () => {
+    setSelectedField(null);
+    setSelectedFieldLabel(null);
+    setOnlyPath(false);
+  };
+  useEffect(() => { clearField(); }, [pipeline.id]);
   const graph = useMemo(() => {
     const stepIds = new Set(pipeline.steps);
     const steps = catalog.flow_steps.filter((step) => stepIds.has(step.id));
@@ -397,55 +441,74 @@ function PipelineGraph({
     const sourcesWithServiceHandles = new Set(
       sources.map((source) => source.source_id),
     );
-    let providerY = 72;
+    const products = steps.filter((step) => step.kind === "product" || step.kind === "reader");
+    const tableAnchors = new Map<string, string[]>();
+    steps
+      .filter((step) => step.kind === "transform")
+      .forEach((step) => {
+        step.outputs.forEach((output) => {
+          step.sources.forEach((sourceId) => {
+            const providerId = providerBySource.get(sourceId);
+            if (!providerId) return;
+            const current = tableAnchors.get(output) ?? [];
+            if (!current.includes(providerId)) current.push(providerId);
+            tableAnchors.set(output, current);
+          });
+        });
+      });
+    const placed = defaultGraphPositions([
+      ...[...providerGroups.entries()].map(([ownerName, providerSources]) => ({
+        id: providerNodeId(ownerName),
+        kind: "provider" as const,
+        height: estimateProviderNodeHeight(
+          providerSources.length,
+          providerSources.reduce((count, source) => count + (source.graph?.fields?.length ?? 0), 0),
+        ),
+        nudgeY: pipeline.id === "regional" ? REGIONAL_PROVIDER_NUDGE_Y : 0,
+      })),
+      ...graphTables.map((definition) => ({
+        id: `table:${definition.name}`,
+        kind: "table" as const,
+        height: estimateTableNodeHeight(definition.columns),
+        width: estimateTableNodeWidth(definition.columns),
+        anchors: tableAnchors.get(definition.name),
+      })),
+      ...products.map((step) => ({
+        id: `step:${step.id}`,
+        kind: "product" as const,
+        height: estimateProductNodeHeight(step.graph?.fields?.length ?? 0),
+        anchors: (step.inputs.length ? step.inputs : graphTables.map((table) => table.name))
+          .map((name) => `table:${name}`),
+      })),
+    ]);
     const providerNodes: Node[] = [...providerGroups.entries()].map(
-      ([ownerName, providerSources]) => {
-        const node: Node = {
-          id: providerNodeId(ownerName),
-          position: { x: 0, y: providerY },
-          data: {
-            label: (
-              <ProviderNode
-                ownerName={ownerName}
-                sources={providerSources}
-                sourceState={sourceState}
+      ([ownerName, providerSources]) => ({
+        id: providerNodeId(ownerName),
+        position: placed[providerNodeId(ownerName)] ?? { x: 0, y: 0 },
+        data: {
+          label: (
+            <ProviderNode
+              ownerName={ownerName}
+              sources={providerSources}
+              sourceState={sourceState}
                 onSource={onSource}
                 sourcesWithServiceHandles={sourcesWithServiceHandles}
-              />
-            ),
-          },
-          sourcePosition: Position.Right,
-          className: "pipeline-node pipeline-provider",
-        };
-        const fieldCount = providerSources.reduce(
-          (count, source) => count + (source.graph?.fields?.length ?? 0),
-          0,
-        );
-        providerY += 58 + providerSources.length * 58 + fieldCount * 27 + 38;
-        return node;
-      },
-    );
-
-    const byStage = new Map<number, CatalogTable[]>();
-    graphTables.forEach((item) => {
-      const stage = graphTableStage(item.name);
-      byStage.set(stage, [...(byStage.get(stage) ?? []), item]);
-    });
-    const tableNodes: Node[] = graphTables.map((definition) => {
-      const stage = graphTableStage(definition.name);
-      const stageItems = byStage.get(stage) ?? [];
-      const index = stageItems.findIndex((item) => item.name === definition.name);
-      return {
-        id: `table:${definition.name}`,
-        position: { x: 650, y: graphTables.slice(0, graphTables.indexOf(definition)).reduce((height, item) => height + 105 + item.columns.length * 30, 0) },
-        data: { label: <TableNode table={definition} selected={definition.name === selectedTable.name} /> },
+                highlightSourceIds={highlightSourceIds}
+            />
+          ),
+        },
         sourcePosition: Position.Right,
-        targetPosition: Position.Left,
-        className: `pipeline-node pipeline-table${definition.name === selectedTable.name ? " pipeline-selected" : ""}`,
-      };
-    });
-
-    const products = steps.filter((step) => step.kind === "product" || step.kind === "reader");
+        className: "pipeline-node pipeline-provider",
+      }),
+    );
+    const tableNodes: Node[] = graphTables.map((definition) => ({
+      id: `table:${definition.name}`,
+      position: placed[`table:${definition.name}`] ?? { x: 461, y: 0 },
+      data: { label: <TableNode table={definition} selected={definition.name === selectedTable.name} /> },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      className: `pipeline-node pipeline-table${definition.name === selectedTable.name ? " pipeline-selected" : ""}`,
+    }));
     const mappingsForStep = (step: FlowStep): SourceFieldMapping[] =>
       step.sources.flatMap((sourceId) => {
         const source = sources.find((item) => item.source_id === sourceId);
@@ -459,16 +522,14 @@ function PipelineGraph({
           )
           .map((field) => ({ source, field }));
       });
-    const stepNodes: Node[] = [
-      ...products.map((step, index) => ({
-        id: `step:${step.id}`,
-        position: { x: 1200, y: index * 230 + 72 },
-        data: { label: <ProductNode step={step} fields={step.graph?.fields ?? []} /> },
-        sourcePosition: Position.Right,
-        targetPosition: Position.Left,
-        className: "pipeline-node pipeline-product",
-      })),
-    ];
+    const stepNodes: Node[] = products.map((step) => ({
+      id: `step:${step.id}`,
+      position: placed[`step:${step.id}`] ?? { x: 852, y: 0 },
+      data: { label: <ProductNode step={step} fields={step.graph?.fields ?? []} /> },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      className: "pipeline-node pipeline-product",
+    }));
 
     const graphNodes = [...providerNodes, ...tableNodes, ...stepNodes];
     const edges: BuiltInEdge[] = [];
@@ -523,16 +584,18 @@ function PipelineGraph({
             (mapping) => mapping.source.source_id === source.source_id,
           );
           step.outputs.forEach((output) => {
-            if (tableByName.get(output)?.columns.some((column) => column.name === "meta.sources[].source_id")) {
+            ["meta.sources[].source_id"].forEach((columnName) => {
+              if (!tableByName.get(output)?.columns.some((column) => column.name === columnName))
+                return;
               addEdge(
                 providerId,
                 `table:${output}`,
                 "",
                 "source-flow-edge",
                 serviceHandle,
-                "target:meta.sources[].source_id",
+                `target:${columnName}`,
               );
-            }
+            });
           });
           mappings.forEach(({ field }) =>
             addEdge(
@@ -661,14 +724,17 @@ function PipelineGraph({
         }
       });
     }
-    const focusedNodes = new Set([...upstream, ...downstream]);
+    const sourceFocus = sourceLineage(highlightSourceIds, catalog);
+    const focusedNodes = sourceFocus.nodes.size
+      ? sourceFocus.nodes
+      : new Set([...upstream, ...downstream]);
     const focusedEdges = edges.map((edge) => ({
       ...edge,
       className: `${edge.className ?? ""} ${
         focusedNodes.has(edge.source) && focusedNodes.has(edge.target)
           ? "pipeline-active-edge"
           : "pipeline-muted-edge"
-      }`,
+      }${sourceFocus.nodes.size && sourceFocus.nodes.has(edge.source) && sourceFocus.nodes.has(edge.target) ? " source-highlight-edge" : ""}`,
     }));
     const savedLayout = readGraphLayout(
       typeof window === "undefined" ? undefined : window.localStorage,
@@ -677,20 +743,16 @@ function PipelineGraph({
     const nodes = graphNodes.map((node) => ({
       ...node,
       position: savedLayout.positions[node.id] ?? node.position,
-      className: `${node.className ?? ""}${node.id.startsWith("table:") && lineageTables.has(node.id.slice(6)) ? " record-path-node" : ""}`,
+      className: `${node.className ?? ""}${node.id.startsWith("table:") && lineageTables.has(node.id.slice(6)) ? " record-path-node" : ""}${sourceFocus.nodes.has(node.id) ? " source-highlight-node" : ""}`,
     }));
-    return {
-      nodes,
-      edges: focusedEdges,
-      viewport: savedLayout.viewport ?? { x: 24, y: 36, zoom: 0.68 },
-    };
-  }, [catalog, pipeline, selectedTable, sourceRows, lineage, onSource]);
+    return { nodes, edges: focusedEdges };
+  }, [catalog, pipeline, selectedTable, sourceRows, lineage, onSource, highlightSourceIds]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(graph.nodes);
   const fieldTrace = useMemo(() => selectedField ? traceField(graph.edges, selectedField) : null, [graph.edges, selectedField]);
   const displayedEdges = graph.edges.filter((edge) => !selectedField || !onlyPath || fieldTrace?.edges.has(edge.id)).map((edge) => {
     const traced = fieldTrace?.edges.has(edge.id);
-    return { ...edge, type: orthogonal ? 'smoothstep' : edge.type,
+    return { ...edge,
       zIndex: traced ? 10 : 0,
       markerEnd: { type: MarkerType.ArrowClosed, color: traced ? '#167b82' : '#7f8996' },
       className: `${edge.className ?? ''}${selectedField ? traced ? ' field-traced-edge' : ' field-unrelated-edge' : ''}` };
@@ -710,16 +772,23 @@ function PipelineGraph({
   }, [graph.nodes, pipeline.id, setNodes]);
 
   return (
-    <section className={`pipeline-canvas${selectedField ? ' has-field-focus' : ''}`} aria-label={`${pipeline.label} 데이터 흐름`}
-      onKeyDown={(event) => { if (event.key === 'Escape') setSelectedField(null); }}>
-      <div className="field-trace-controls">
-        <Button small active={orthogonal} onClick={() => setOrthogonal((value) => !value)}>직각 연결</Button>
-        {selectedField ? <>
-          <span role="status">{JSON.parse(selectedField)[1]} · 연결 {fieldTrace?.edges.size ?? 0}개</span>
-          <Button small active={onlyPath} onClick={() => setOnlyPath((value) => !value)}>연결만 보기</Button>
-          <Button small icon="cross" aria-label="속성 선택 해제" onClick={() => setSelectedField(null)} />
-        </> : <span>속성을 선택하면 연결 경로가 표시됩니다</span>}
-      </div>
+    <section className={`pipeline-canvas${selectedField ? ' has-field-focus' : ''}${highlightSourceIds.length ? ' has-source-focus' : ''}`} aria-label={`${pipeline.label} 데이터 흐름`}
+      onKeyDown={(event) => { if (event.key === 'Escape') clearField(); }}>
+      {selectedField && (
+        <div className="field-trace-controls">
+          <span role="status">{fieldFocusLabel(selectedFieldLabel)} · 연결 {fieldTrace?.edges.size ?? 0}개</span>
+          <Button
+            small
+            className={onlyPath ? 'field-path-filter is-on' : 'field-path-filter'}
+            active={onlyPath}
+            aria-pressed={onlyPath}
+            onClick={() => setOnlyPath((value) => !value)}
+          >
+            {pathFilterActionLabel(onlyPath)}
+          </Button>
+          <Button small icon="cross" aria-label="속성 선택 해제" onClick={clearField} />
+        </div>
+      )}
       <div className="pipeline-legend" aria-hidden="true">
         <span><i className="legend-source" />외부 출처</span>
         <span><i className="legend-table" />제공 지표</span>
@@ -733,12 +802,13 @@ function PipelineGraph({
           {lineage.truncated ? " · 일부 표시" : ""}
         </div>
       )}
-      <FieldFocus.Provider value={{ selected: selectedField, fields: fieldTrace?.fields ?? new Set(), select: (key) => setSelectedField((current) => current === key ? null : key) }}>
+      <FieldFocus.Provider value={{ selected: selectedField, fields: fieldTrace?.fields ?? new Set(), select: selectField }}>
       <ReactFlow
         key={pipeline.id}
         nodes={previousPipeline.current !== pipeline.id ? graph.nodes : nodes}
         edges={displayedEdges}
-        onPaneClick={() => setSelectedField(null)}
+        proOptions={{ hideAttribution: true }}
+        onPaneClick={clearField}
         onNodesChange={onNodesChange}
         onNodeDragStop={(_, node) =>
           saveNodePosition(
@@ -748,14 +818,8 @@ function PipelineGraph({
             node.position,
           )
         }
-        defaultViewport={graph.viewport}
-        onMoveEnd={(_, viewport) =>
-          saveGraphViewport(
-            typeof window === "undefined" ? undefined : window.localStorage,
-            pipeline.id,
-            viewport,
-          )
-        }
+        defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+        fitViewOptions={{ padding: 0.1, minZoom: INITIAL_MIN_ZOOM, maxZoom: INITIAL_MAX_ZOOM }}
         nodesDraggable
         nodesConnectable={false}
         minZoom={0.28}
@@ -767,10 +831,130 @@ function PipelineGraph({
       >
         <Background gap={22} color="#d8dde5" />
         <Controls showInteractive={false} />
+        <GraphCamera pipelineId={pipeline.id} />
       </ReactFlow>
       </FieldFocus.Provider>
     </section>
   );
+}
+
+function measurePipelineCanvas() {
+  const pane = document.querySelector(".pipeline-canvas");
+  if (!pane) return { width: 0, height: 0 };
+  const box = pane.getBoundingClientRect();
+  return { width: box.width, height: box.height };
+}
+
+function GraphCamera({ pipelineId }: { pipelineId: string }) {
+  const instance = useReactFlow();
+  const ready = useNodesInitialized();
+  const userAdjusted = useRef(false);
+  const fitting = useRef(false);
+  const trackResize = useRef(false);
+  const movedByUser = useRef(false);
+
+  const applyFit = () => {
+    const canvas = measurePipelineCanvas();
+    if (canvas.width < 40 || canvas.height < 40) return;
+    const nodes = instance.getNodes();
+    if (!nodes.length) return;
+    const viewport = fitGraphViewport(getNodesBounds(nodes), canvas);
+    fitting.current = true;
+    void instance.setViewport(viewport);
+    saveGraphViewport(
+      typeof window === "undefined" ? undefined : window.localStorage,
+      pipelineId,
+      viewport,
+      canvas,
+    );
+    requestAnimationFrame(() => {
+      fitting.current = false;
+    });
+  };
+
+  const snapColumnGaps = () => {
+    const nodes = instance.getNodes();
+    const next = equalColumnPositions(
+      nodes.map((node) => ({
+        id: node.id,
+        x: node.position.x,
+        y: node.position.y,
+        width: node.measured?.width ?? 0,
+      })),
+    );
+    if (!next) return;
+    if (nodes.every((node) => !next[node.id] || Math.abs(next[node.id].x - node.position.x) < 0.5)) return;
+    instance.setNodes(
+      nodes.map((node) => (
+        next[node.id] ? { ...node, position: { x: next[node.id].x, y: node.position.y } } : node
+      )),
+    );
+  };
+
+  const applyInitial = () => {
+    userAdjusted.current = false;
+    const canvas = measurePipelineCanvas();
+    const saved = readGraphLayout(
+      typeof window === "undefined" ? undefined : window.localStorage,
+      pipelineId,
+    );
+    if (Object.keys(saved.positions).length === 0) snapColumnGaps();
+    if (saved.viewport && saved.canvas && canvasSizeClose(saved.canvas, canvas)) {
+      fitting.current = true;
+      void instance.setViewport(saved.viewport);
+      requestAnimationFrame(() => {
+        fitting.current = false;
+      });
+      return;
+    }
+    requestAnimationFrame(() => applyFit());
+  };
+
+  useEffect(() => {
+    if (!ready) return;
+    trackResize.current = false;
+    applyInitial();
+    const frame = requestAnimationFrame(() => {
+      trackResize.current = true;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pipelineId, ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const pane = document.querySelector(".pipeline-canvas");
+    if (!pane) return;
+    const observer = new ResizeObserver(() => {
+      if (!trackResize.current || userAdjusted.current) return;
+      applyFit();
+    });
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, [pipelineId, ready]);
+
+  useOnViewportChange({
+    onStart: () => {
+      if (!fitting.current) movedByUser.current = true;
+    },
+    onEnd: (viewport) => {
+      if (fitting.current) {
+        movedByUser.current = false;
+        return;
+      }
+      if (movedByUser.current) {
+        userAdjusted.current = true;
+        movedByUser.current = false;
+      }
+      saveGraphViewport(
+        typeof window === "undefined" ? undefined : window.localStorage,
+        pipelineId,
+        viewport,
+        measurePipelineCanvas(),
+      );
+    },
+  });
+
+  return null;
 }
 
 function ProviderNode({
@@ -779,12 +963,14 @@ function ProviderNode({
   sourceState,
   onSource,
   sourcesWithServiceHandles,
+  highlightSourceIds,
 }: {
   ownerName: string;
   sources: CatalogSource[];
   sourceState: Map<string, Row>;
   onSource: (sourceId: string) => void;
   sourcesWithServiceHandles: Set<string>;
+  highlightSourceIds: string[];
 }) {
   const focus = useContext(FieldFocus);
   return (
@@ -804,18 +990,17 @@ function ProviderNode({
             <section className="provider-service" key={source.source_id}>
               <button
                 type="button"
-                className={`provider-service-heading nodrag field-interactive${focus.fields.has(fieldKey(providerNodeId(ownerName), `service:${source.source_id}`)) ? ' field-traced' : ''}${focus.selected === fieldKey(providerNodeId(ownerName), `service:${source.source_id}`) ? ' field-origin' : ''}`}
+                className={`provider-service-heading nodrag field-interactive${focus.fields.has(fieldKey(providerNodeId(ownerName), `service:${source.source_id}`)) || highlightSourceIds.includes(source.source_id) ? ' field-traced' : ''}${focus.selected === fieldKey(providerNodeId(ownerName), `service:${source.source_id}`) ? ' field-origin' : ''}`}
                 aria-pressed={focus.selected === fieldKey(providerNodeId(ownerName), `service:${source.source_id}`)}
                 onClick={(event) => {
                   event.stopPropagation();
-                  focus.select(fieldKey(providerNodeId(ownerName), `service:${source.source_id}`));
+                  focus.select(fieldKey(providerNodeId(ownerName), `service:${source.source_id}`), source.graph?.label ?? source.source_id);
                   onSource(source.source_id);
                 }}
-                title={`${source.source_id} API 출처 정보 보기`}
+                title={source.source_id}
               >
                 <span className="provider-service-name">
                   <strong>{source.graph?.label ?? source.source_id}</strong>
-                  <span className="mono">{source.graph?.operation ?? source.source_id}</span>
                 </span>
                 <span className={`source-live-state source-${statusClass}`}>
                   {state
@@ -837,10 +1022,10 @@ function ProviderNode({
                   {fields.map((field) => (
                     <FieldRow node={providerNodeId(ownerName)} handle={sourceFieldHandle(source.source_id, field.name)}
                       className={`source-field${field.raw_only ? " source-field-raw" : ""}`}
+                      label={field.label}
                       key={field.name}
                     >
-                      <span>{field.label}</span>
-                      <span className="mono">{field.name}</span>
+                      <span title={field.name}>{field.label}</span>
                       {field.raw_only && <b>연결 없음</b>}
                       {!field.raw_only && (
                         <Handle
@@ -877,7 +1062,7 @@ function TableNode({ table, selected }: { table: CatalogTable; selected: boolean
             />
             <span className="column-flags" />
             <span className="column-name" title={column.name}>{column.label ?? column.name}
-              {column.description && <small style={{ display: 'block', whiteSpace: 'normal', maxWidth: '220px', fontSize: '9px', lineHeight: 1.5, color: '#62717e' }}>{column.description}</small>}
+              {column.description && <small>{column.description}</small>}
             </span>
             <span className="mono column-type">{column.type}{column.nullable ? " ?" : ""}</span>
             <Handle
@@ -903,11 +1088,10 @@ function ProductNode({
 }) {
   return (
     <div className="step-node-content">
-      <strong>{step.label}</strong>
-      <span className="mono node-code">{step.code_ref}</span>
+      <strong title={step.code_ref}>{step.label}</strong>
       <div className="product-fields nodrag nowheel">
         {fields.map((field) => (
-          <FieldRow node={`step:${step.id}`} handle={`source:${field.id}`} label={field.name} className="product-field" key={field.id}>
+          <FieldRow node={`step:${step.id}`} handle={`source:${field.id}`} label={field.label} className="product-field" key={field.id}>
             {!!field.inputs.length && (
               <Handle
                 type="target"
@@ -916,8 +1100,7 @@ function ProductNode({
                 className="field-handle product-field-handle product-field-handle-target"
               />
             )}
-            <span>{field.label}</span>
-            <span className="mono">{field.name}</span>
+            <span title={field.name}>{field.label}</span>
             {field.target_table && <Handle
               type="source"
               position={Position.Right}

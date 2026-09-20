@@ -4,7 +4,11 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 
-from app.readmodels.repository import _request_source_ids, _selected_snapshot_as_of
+from app.readmodels.repository import (
+    _request_source_ids,
+    _selected_block_watermarks,
+    _selected_snapshot_as_of,
+)
 from app.repositories.models import ReadModelSnapshot
 
 
@@ -86,3 +90,29 @@ def test_trend_area_requests_list_the_official_resource_demand_source() -> None:
     assert _request_source_ids(
         "trends", {"social_sources": ["youtube"], "keyword": "제주 여행", "area_code": "x"}
     ) == ("SRC_YOUTUBE",)
+
+
+def test_inbound_block_watermarks_do_not_mix_ecos_products() -> None:
+    snapshot = cast(
+        ReadModelSnapshot,
+        cast(
+            Any,
+            SimpleNamespace(
+                metadata_json={
+                    "block_watermarks": {
+                        "fx": {"SRC_BOK_ECOS": "2026-09-18T00:00:00+00:00"},
+                        "tourism_balance": {
+                            "SRC_BOK_ECOS": "2026-07-01T00:00:00+00:00"
+                        },
+                    }
+                },
+                input_watermarks={"SRC_BOK_ECOS": "2026-09-18T00:00:00+00:00"},
+            ),
+        ),
+    )
+
+    assert _selected_block_watermarks(
+        snapshot,
+        ("tourism_balance",),
+        ("SRC_BOK_ECOS",),
+    ) == {"SRC_BOK_ECOS": datetime(2026, 7, 1, tzinfo=UTC)}

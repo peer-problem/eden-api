@@ -2,7 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { act, create } from 'react-test-renderer';
-import { request, useResource, type Resource } from './api';
+import {
+  HIDDEN_REFRESH_AFTER_MS,
+  millisecondsUntilNextSeoulDay,
+  request,
+  shouldRefreshVisibleResource,
+  useResource,
+  type Resource,
+} from './api';
 import { number, safeUrl } from './data';
 
 const envelope = (value: number | null) => ({
@@ -27,6 +34,34 @@ test('source links reject script and local URLs', () => {
   assert.equal(
     safeUrl('https://example.org/notice'),
     'https://example.org/notice',
+  );
+});
+test('visible resources refresh after Seoul midnight or a long hidden interval', () => {
+  const beforeMidnight = new Date('2026-09-19T14:59:00Z');
+  assert.equal(millisecondsUntilNextSeoulDay(beforeMidnight), 60_000);
+  assert.equal(
+    shouldRefreshVisibleResource(
+      beforeMidnight.getTime(),
+      '2026.09.19',
+      new Date('2026-09-19T15:01:00Z'),
+    ),
+    true,
+  );
+  assert.equal(
+    shouldRefreshVisibleResource(
+      new Date('2026-09-19T00:00:00Z').getTime(),
+      '2026.09.19',
+      new Date(new Date('2026-09-19T00:00:00Z').getTime() + HIDDEN_REFRESH_AFTER_MS - 1),
+    ),
+    false,
+  );
+  assert.equal(
+    shouldRefreshVisibleResource(
+      new Date('2026-09-19T00:00:00Z').getTime(),
+      '2026.09.19',
+      new Date(new Date('2026-09-19T00:00:00Z').getTime() + HIDDEN_REFRESH_AFTER_MS),
+    ),
+    true,
   );
 });
 test('API preserves missing values and partial metadata', async (t) => {

@@ -1,3 +1,5 @@
+<img src="assets/eden-mark.svg" width="64" height="64" alt="EDEN">
+
 # EDEN
 
 관광 데이터를 수집하고 게시된 통계를 API와 대시보드로 제공합니다.
@@ -10,11 +12,11 @@
 
 ## API 제공 범위 (2026-09-17, API v0.3.0)
 
-공개 엔드포인트 8개의 구현 범위입니다. 구현 여부와 실제 수집 여부는 다르며, 자료가 없으면 `null` 또는 `unavailable`로 응답합니다. 2026-09-17 DB 확인 시 NAVER 관측, 장소 소개문, 국가별 항공 여객 수는 아직 없었습니다. 원천이 없는 필드와 사유는 [API 문서](api/README.md#fields-that-are-not-provided), 수집 제한은 [알려진 제한](api/KNOWN_GAPS.md)에 있습니다.
+공개 엔드포인트 8개의 구현 범위입니다. 구현 여부와 실제 수집 여부는 다르며, 자료가 없으면 `null` 또는 `unavailable`로 응답합니다. NAVER는 저장 및 재제공 정책 승인과 자격 증명이 모두 설정된 환경에서만 수집합니다. 현재 원천 가용성은 각 응답의 `meta.sources`를 기준으로 확인하세요. 원천이 없는 필드와 사유는 [API 문서](api/README.md#fields-that-are-not-provided), 수집 제한은 [알려진 제한](api/KNOWN_GAPS.md)에 있습니다.
 
 | 엔드포인트 | 상태 | 제공하는 것 | 미제공 / 제한 |
 | --- | --- | --- | --- |
-| `GET /v1/trends` | 수집 범위 내 지원 | YouTube 검색 표본과 KTO 관광자원 수요 지수. KTO 저장 키워드는 `관광서비스수요`, `문화자연자원 수요` | NAVER는 수집 경로만 준비됨. 사전 수집되지 않은 키워드는 unavailable |
+| `GET /v1/trends` | 수집 범위 내 지원 | YouTube 검색 표본, NAVER 검색 비율과 KTO 관광자원 수요 지수. KTO 저장 키워드는 `관광서비스수요`, `문화자연자원 수요` | NAVER는 정책 승인 및 자격 증명 필요. 사전 수집되지 않은 키워드는 unavailable |
 | `GET /v1/regions/{area_code}/insights` | 완성 (시도 단위) | 일별 방문자(내 및 외국인, 원천 발표 지연 약 30일), 관광 체류 및 소비 강도, 국적 다양성, `compare=previous_period`로 증감률 | 요청 지역에 관측이 없으면 unavailable. `avg_stay_nights`, `age_index`는 원천 없음 |
 | `GET /v1/visitors/timeseries` | 완성 (시도 단위, 일 및 주 및 월) | 방문자 시계열과 요약 | `concentration_rate`는 원천 없음. `attraction_name`(관광지별)은 원천이 없어 항상 unavailable |
 | `GET /v1/forecasts/visitors` | 완성 | 시군구: 관광지별 KTO 공식 집중률의 평균(`sample_count` 표시). 시도: 소속 시군구 전체 관광지의 평균(`basis`에 시군구·관광지 수). 공식 전망이 없으면 unavailable. 기상청 단기예보, 축제, 공휴일. `requested_area_code`, `data_area_code`, `spatial_resolution`으로 요청 지역과 자료 지역을 구분 | `expected_visitors`, `confidence`는 원천 없음 |
@@ -43,6 +45,8 @@ AGENTS.md      프로젝트 작업 가이드, Git 제외
 ```
 
 Git 관리용 `.git/`은 그대로 유지합니다. API 가상환경과 테스트 캐시는 `api/` 안에 생성됩니다.
+
+프론트엔드 소스와 빌드 대상은 `dashboard/`로 통일합니다. `frontend`는 Git 브랜치 이름이며 별도의 소스 폴더가 아닙니다. 화면 구성과 개발 설정은 [대시보드 문서](dashboard/README.md)를 참고합니다.
 
 ## 시작하기
 

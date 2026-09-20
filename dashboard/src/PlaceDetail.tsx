@@ -1,9 +1,9 @@
-import { AnchorButton, Button, HTMLSelect } from '@blueprintjs/core';
+import { AnchorButton, Button } from '@blueprintjs/core';
 import { useState } from 'react';
 import { useResource } from './api';
 import { number } from './data';
 import type { Place } from './types';
-import { MetaLine, Properties, Sources, State } from './ui';
+import { Dropdown, MetaLine, Properties, Sources, State } from './ui';
 
 export default function PlaceDetail({
   id,
@@ -20,10 +20,10 @@ export default function PlaceDetail({
   return (
     <div className="place-detail">
       <div className="detail-toolbar">
-        <HTMLSelect
-          aria-label="장소 설명 언어"
+        <Dropdown
+          label="장소 설명 언어"
           value={language}
-          onChange={(e) => setLanguage(e.target.value)}
+          onChange={setLanguage}
           options={[
             { label: '한국어', value: 'ko' },
             { label: 'English', value: 'en' },

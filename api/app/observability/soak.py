@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import subprocess
+from collections import deque
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,8 @@ SOAK_MAX_API_P95_MILLISECONDS = 500.0
 SOAK_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 SOAK_MAX_DERIVED_DAILY_GROWTH_BYTES = 100 * 1024 * 1024
 SOAK_MAX_DATABASE_CONNECTION_UTILIZATION = 0.9
+SOAK_MAX_STORED_SAMPLES = 2600
+SOAK_COMPACT_AFTER_BYTES = 16 * 1024 * 1024
 # MariaDB runs remotely; readiness and database evidence track its health.
 REQUIRED_SERVICES = (
     "eden-api",
@@ -140,6 +144,14 @@ def collect_sample(
 
 def append_sample(path: Path, sample: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file() and path.stat().st_size >= SOAK_COMPACT_AFTER_BYTES:
+        with path.open("r", encoding="utf-8") as source:
+            retained = deque(source, maxlen=SOAK_MAX_STORED_SAMPLES)
+        temporary = path.with_name(f".{path.name}.compact")
+        with temporary.open("w", encoding="utf-8") as destination:
+            destination.writelines(retained)
+        temporary.chmod(0o640)
+        os.replace(temporary, path)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(sample, ensure_ascii=False, separators=(",", ":")))
         handle.write("\n")
@@ -150,7 +162,9 @@ def load_samples(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
     samples: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    with path.open("r", encoding="utf-8") as handle:
+        lines = deque(handle, maxlen=SOAK_MAX_STORED_SAMPLES)
+    for line in lines:
         try:
             sample = json.loads(line)
             datetime.fromisoformat(sample["sampled_at"])

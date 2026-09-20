@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { currentDate } from "./data";
 import type { Envelope } from "./types";
 
 export const API_BASE = (
@@ -84,12 +85,35 @@ export interface Resource<T> {
   error?: string;
   retry: () => void;
 }
+export const HIDDEN_REFRESH_AFTER_MS = 5 * 60 * 1000;
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function millisecondsUntilNextSeoulDay(now: Date): number {
+  const shifted = now.getTime() + KST_OFFSET_MS;
+  const next = (Math.floor(shifted / DAY_MS) + 1) * DAY_MS - KST_OFFSET_MS;
+  return Math.max(1, next - now.getTime());
+}
+
+export function shouldRefreshVisibleResource(
+  lastRequestedAt: number,
+  lastSeoulDate: string,
+  now: Date,
+): boolean {
+  return (
+    currentDate(now) !== lastSeoulDate
+    || now.getTime() - lastRequestedAt >= HIDDEN_REFRESH_AFTER_MS
+  );
+}
+
 export function useResource<T>(
   path: string | null,
   body?: string,
   base = API_BASE,
 ): Resource<T> {
   const [retryCount, setRetryCount] = useState(0);
+  const lastRequestedAt = useRef(0);
+  const lastSeoulDate = useRef(currentDate());
   const key = JSON.stringify([base, path, body, retryCount]);
   const [state, setState] = useState<{
     key: string;
@@ -97,11 +121,41 @@ export function useResource<T>(
     response?: Envelope<T>;
     error?: string;
   }>({ key: "", loading: false });
+  const retry = useCallback(() => setRetryCount((n) => n + 1), []);
+  useEffect(() => {
+    if (!path || typeof document === "undefined") return;
+    let midnightTimer: ReturnType<typeof setTimeout>;
+    const scheduleMidnightRefresh = () => {
+      midnightTimer = setTimeout(() => {
+        lastSeoulDate.current = currentDate();
+        retry();
+        scheduleMidnightRefresh();
+      }, millisecondsUntilNextSeoulDay(new Date()) + 1000);
+    };
+    const refreshWhenVisible = () => {
+      const now = new Date();
+      if (
+        document.visibilityState === "visible"
+        && shouldRefreshVisibleResource(lastRequestedAt.current, lastSeoulDate.current, now)
+      ) {
+        lastSeoulDate.current = currentDate(now);
+        retry();
+      }
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    scheduleMidnightRefresh();
+    return () => {
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      clearTimeout(midnightTimer);
+    };
+  }, [path, retry]);
   useEffect(() => {
     if (!path) return;
     const controller = new AbortController();
     let active = true;
     let timedOut = false;
+    lastRequestedAt.current = Date.now();
+    lastSeoulDate.current = currentDate();
     setState({ key, loading: true });
     const timer = setTimeout(() => {
       timedOut = true;
@@ -130,7 +184,6 @@ export function useResource<T>(
       controller.abort();
     };
   }, [key, path, body, base]);
-  const retry = useCallback(() => setRetryCount((n) => n + 1), []);
   // Never expose the previous query's values under newly selected filters.
   return { ...(state.key === key ? state : { loading: Boolean(path) }), retry };
 }

@@ -191,12 +191,15 @@ def build_forecast_view(
         factors: dict[str, float] = {}
         if weather and weather.get("availability") == "available":
             all_weather.append(weather)
+            source_ids.add("SRC_KMA_FORECAST")
         if festival_known and "festivals" in include:
             all_festivals.extend(festivals or [])
             any_festival_evidence = True
+            source_ids.add("SRC_FESTIVAL")
         if holiday_known and "holidays" in include:
             any_holiday = any_holiday or is_holiday
             any_holiday_evidence = True
+            source_ids.add("SRC_HOLIDAY")
         concentration = base.get("concentration_rate") if base else None
         expected = base.get("expected_visitors") if base else None
         has_official = concentration is not None or expected is not None
@@ -228,7 +231,6 @@ def build_forecast_view(
             day_reason = "요청 날짜와 범위의 공식 방문 전망이 없습니다."
         elif missing_adjustments:
             day_reason = "일부 참고 정보가 없습니다: " + ", ".join(missing_adjustments)
-        source_ids.update(str(row["source_id"]) for row in rows)
         daily.append(
             {
                 "date": target.isoformat(),

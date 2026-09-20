@@ -21,13 +21,13 @@ test('public graphs omit operational storage and terminate at response fields', 
   }
 });
 
-test('regional visits trace real input fields and admission data does not feed area insights', () => {
+test('regional visits trace real input fields and omit unsupported admission collection', () => {
   const model = publicModel('regional');
   const visitors = model.sources.find((source) => source.source_id === 'SRC_KTO_REGIONAL_VISITORS')!;
   const count = visitors.graph.fields.find((field) => field.name === 'touNum');
   assert.ok(count && 'targets' in count);
   assert.deepEqual(count.targets.map((target) => target.column), ['visitors.total', 'visitors.domestic', 'visitors.foreign', 'visitors.change_rate']);
-  const admission = model.flow_steps.find((step) => step.id === 'normalize_tourism_admission')!;
-  assert.deepEqual(admission.outputs, []);
-  assert.match(model.sources.find((source) => source.source_id === 'SRC_TOURISM_ADMISSION')!.graph.note!, /수집 미지원/);
+  assert.equal(model.sources.some((source) => source.source_id === 'SRC_TOURISM_ADMISSION'), false);
+  assert.equal(model.flow_steps.some((step) => step.id === 'normalize_tourism_admission'), false);
+  assert.equal(model.sources.some((source) => source.graph.fields.some((field) => field.raw_only)), false);
 });
