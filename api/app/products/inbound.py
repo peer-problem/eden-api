@@ -279,16 +279,15 @@ def build_inbound_snapshots(
                 reason = " ".join(part for part in (reason, visitor_change_reason) if part)
                 if availability == Availability.AVAILABLE:
                     availability = Availability.PARTIAL
-            input_rows = [
-                *current_rows,
-                *previous_rows,
-                *current_flights,
-                *previous_flights,
-                *([schedule] if schedule else []),
-                *(row for history in fx_history.values() for row in history),
-                *([balance] if balance else []),
-                *social_population_rows,
-            ]
+            block_input_rows = {
+                "visitors": [*current_rows, *previous_rows],
+                "flights": [*current_flights, *previous_flights],
+                "flight_schedule": [schedule] if schedule else [],
+                "fx": [row for history in fx_history.values() for row in history],
+                "tourism_balance": [balance] if balance else [],
+                "social_interest": social_population_rows,
+            }
+            input_rows = [row for block_rows in block_input_rows.values() for row in block_rows]
             normalized_references = {
                 "inbound_visitor_observation": [
                     row.observation_id for row in [*current_rows, *previous_rows]
@@ -366,6 +365,18 @@ def build_inbound_snapshots(
                 input_watermarks[input_row.source_id] = max(
                     input_watermarks.get(input_row.source_id, watermark), watermark
                 )
+            block_watermarks: dict[str, dict[str, str]] = {}
+            for block, block_rows in block_input_rows.items():
+                watermarks: dict[str, datetime] = {}
+                for input_row in block_rows:
+                    watermark = _aware_utc(input_row.source_updated_at)
+                    watermarks[input_row.source_id] = max(
+                        watermarks.get(input_row.source_id, watermark), watermark
+                    )
+                block_watermarks[block] = {
+                    source_id: watermark.isoformat()
+                    for source_id, watermark in sorted(watermarks.items())
+                }
             calculated_at = datetime.now(UTC)
             publisher.publish(
                 SnapshotCandidate(
@@ -409,6 +420,7 @@ def build_inbound_snapshots(
                         },
                         "spatial_resolution": "country",
                         "reason": reason,
+                        "block_watermarks": block_watermarks,
                     },
                     input_watermarks=input_watermarks,
                     formula_versions={},

@@ -5,15 +5,17 @@ import schema from './catalog.json';
 const metrics: Record<string, Record<string, [string, string, string][]>> = {
   regional: {
     regional_visit_observation: [['visitors.total', '전체 방문', '명'], ['visitors.domestic', '내국인 방문', '명'], ['visitors.foreign', '외국인 방문', '명'], ['visitors.change_rate', '기간 대비', '%']],
-    regional_demand_observation: [['demand.stay_index', '체류 지수', '지수'], ['demand.spend_index', '소비 지수', '지수']],
-    regional_diversity_observation: [['diversity.nationality_index', '국적 다양성', '지수']],
+    regional_demand_observation: [['demand.stay_index', '체류 지수', '지수'], ['demand.spend_index', '소비 지수', '지수'], ['demand.data_period', '수요 기준월', '월']],
+    regional_diversity_observation: [['diversity.nationality_index', '국적 다양성', '지수'], ['diversity.data_period', '다양성 기준월', '월']],
+    region_reference: [['reference_information.place_category_counts', '선정 관광지 분류', '개수']],
   },
   inbound: {
     inbound_visitor_observation: [['markets[].visitors', '방한 방문자', '명'], ['markets[].visitor_change_rate', '방문 증감', '%']],
     flight_observation: [['markets[].arriving_flights', '도착 항공편', '편'], ['markets[].passengers', '승객', '명'], ['markets[].flight_schedule', '향후 운항 일정', '응답 객체']],
-    fx_observation: [['markets[].fx.krw_rate', '원화 환율', '원'], ['markets[].fx.rate_date', '환율 기준일', '날짜']],
+    fx_observation: [['markets[].fx.krw_rate', '원화 환율', '원'], ['markets[].fx.change_rate', '환율 증감', '%'], ['markets[].fx.rate_date', '환율 기준일', '날짜']],
     tourism_balance_observation: [['markets[].tourism_balance_usd', '한국 전체 관광수지', 'USD']],
     social_observation: [['markets[].social_interest', '관심도', '응답 객체']],
+    market_alerts: [['items[].title', '공지 제목', '문자열'], ['items[].type', '공지 종류', '문자열']],
   },
   trends: {
     social_observation: [['source_metrics[].posts', '게시물 수', '건'], ['source_metrics[].views', '조회 수', '회'], ['source_metrics[].search_ratio', '검색 비율', '지수'], ['interest_index', '관심 지수', '지수'], ['change_rate', '관심도 증감', '%'], ['rising_keywords[]', '상승 키워드', '목록']],
@@ -22,21 +24,24 @@ const metrics: Record<string, Record<string, [string, string, string][]>> = {
     forecast_input: [['daily[].date', '전망일', '날짜'], ['daily[].demand_score', '방문 수요 점수', '점수'], ['daily[].source_concentration_rate', '공식 집중률', '%'], ['daily[].method', '계산 방식', '문자열'], ['daily[].basis', '계산 근거', '문자열'], ['daily[].sample_count', '표본 수', '건'], ['daily[].weather', '날씨', '응답 객체'], ['daily[].festivals', '축제', '목록'], ['daily[].holiday', '공휴일 여부', '참/거짓']],
   },
   places: {
+    place_list: [['items[].content_id', '장소 ID', '문자열'], ['items[].title', '장소명', '문자열'], ['items[].location', '위치', '좌표'], ['total', '전체 건수', '건']],
     place: [['content_id', '장소 ID', '문자열'], ['title', '장소명', '문자열'], ['location', '위치', '좌표']],
     place_relation: [['related_places[].rank', '연관 장소 원천 순위', '순위']],
   },
 };
 const endpoints: Record<string, string> = {
   regional: 'GET /v1/regions/{area_code}/insights', inbound: 'GET /v1/markets/inbound',
-  trends: 'GET /v1/trends', forecast: 'GET /v1/forecasts/visitors', places: 'GET /v1/places/{content_id}',
+  trends: 'GET /v1/trends', forecast: 'GET /v1/forecasts/visitors', places: 'GET /v1/places',
 };
 const names: Record<string, string> = {
   regional_visit_observation: '방문 지표', regional_demand_observation: '체류·소비', regional_diversity_observation: '방문자 다양성',
+  region_reference: '선정 관광지',
   inbound_visitor_observation: '방한 방문', flight_observation: '항공', fx_observation: '환율', tourism_balance_observation: '관광수지', social_observation: '관심도',
-  forecast_input: '방문 예측', place: '장소 상세', place_relation: '연관 장소',
+  market_alerts: '공식 공지',
+  forecast_input: '방문 예측', place_list: '관광지 목록', place: '장소 상세', place_relation: '연관 장소',
 };
 const visitTargets = ['visitors.total', 'visitors.domestic', 'visitors.foreign', 'visitors.change_rate'];
-const regionalFields: Record<string, { name: string; label: string; targets: { table: string; column: string }[] }[]> = {
+const regionalFields: Record<string, { name: string; label: string; raw_only?: boolean; targets: { table: string; column: string }[] }[]> = {
   SRC_KTO_REGIONAL_VISITORS: [
     { name: 'touNum', label: '방문자 수', targets: visitTargets.map((column) => ({ table: 'regional_visit_observation', column })) },
     { name: 'touDivNm', label: '내국인·외국인·전체 구분', targets: visitTargets.map((column) => ({ table: 'regional_visit_observation', column })) },
@@ -60,11 +65,12 @@ const calculationNotes: Record<string, string> = {
   'diversity.nationality_index': '최근 월 국제적 다양성 평균 · 0–100 범위',
 };
 export const publicMetricNames = new Set(Object.values(metrics).flatMap((group) => Object.keys(group)));
+const hiddenSources = new Set(['SRC_TOURISM_ADMISSION']);
 export function publicModel(pipelineId: string) {
   const group = metrics[pipelineId] ?? metrics.regional;
   const pipeline = schema.pipelines.find((p) => p.id === pipelineId) ?? schema.pipelines[0];
   const steps = schema.flow_steps.filter((step) => pipeline.steps.includes(step.id));
-  const selectedSources = new Set(steps.filter((step) => step.kind === 'transform' && step.outputs.some((name) => name in group)).flatMap((step) => step.sources));
+  const selectedSources = new Set(steps.filter((step) => step.kind === 'transform' && step.outputs.some((name) => name in group)).flatMap((step) => step.sources).filter((id) => !hiddenSources.has(id)));
   const tables = Object.entries(group).map(([name, fields]) => ({
     name, label: names[name], group: '제공 지표', primary_key: [] as string[],
     columns: [['meta.sources[].source_id', '출처', ''], ...fields].map(([name, label, type]) => ({ name, label, type, description: pipelineId === 'regional' ? calculationNotes[name] : undefined, nullable: false, primary_key: false, references: [] })),
@@ -77,17 +83,13 @@ export function publicModel(pipelineId: string) {
   return {
     ...schema, tables,
     sources: schema.sources.filter((source) => selectedSources.has(source.source_id)).map((source) => ({
-      ...source, graph: { ...source.graph,
-        note: pipelineId === 'regional' && source.source_id === 'SRC_TOURISM_ADMISSION' ? '관광지별 월간 입장객 · 지역 방문 지표와 별도 · 현재 수집 미지원' : undefined,
-        fields: pipelineId === 'regional' ? source.source_id === 'SRC_TOURISM_ADMISSION' ? [
-          { name: 'csNatCnt', label: '내국인 입장객', raw_only: true },
-          { name: 'csForCnt', label: '외국인 입장객', raw_only: true },
-          { name: 'ym / resNm', label: '기준월 / 관광지명', raw_only: true },
-        ] : regionalFields[source.source_id] ?? [] : [],
+      ...source, graph: {
+        ...source.graph,
+        fields: (pipelineId === 'regional' ? regionalFields[source.source_id] ?? [] : []).filter((field) => !field.raw_only),
       },
     })),
     flow_steps: [
-      ...steps.filter((step) => step.kind === 'transform').map((step) => ({ ...step, inputs: [], outputs: step.sources.some((id) => id === 'SRC_TOURISM_ADMISSION') && pipelineId === 'regional' ? [] : step.outputs.filter((name) => name in group) })),
+      ...steps.filter((step) => step.kind === 'transform' && !step.sources.some((id) => hiddenSources.has(id))).map((step) => ({ ...step, inputs: [], outputs: step.outputs.filter((name) => name in group) })),
       { ...product, label: 'API 응답', code_ref: endpoints[pipeline.id], inputs: Object.keys(group), outputs: [], graph: { fields } },
     ],
   };

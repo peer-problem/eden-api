@@ -1,10 +1,10 @@
-import { Button, HTMLSelect, InputGroup } from '@blueprintjs/core';
+import { Button, InputGroup } from '@blueprintjs/core';
 import { useEffect, useState } from 'react';
 import { useResource } from './api';
 import { regionName } from './data';
 import { sigunguFor, sigunguName } from './sigungu';
 import type { Meta, PlaceList as PlaceListData } from './types';
-import { DataTable, MetaLine, Picker, Section, State } from './ui';
+import { DataTable, Dropdown, MetaLine, Picker, Section, State } from './ui';
 
 const PAGE_SIZE = 20;
 
@@ -19,7 +19,7 @@ export default function PlaceList({
   area: string;
   params: URLSearchParams;
   update: (values: Record<string, string>) => void;
-  showSources: (meta: Meta) => void;
+  showSources: (meta: Meta, pipeline: string) => void;
   showPlace: (contentId: string) => void;
 }) {
   const options = [{ code: area, name: `${regionName(area)} 전체` }, ...sigunguFor(area)];
@@ -50,7 +50,7 @@ export default function PlaceList({
       extra={
         <MetaLine
           meta={resource.response?.meta}
-          onSources={() => resource.response && showSources(resource.response.meta)}
+          onSources={() => resource.response && showSources(resource.response.meta, 'places')}
         />
       }
     >
@@ -72,10 +72,10 @@ export default function PlaceList({
         </label>
         <label className="filter">
           <span>제목 언어</span>
-          <HTMLSelect
-            aria-label="관광지 제목 언어"
+          <Dropdown
+            label="관광지 제목 언어"
             value={language}
-            onChange={(event) => update({ placeLang: event.target.value, placePage: '' })}
+            onChange={(value) => update({ placeLang: value, placePage: '' })}
             options={[
               { label: '한국어', value: 'ko' },
               { label: 'English', value: 'en' },
@@ -100,7 +100,7 @@ export default function PlaceList({
         </span>
       </form>
       <State resource={resource} empty={!items.length}>
-        <DataTable label="관광지 목록" headers={['관광지', '언어', '분류', '주소', '시군구']}>
+        <DataTable label="관광지 목록" headers={['관광지', '언어', '분류', '주소', '시군구', '좌표']}>
           {items.map((item) => (
             <tr key={item.content_id}>
               <td>
@@ -118,6 +118,11 @@ export default function PlaceList({
               <td className="mono">{item.category ?? '—'}</td>
               <td>{item.address ?? '—'}</td>
               <td>{item.area.name}</td>
+              <td className="mono">
+                {item.location
+                  ? `${item.location.lat}, ${item.location.lng}`
+                  : '—'}
+              </td>
             </tr>
           ))}
         </DataTable>

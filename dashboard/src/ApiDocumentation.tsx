@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { AnchorButton, Button, Icon, Spinner } from "@blueprintjs/core";
-import { OPENAPI_URL, PUBLIC_API_ORIGIN } from "./api";
+import { API_BASE, OPENAPI_URL, PUBLIC_API_ORIGIN } from "./api";
+import { countries, regions } from "./data";
+import type { Envelope, PlaceList } from "./types";
+import { JsonCode, ResponseReading } from "./responseReading";
+import { Combobox, Dropdown } from "./ui";
 import {
   buildRequestTarget,
   codeSamples,
@@ -11,14 +16,13 @@ import {
   sampleFromSchema,
   schemaEnum,
   schemaName,
-  schemaTypeLabel,
   type ApiOperation,
   type OpenApiDocument,
   type OpenApiParameter,
   type OpenApiSchema,
 } from "./apiDocs";
 
-type PageSelection = "list" | "guide" | string;
+type PageSelection = "guide" | string;
 type DetailTab = "request" | "code" | "response" | "schema";
 
 interface LiveResponse {
@@ -32,7 +36,7 @@ interface LiveResponse {
 interface FriendlyCopy {
   title: string;
   description: string;
-  note?: string;
+  result: string;
 }
 
 const ENDPOINT_COPY: Record<string, FriendlyCopy> = {
@@ -40,42 +44,49 @@ const ENDPOINT_COPY: Record<string, FriendlyCopy> = {
     title: "관광 검색 관심도",
     description:
       "한국 여행 관련 검색어가 특정 국가에서 얼마나 관심을 받았는지 확인합니다. 현재 EDEN에 저장된 검색어만 조회할 수 있습니다.",
-    note: "검색어를 입력해도 새로운 자료를 수집하지는 않습니다. Korea travel, Seoul travel, Jeju travel처럼 현재 수집 중인 검색어를 사용하세요.",
+    result: "시점별 검색 관심도와 증가율",
   },
   "/v1/regions/{area_code}/insights": {
     title: "지역 관광 현황",
     description:
       "서울·부산 같은 지역의 방문 규모와 체류·소비·방문자 구성 지표를 한 번에 확인합니다.",
+    result: "방문 규모, 체류 시간, 소비와 방문자 구성",
+  },
+  "/v1/places": {
+    title: "관광지 목록",
+    description:
+      "시도나 시군구에 게시된 관광지를 제목 순으로 받습니다. 언어별 제목, 제목 검색, 페이지를 지정할 수 있습니다.",
+    result: "관광지 이름, 분류, 주소와 전체 건수",
   },
   "/v1/places/{content_id}": {
     title: "관광지 정보",
     description:
       "관광지의 이름, 주소, 위치, 소개와 주변 관광지·상점을 확인합니다. EDEN 관광지 ID나 TourAPI 콘텐츠 ID를 입력하세요.",
-    note: "선택한 언어의 소개가 없으면 다른 언어로 저장된 내용이 반환될 수 있습니다. 실제 표시 언어는 응답의 language에서 확인할 수 있습니다.",
+    result: "기본 정보, 위치, 연관 관광지와 주변 상점",
   },
   "/v1/forecasts/visitors": {
     title: "지역 방문 전망",
     description:
       "선택한 지역의 앞으로 최대 30일 방문 수요를 날짜별로 확인합니다. 날씨와 행사 정보도 함께 받을 수 있습니다.",
-    note: "방문 수요 점수는 혼잡 가능성을 비교하기 위한 참고값입니다. 실제 예상 방문자 수와 같은 값이 아닙니다.",
+    result: "날짜별 방문 수요, 날씨와 행사",
   },
   "/v1/visitors/timeseries": {
     title: "지역별 방문 추이",
     description:
       "선택한 지역의 방문 지표가 날짜에 따라 어떻게 달라졌는지 일별·주별·월별로 확인합니다.",
-    note: "원천 자료의 발표가 늦으면 가장 최근 날짜가 오늘보다 이전일 수 있습니다.",
+    result: "일·주·월별 방문 지표",
   },
   "/v1/markets/inbound": {
     title: "국가별 방한 시장",
     description:
       "일본·중국 등 여러 나라의 방한 방문, 항공편, 환율과 관광 관심도를 나란히 비교합니다.",
-    note: "방문자 수, 항공편과 환율은 발표 기관이 달라 기준 날짜가 서로 다를 수 있습니다.",
+    result: "국가별 방문, 항공편, 환율과 관광 관심도",
   },
   "/v1/markets/{country}/alerts": {
     title: "국가별 여행 공지",
     description:
       "선택한 국가의 비자, 입국, 안전 관련 공식 공지와 원문 링크를 확인합니다.",
-    note: "한국어 번역이 준비되지 않은 공지는 원문으로 표시됩니다.",
+    result: "공지 종류, 발표 시각과 원문 링크",
   },
 };
 
@@ -100,6 +111,15 @@ const PARAMETER_COPY: Record<string, ParameterCopy> = {
     label: "관광지 ID",
     description: "EDEN 관광지 ID나 TourAPI 콘텐츠 ID를 입력하세요.",
     placeholder: "예: eden_place_…",
+  },
+  q: {
+    label: "제목 검색",
+    description: "관광지 제목에서 찾을 단어를 입력하세요.",
+    placeholder: "예: 경복궁",
+  },
+  offset: {
+    label: "건너뛸 개수",
+    description: "앞에서 몇 개를 건너뛰고 받을지 정합니다.",
   },
   country: {
     label: "국가",
@@ -199,7 +219,7 @@ const PARAMETER_COPY: Record<string, ParameterCopy> = {
   since: {
     label: "이 날짜 이후",
     description: "입력한 시각 이후에 발표되거나 수집된 공지만 받습니다. 시간대를 함께 적어야 합니다.",
-    placeholder: "예: 2026-09-01T00:00:00+09:00",
+    placeholder: "예: YYYY-MM-DDT00:00:00+09:00",
   },
   language: {
     label: "공지 언어",
@@ -265,6 +285,99 @@ const OPTION_COPY: Record<string, string> = {
   facebook: "Facebook",
 };
 
+const TREND_KEYWORDS: Record<string, string[]> = {
+  CN: ["韩国旅游", "首尔旅游", "济州岛旅游"],
+  JP: ["韓国旅行", "ソウル旅行", "済州島旅行"],
+  TW: ["韓國旅遊", "首爾旅遊", "濟州島旅遊"],
+  US: ["Korea travel", "Seoul travel", "Jeju travel"],
+  PH: ["Korea travel", "Seoul travel", "Jeju travel"],
+};
+
+const PARAMETER_TONES: Record<string, string> = {
+  keyword: "rose",
+  q: "cyan",
+  content_id: "rose",
+  place_name: "rose",
+  attraction_name: "rose",
+  area_code: "blue",
+  country: "violet",
+  countries: "violet",
+  social_sources: "cyan",
+  period: "amber",
+  time_unit: "green",
+  granularity: "green",
+  visitor_type: "indigo",
+  compare: "orange",
+  include: "teal",
+  limit: "pink",
+  shops_limit: "orange",
+  related_limit: "indigo",
+  offset: "brown",
+  lang: "purple",
+  language: "purple",
+  currency: "lime",
+  days: "yellow",
+  forecast_days: "yellow",
+  nx: "sky",
+  ny: "lime",
+  radius_m: "sky",
+  types: "red",
+  source_scope: "brown",
+  since: "amber",
+};
+
+interface ParameterOption {
+  value: string;
+  label: string;
+}
+
+function parameterTone(name: string): string {
+  return PARAMETER_TONES[name] ?? "slate";
+}
+
+function numericOptions(parameter: OpenApiParameter): ParameterOption[] {
+  const schema = parameter.schema;
+  const presets: Record<string, number[]> = {
+    limit: [5, 10, 20, 50, 100],
+    offset: [0, 20, 50, 100],
+    shops_limit: [1, 5, 10, 20],
+    related_limit: [1, 5, 10, 20, 50],
+    radius_m: [100, 500, 1000, 2000, 5000],
+    days: [1, 3, 7, 14, 30],
+    forecast_days: [1, 3, 5, 7],
+  };
+  return (presets[parameter.name] ?? [])
+    .filter((value) => (schema?.minimum === undefined || value >= schema.minimum) && (schema?.maximum === undefined || value <= schema.maximum))
+    .map((value) => ({ value: String(value), label: String(value) }));
+}
+
+function parameterOptions(
+  operation: ApiOperation,
+  parameter: OpenApiParameter,
+  values: Record<string, string>,
+): ParameterOption[] {
+  if (parameter.name === "area_code")
+    return regions.map((region) => ({ value: region.code, label: `${region.name} (${region.code})` }));
+  if (parameter.name === "country") {
+    const choices = countries.map((country) => ({ value: country.code, label: `${country.name} (${country.code})` }));
+    return operation.path === "/v1/trends" ? [{ value: "all", label: "전체 수집 국가 (all)" }, ...choices] : choices;
+  }
+  if (parameter.name === "countries")
+    return countries.map((country) => ({ value: country.code, label: `${country.name} (${country.code})` }));
+  if (parameter.name === "currency")
+    return countries.map((country) => ({ value: country.currency, label: `${country.name} ${country.currency}` }));
+  if (parameter.name === "keyword" && operation.path === "/v1/trends") {
+    const country = values.country;
+    const keywords = country && country !== "all"
+      ? TREND_KEYWORDS[country] ?? []
+      : [...new Set(Object.values(TREND_KEYWORDS).flat())];
+    return keywords.map((keyword) => ({ value: keyword, label: keyword }));
+  }
+  const enums = schemaEnum(parameter.schema);
+  if (enums.length) return enums.map((value) => ({ value, label: optionLabel(value) }));
+  return numericOptions(parameter);
+}
+
 function optionLabel(value: string) {
   const friendly = OPTION_COPY[value];
   return friendly ? `${friendly} (${value})` : value;
@@ -274,6 +387,7 @@ function endpointCopy(operation: ApiOperation): FriendlyCopy {
   return ENDPOINT_COPY[operation.path] ?? {
     title: operation.summary,
     description: operation.description,
+    result: "응답 필드에서 확인",
   };
 }
 
@@ -411,6 +525,116 @@ function MarkdownGuide({ source }: { source: string }) {
   return <div className="docs-guide-body">{blocks}</div>;
 }
 
+const PLACE_EXAMPLE_AREAS = ["1100000000", "2600000000", "5000000000"];
+const PLACE_EXAMPLE_FALLBACK = "eden_place_161fb775402b53b78a0a";
+
+function usePlaceExamples(areaCode?: string) {
+  const [items, setItems] = useState<Array<{ content_id: string; title: string }>>([
+    { content_id: PLACE_EXAMPLE_FALLBACK, title: PLACE_EXAMPLE_FALLBACK },
+  ]);
+  useEffect(() => {
+    const areas = [...new Set([areaCode, ...PLACE_EXAMPLE_AREAS].filter(Boolean))] as string[];
+    const controller = new AbortController();
+    Promise.all(
+      areas.map((area) =>
+        fetch(`${API_BASE}/places?area_code=${area}&limit=20&lang=ko`, {
+          credentials: "omit",
+          signal: controller.signal,
+        }).then((response) => (response.ok ? response.json() as Promise<Envelope<PlaceList>> : null)),
+      ),
+    )
+      .then((payloads) => {
+        const seen = new Set<string>();
+        const next: Array<{ content_id: string; title: string }> = [];
+        for (const payload of payloads) {
+          for (const item of payload?.data?.items ?? []) {
+            if (!item.content_id || seen.has(item.content_id)) continue;
+            seen.add(item.content_id);
+            next.push({
+              content_id: item.content_id,
+              title: item.title || item.content_id,
+            });
+          }
+        }
+        next.sort((left, right) => {
+          const rank = (title: string) =>
+            title.startsWith("eden_place_") ? 3 : /^[\[『“‘'(]/.test(title) ? 2 : title.length > 18 ? 1 : 0;
+          return rank(left.title) - rank(right.title) || left.title.localeCompare(right.title, "ko");
+        });
+        if (!next.length) {
+          next.push({ content_id: PLACE_EXAMPLE_FALLBACK, title: PLACE_EXAMPLE_FALLBACK });
+        } else if (!seen.has(PLACE_EXAMPLE_FALLBACK)) {
+          next.unshift({ content_id: PLACE_EXAMPLE_FALLBACK, title: PLACE_EXAMPLE_FALLBACK });
+        }
+        setItems(next);
+      })
+      .catch((problem) => {
+        if (!(problem instanceof DOMException && problem.name === "AbortError"))
+          setItems([{ content_id: PLACE_EXAMPLE_FALLBACK, title: PLACE_EXAMPLE_FALLBACK }]);
+      });
+    return () => controller.abort();
+  }, [areaCode]);
+  return items;
+}
+
+function PlaceIdControl({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  const options = usePlaceExamples().map((item) => ({
+    value: item.content_id,
+    label: item.title,
+  }));
+  return (
+    <Combobox
+      label={label}
+      value={value}
+      options={options}
+      onChange={onChange}
+      placeholder={placeholder}
+    />
+  );
+}
+
+function TitleSearchControl({
+  label,
+  value,
+  onChange,
+  placeholder,
+  areaCode,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  areaCode?: string;
+}) {
+  const items = usePlaceExamples(areaCode);
+  const seen = new Set<string>();
+  const options = items.flatMap((item) => {
+    const title = item.title.trim();
+    if (!title || seen.has(title) || title.startsWith("eden_place_")) return [];
+    seen.add(title);
+    return [{ value: title, label: title }];
+  });
+  return (
+    <Combobox
+      label={label}
+      value={value}
+      options={options}
+      onChange={onChange}
+      placeholder={placeholder}
+    />
+  );
+}
+
 function parameterMeta(parameter: OpenApiParameter): string {
   const schemas = [
     parameter.schema,
@@ -442,16 +666,18 @@ function parameterMeta(parameter: OpenApiParameter): string {
 function ParameterControl({
   operation,
   parameter,
+  values,
   value,
   onChange,
 }: {
   operation: ApiOperation;
   parameter: OpenApiParameter;
+  values: Record<string, string>;
   value: string;
   onChange: (value: string) => void;
 }) {
   const copy = parameterCopy(operation, parameter);
-  const options = schemaEnum(parameter.schema);
+  const options = parameterOptions(operation, parameter, values);
   const array = isArraySchema(parameter.schema);
   const meta = parameterMeta(parameter);
   const selected = value.split(",").map((item) => item.trim()).filter(Boolean);
@@ -462,47 +688,65 @@ function ParameterControl({
     onChange(next.join(", "));
   };
   return (
-    <div className="docs-field">
+    <div className="docs-field" data-param-tone={parameterTone(parameter.name)}>
       <div className="docs-field-heading">
         <div>
-          <span className="docs-field-title">{copy.label}</span>
-          <code>{parameter.name}</code>
+          <span className="docs-field-key">
+            <span className="docs-field-title">{copy.label}</span>
+            <code>{parameter.name}</code>
+          </span>
           {parameter.required && <span className="docs-required">필수</span>}
         </div>
         {meta && <span>{meta}</span>}
       </div>
-      <p>{copy.description}</p>
-      {array && options.length > 0 ? (
-        <div
-          className="docs-choice-list"
-          id={`parameter-${parameter.name}`}
-          role="group"
-          aria-label={copy.label}
-        >
+      {parameter.name === "content_id" ? (
+        <PlaceIdControl
+          label={copy.label}
+          value={value}
+          onChange={onChange}
+          placeholder={copy.placeholder}
+        />
+      ) : parameter.name === "q" ? (
+        <TitleSearchControl
+          label={copy.label}
+          value={value}
+          onChange={onChange}
+          placeholder={copy.placeholder}
+          areaCode={values.area_code}
+        />
+      ) : array && options.length > 0 ? (
+        <details className="docs-multi-select">
+          <summary>
+            <span>{selected.length ? `${selected.length}개 선택` : "선택 안 함"}</span>
+            <Icon icon="chevron-down" size={12} />
+          </summary>
+          <div className="docs-choice-list" id={`parameter-${parameter.name}`} role="group" aria-label={copy.label}>
           {options.map((option) => {
-            const active = selected.includes(option);
+            const active = selected.includes(option.value);
             return (
-              <label key={option} className={active ? "is-active" : undefined}>
+              <label key={option.value} className={active ? "is-active" : undefined}>
                 <input
                   type="checkbox"
                   checked={active}
-                  onChange={() => toggle(option)}
+                  onChange={() => toggle(option.value)}
                 />
-                <span>{optionLabel(option)}</span>
+                <span>{option.label}</span>
               </label>
             );
           })}
-        </div>
+          </div>
+        </details>
       ) : options.length > 0 ? (
-        <select
-          id={`parameter-${parameter.name}`}
-          aria-label={copy.label}
+        <Dropdown
+          label={copy.label}
           value={value}
-          onChange={(event) => onChange(event.target.value)}
-        >
-          {!parameter.required && <option value="">선택 안 함</option>}
-          {options.map((option) => <option key={option} value={option}>{optionLabel(option)}</option>)}
-        </select>
+          onChange={onChange}
+          fill
+          options={[
+            ...(!parameter.required ? [{ value: "", label: "선택 안 함" }] : []),
+            ...options,
+          ]}
+        />
       ) : (
         <input
           id={`parameter-${parameter.name}`}
@@ -517,6 +761,34 @@ function ParameterControl({
   );
 }
 
+function friendlyFieldType(document: OpenApiDocument, schema?: OpenApiSchema): string {
+  if (!schema) return "";
+  const resolved = resolveSchema(document, schema) ?? schema;
+  const options = [...(resolved.anyOf ?? []), ...(resolved.oneOf ?? [])];
+  if (options.length) {
+    return options
+      .map((item) => friendlyFieldType(document, item))
+      .filter((value, index, all) => value && all.indexOf(value) === index)
+      .join(" · ");
+  }
+  if (resolved.type === "null") return "없음";
+  if (resolved.type === "array") {
+    const item = friendlyFieldType(document, resolved.items);
+    return item && item !== "객체" ? `${item} 목록` : "목록";
+  }
+  if (resolved.type === "integer" || resolved.type === "number") return "숫자";
+  if (resolved.type === "boolean") return "참/거짓";
+  if (resolved.type === "string") return "문자열";
+  if (resolved.type === "object" || resolved.properties || schema.$ref) return "객체";
+  if (Array.isArray(resolved.type)) {
+    return resolved.type
+      .map((type) => friendlyFieldType(document, { type }))
+      .filter(Boolean)
+      .join(" · ");
+  }
+  return resolved.type ?? "";
+}
+
 function SchemaTree({
   document,
   schema,
@@ -524,6 +796,7 @@ function SchemaTree({
   depth = 0,
   visited = new Set<string>(),
   required = false,
+  defaultOpen = false,
 }: {
   document: OpenApiDocument;
   schema?: OpenApiSchema;
@@ -531,6 +804,7 @@ function SchemaTree({
   depth?: number;
   visited?: Set<string>;
   required?: boolean;
+  defaultOpen?: boolean;
 }) {
   if (!schema) return null;
   const refName = schemaName(schema);
@@ -538,48 +812,85 @@ function SchemaTree({
   const nextVisited = new Set(visited);
   if (refName) {
     if (nextVisited.has(refName)) {
-      return <div className="docs-schema-row"><code>{label}</code><span>{refName}</span></div>;
+      return (
+        <div className="docs-schema-row">
+          <code>{label}</code>
+          <span className="docs-schema-type">객체</span>
+        </div>
+      );
     }
     nextVisited.add(refName);
   }
   const variant = [...(resolved.anyOf ?? []), ...(resolved.oneOf ?? [])].find((item) => item.type !== "null");
   const structural = variant ? resolveSchema(document, variant) ?? variant : resolved;
-  const properties = structural.properties ?? {};
-  const hasChildren = Object.keys(properties).length > 0 || structural.type === "array" || Boolean(structural.items);
+  const properties = Object.entries(structural.properties ?? {});
+  const itemSchema = structural.type === "array" && structural.items
+    ? resolveSchema(document, structural.items) ?? structural.items
+    : undefined;
+  const itemProperties = Object.entries(itemSchema?.properties ?? {});
+  const childEntries = properties.length ? properties : itemProperties;
+  const hasChildren = childEntries.length > 0;
+  if (depth === 0 && properties.length > 0) {
+    return (
+      <>
+        {properties.map(([name, property]) => (
+          <SchemaTree
+            key={name}
+            document={document}
+            schema={property}
+            label={name}
+            depth={1}
+            visited={nextVisited}
+            required={structural.required?.includes(name)}
+            defaultOpen={name === "data" || properties.length === 1}
+          />
+        ))}
+      </>
+    );
+  }
   const row = (
     <div className="docs-schema-row">
       <code>{label}</code>
-      <span>{schemaTypeLabel(schema)}</span>
+      {!hasChildren && <span className="docs-schema-type">{friendlyFieldType(document, schema)}</span>}
       {required && <small>필수</small>}
       {structural.description && <p>{structural.description}</p>}
     </div>
   );
   if (!hasChildren || depth >= 7) return row;
   return (
-    <details className="docs-schema-node" open={depth < 1}>
-      <summary>{row}</summary>
+    <details className="docs-schema-node" open={defaultOpen}>
+      <summary>
+        <Icon icon="chevron-right" size={12} />
+        {row}
+      </summary>
       <div className="docs-schema-children">
-        {structural.type === "array" && structural.items ? (
-          <SchemaTree document={document} schema={structural.items} label="items" depth={depth + 1} visited={nextVisited} />
-        ) : (
-          Object.entries(properties).map(([name, property]) => (
-            <SchemaTree
-              key={name}
-              document={document}
-              schema={property}
-              label={name}
-              depth={depth + 1}
-              visited={nextVisited}
-              required={structural.required?.includes(name)}
-            />
-          ))
-        )}
+        {childEntries.map(([name, property]) => (
+          <SchemaTree
+            key={name}
+            document={document}
+            schema={property}
+            label={name}
+            depth={depth + 1}
+            visited={nextVisited}
+            required={(properties.length ? structural : itemSchema)?.required?.includes(name)}
+          />
+        ))}
       </div>
     </details>
   );
 }
 
-function EndpointDetail({ document, operation }: { document: OpenApiDocument; operation: ApiOperation }) {
+function EndpointDetail({
+  document,
+  operation,
+  inline = false,
+  onPreviewChange,
+}: {
+  document: OpenApiDocument;
+  operation: ApiOperation;
+  inline?: boolean;
+  onPreviewChange?: (operation: ApiOperation, url: string, values: Record<string, string>) => void;
+}) {
   const friendly = endpointCopy(operation);
   const [tab, setTab] = useState<DetailTab>("request");
   const [values, setValues] = useState(() => initialParameterValues(operation));
@@ -588,6 +899,7 @@ function EndpointDetail({ document, operation }: { document: OpenApiDocument; op
   const [live, setLive] = useState<LiveResponse>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
+  const [sourceOpen, setSourceOpen] = useState(false);
   const target = useMemo(() => {
     try {
       return buildRequestTarget(PUBLIC_API_ORIGIN, operation, values, body);
@@ -596,6 +908,9 @@ function EndpointDetail({ document, operation }: { document: OpenApiDocument; op
     }
   }, [body, operation, values]);
   const samples = codeSamples(operation, target);
+  useEffect(() => {
+    onPreviewChange?.(operation, target.url, values);
+  }, [onPreviewChange, operation, target.url, values]);
 
   const execute = async () => {
     let request;
@@ -649,18 +964,19 @@ function EndpointDetail({ document, operation }: { document: OpenApiDocument; op
 
   const displayedResponse = live?.body ?? firstExample(operation);
   return (
-    <article className="docs-endpoint-detail">
-      <header className="docs-endpoint-heading">
-        <div>
-          <h1>{friendly.title}</h1>
-          <p>{friendly.description}</p>
-        </div>
-        <div className="docs-route-line">
-          <span className={`docs-method is-${operation.method.toLowerCase()}`}>{operation.method}</span>
-          <code>{operation.path}</code>
-        </div>
-      </header>
-      {friendly.note && <p className="docs-endpoint-note">{friendly.note}</p>}
+    <article className={`docs-endpoint-detail ${inline ? "is-inline" : ""}`}>
+      {!inline && (
+        <header className="docs-endpoint-heading">
+          <div>
+            <h1>{friendly.title}</h1>
+            <p>{friendly.description}</p>
+          </div>
+          <div className="docs-route-line">
+            <span className={`docs-method is-${operation.method.toLowerCase()}`}>{operation.method}</span>
+            <code>{operation.path}</code>
+          </div>
+        </header>
+      )}
       <div className="docs-tabs" role="tablist" aria-label="API 상세">
         {([
           ["request", "요청"],
@@ -682,8 +998,17 @@ function EndpointDetail({ document, operation }: { document: OpenApiDocument; op
                   key={`${parameter.in}-${parameter.name}`}
                   operation={operation}
                   parameter={parameter}
+                  values={values}
                   value={values[parameter.name] ?? ""}
-                  onChange={(value) => setValues((current) => ({ ...current, [parameter.name]: value }))}
+                  onChange={(value) => {
+                    setValues((current) => {
+                      const next = { ...current, [parameter.name]: value };
+                      if (operation.path === "/v1/trends" && parameter.name === "country" && value !== "all") {
+                        next.keyword = TREND_KEYWORDS[value]?.[0] ?? current.keyword;
+                      }
+                      return next;
+                    });
+                  }}
                 />
               ))}
             </div>
@@ -710,11 +1035,7 @@ function EndpointDetail({ document, operation }: { document: OpenApiDocument; op
           </details>
           {error && <div className="docs-error" role="alert">{error}</div>}
           <div className="docs-request-actions">
-            <div className="docs-request-preview">
-              <span>요청 URL</span>
-              <code>{target.url}</code>
-            </div>
-            <Button intent="primary" icon="search" onClick={execute} loading={loading}>
+            <Button intent="primary" size="large" icon="search" onClick={execute} loading={loading}>
               데이터 조회
             </Button>
           </div>
@@ -739,10 +1060,36 @@ function EndpointDetail({ document, operation }: { document: OpenApiDocument; op
               <code>{live.requestUrl}</code>
             </div>
           )}
-          <div className="docs-code-block">
-            <div><span>{live ? "실제 응답" : "응답 예시"}</span>{displayedResponse !== undefined && <Button minimal small icon="duplicate" onClick={() => copyText(JSON.stringify(displayedResponse, null, 2))}>복사</Button>}</div>
-            <pre className="docs-code"><code>{displayedResponse === undefined ? "요청 탭에서 데이터를 조회하면 실제 응답이 표시됩니다." : JSON.stringify(displayedResponse, null, 2)}</code></pre>
-          </div>
+          <ResponseReading value={displayedResponse} />
+          {displayedResponse !== undefined && (
+            <div className="docs-json-source">
+              <div className="docs-json-source-toolbar">
+                <Button
+                  small
+                  icon={sourceOpen ? "chevron-down" : "chevron-right"}
+                  active={sourceOpen}
+                  aria-expanded={sourceOpen}
+                  onClick={() => setSourceOpen((open) => !open)}
+                >
+                  원문
+                </Button>
+                <Button
+                  minimal
+                  small
+                  icon="duplicate"
+                  onClick={() => copyText(JSON.stringify(displayedResponse, null, 2))}
+                >
+                  복사
+                </Button>
+              </div>
+              {sourceOpen ? (
+                <div className="docs-code-block">
+                  <div><span>{live ? "실제 응답" : "응답 예시"}</span></div>
+                  <pre className="docs-code"><JsonCode value={displayedResponse} /></pre>
+                </div>
+              ) : null}
+            </div>
+          )}
         </section>
       )}
       {tab === "schema" && (
@@ -754,56 +1101,100 @@ function EndpointDetail({ document, operation }: { document: OpenApiDocument; op
   );
 }
 
-function ApiList({
+function ApiPicker({
   operations,
-  total,
-  query,
-  onQuery,
+  selectedId,
   onSelect,
 }: {
   operations: ApiOperation[];
-  total: number;
-  query: string;
-  onQuery: (value: string) => void;
+  selectedId: string;
   onSelect: (id: string) => void;
 }) {
   return (
-    <section className="docs-list-page">
-      <div className="docs-list-toolbar">
-        <strong>API {total}개</strong>
-        <label className="docs-search">
-          <Icon icon="search" />
-          <input
-            value={query}
-            onChange={(event) => onQuery(event.target.value)}
-            placeholder="이름이나 주소로 찾기"
-            aria-label="API 검색"
-          />
-        </label>
-      </div>
-      <div className="docs-endpoint-list">
-        {operations.map((operation) => {
-          const copy = endpointCopy(operation);
-          return (
-            <button type="button" key={operation.id} className="docs-endpoint-row" onClick={() => onSelect(operation.id)}>
-              <span className={`docs-method is-${operation.method.toLowerCase()}`}>{operation.method}</span>
-              <span className="docs-endpoint-copy"><strong>{copy.title}</strong><span>{copy.description}</span></span>
-              <code>{operation.path}</code>
-              <Icon icon="chevron-right" />
-            </button>
-          );
-        })}
-        {!operations.length && <p className="docs-empty">검색 결과가 없습니다.</p>}
-      </div>
-    </section>
+    <nav className="docs-endpoint-picker" aria-label="API 선택">
+      {operations.map((operation) => {
+        const active = operation.id === selectedId;
+        return (
+          <button
+            type="button"
+            key={operation.id}
+            className={active ? "is-active" : undefined}
+            aria-pressed={active}
+            onClick={() => onSelect(operation.id)}
+          >
+            <span>{operation.method}</span>
+            {endpointCopy(operation).title}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
-export default function ApiDocumentation() {
+function RequestUrlPreview({
+  operation,
+  url,
+}: {
+  operation?: ApiOperation;
+  url: string;
+}) {
+  const parsed = new URL(url);
+  const templateSegments = operation?.path.split("/") ?? [];
+  const actualSegments = parsed.pathname.split("/");
+  return (
+    <code className="docs-request-url">
+      <span className="docs-url-origin">{parsed.origin}/</span>
+      {actualSegments.slice(1).map((segment, index) => {
+        const template = templateSegments[index + 1];
+        const parameterName = template?.match(/^\{(.+)\}$/)?.[1];
+        return (
+          <span key={`${segment}-${index}`}>
+            {index > 0 && "/"}
+            <span
+              className={parameterName ? "docs-url-token" : undefined}
+              data-param-tone={parameterName ? parameterTone(parameterName) : undefined}
+            >{segment}</span>
+          </span>
+        );
+      })}
+      {[...parsed.searchParams.entries()].map(([name, value], index) => (
+        <span className="docs-url-query" key={`${name}-${value}-${index}`}>
+          {index === 0 ? "?" : "&"}
+          <span className="docs-url-token" data-param-tone={parameterTone(name)}>{name}={value}</span>
+        </span>
+      ))}
+    </code>
+  );
+}
+
+export default function ApiDocumentation({
+  workspaceActionsTarget,
+  onEndpointTitleChange,
+}: {
+  workspaceActionsTarget?: HTMLElement | null;
+  onEndpointTitleChange?: (title?: string) => void;
+}) {
   const [document, setDocument] = useState<OpenApiDocument>();
   const [error, setError] = useState<string>();
-  const [selection, setSelection] = useState<PageSelection>("list");
-  const [query, setQuery] = useState("");
+  const [selection, setSelection] = useState<PageSelection>("");
+  const [previewUrl, setPreviewUrl] = useState(`${PUBLIC_API_ORIGIN}/`);
+  const [previewOperation, setPreviewOperation] = useState<ApiOperation>();
+  const operations = useMemo(() => document ? readOperations(document) : [], [document]);
+  const selectedOperation = selection === "guide"
+    ? undefined
+    : operations.find((operation) => operation.id === selection) ?? operations[0];
+  const handlePreviewChange = useCallback((operation: ApiOperation, url: string) => {
+    setPreviewOperation(operation);
+    setPreviewUrl(url);
+  }, []);
+  useLayoutEffect(() => {
+    if (selection === "guide" || !selectedOperation) {
+      onEndpointTitleChange?.(undefined);
+      return;
+    }
+    onEndpointTitleChange?.(endpointCopy(selectedOperation).title);
+  }, [onEndpointTitleChange, selectedOperation, selection]);
+  useEffect(() => () => onEndpointTitleChange?.(undefined), [onEndpointTitleChange]);
   useEffect(() => {
     const controller = new AbortController();
     fetch(OPENAPI_URL, { credentials: "omit", signal: controller.signal })
@@ -818,33 +1209,22 @@ export default function ApiDocumentation() {
       });
     return () => controller.abort();
   }, []);
+  useEffect(() => {
+    if (operations.length > 0 && selection !== "guide" && !operations.some((operation) => operation.id === selection))
+      setSelection(operations[0].id);
+  }, [operations, selection]);
 
   if (error)
     return <div className="docs-load-state"><Icon icon="error" /><strong>{error}</strong><AnchorButton href={OPENAPI_URL}>OpenAPI JSON 열기</AnchorButton></div>;
   if (!document)
     return <div className="docs-load-state"><Spinner size={22} /><span>API 명세를 불러오는 중입니다.</span></div>;
 
-  const operations = readOperations(document);
-  const normalized = query.trim().toLowerCase();
-  const filtered = normalized
-    ? operations.filter((operation) => {
-        const copy = endpointCopy(operation);
-        return `${copy.title} ${copy.description} ${operation.path}`
-          .toLowerCase()
-          .includes(normalized);
-      })
-    : operations;
-  const selectedOperation = operations.find((operation) => operation.id === selection);
   const description = document.info.description ?? "";
   const guideStart = description.indexOf("### 시작하기");
   const guideSource = guideStart >= 0 ? description.slice(guideStart) : description;
   return (
     <div className="api-docs">
-      <header className="docs-product-heading">
-        <div className="docs-product-title">
-          <h1>API 문서</h1>
-          <span>v{document.info.version}</span>
-        </div>
+      {workspaceActionsTarget && createPortal(
         <div className="docs-heading-actions">
           <div className="docs-api-address">
             <span>API 주소</span>
@@ -852,60 +1232,45 @@ export default function ApiDocumentation() {
             <Button minimal small icon="duplicate" aria-label="API 주소 복사" onClick={() => copyText(PUBLIC_API_ORIGIN)} />
             <small>로그인이나 API 키 없이 사용할 수 있습니다.</small>
           </div>
+          <Button
+            minimal
+            icon={selection === "guide" ? "list" : "manual"}
+            onClick={() => setSelection(selection === "guide" ? operations[0]?.id ?? "" : "guide")}
+          >
+            {selection === "guide" ? "API 목록" : "사용 기준"}
+          </Button>
           <AnchorButton minimal icon="code" aria-label="OpenAPI JSON" href={OPENAPI_URL} target="_blank" rel="noreferrer">OpenAPI JSON</AnchorButton>
-        </div>
-      </header>
-      <div className={`docs-layout ${selection === "list" ? "is-list-page" : ""}`}>
-        <aside className="docs-navigation" aria-label="API 문서 탐색">
-          <div className="docs-mobile-shortcuts">
-            <button className={selection === "list" ? "is-active" : undefined} onClick={() => setSelection("list")}>
-              API 목록
-            </button>
-            <button className={selection === "guide" ? "is-active" : undefined} onClick={() => setSelection("guide")}>
-              사용 기준
-            </button>
-          </div>
-          <button className={selection === "list" ? "is-active" : undefined} onClick={() => setSelection("list")}>
-            <Icon icon="list" /><span><strong>API 목록</strong><small>{operations.length}개 API</small></span>
-          </button>
-          <div className="docs-nav-endpoints">
-            {filtered.map((operation) => (
-              <button key={operation.id} className={selection === operation.id ? "is-active" : undefined} onClick={() => setSelection(operation.id)}>
-                <span className={`docs-method is-${operation.method.toLowerCase()}`}>{operation.method}</span>
-                <span><strong>{endpointCopy(operation).title}</strong><code>{operation.path}</code></span>
-              </button>
-            ))}
-            {!filtered.length && <p>검색 결과가 없습니다.</p>}
-          </div>
-          <button className={selection === "guide" ? "is-active" : undefined} onClick={() => setSelection("guide")}>
-            <Icon icon="manual" /><span><strong>사용 기준</strong><small>날짜, 응답과 오류</small></span>
-          </button>
-        </aside>
+        </div>,
+        workspaceActionsTarget,
+      )}
+      <div className="docs-example-bar">
+        <span>API 예시</span>
+        <RequestUrlPreview operation={previewOperation} url={previewUrl} />
+        <Button minimal small icon="duplicate" aria-label="요청 URL 복사" onClick={() => copyText(previewUrl)} />
+      </div>
+      <div className="docs-layout is-list-page">
         <div className="docs-content">
-          {selection === "list" ? (
-            <ApiList
-              operations={filtered}
-              total={operations.length}
-              query={query}
-              onQuery={setQuery}
-              onSelect={setSelection}
-            />
+          {selection !== "guide" && selectedOperation ? (
+            <section className="docs-workbench">
+              <ApiPicker
+                operations={operations}
+                selectedId={selectedOperation.id}
+                onSelect={setSelection}
+              />
+              <EndpointDetail
+                key={operationKey(selectedOperation)}
+                document={document}
+                operation={selectedOperation}
+                inline
+                onPreviewChange={handlePreviewChange}
+              />
+            </section>
           ) : selection === "guide" ? (
             <section className="docs-guide">
               <div className="docs-page-heading"><h1>사용 기준</h1></div>
               <MarkdownGuide source={guideSource} />
             </section>
-          ) : selectedOperation ? (
-            <EndpointDetail key={operationKey(selectedOperation)} document={document} operation={selectedOperation} />
-          ) : (
-            <ApiList
-              operations={filtered}
-              total={operations.length}
-              query={query}
-              onQuery={setQuery}
-              onSelect={setSelection}
-            />
-          )}
+          ) : null}
         </div>
       </div>
     </div>

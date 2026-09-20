@@ -1,8 +1,8 @@
-import { Button, HTMLSelect, InputGroup } from '@blueprintjs/core';
+import { Button, InputGroup } from '@blueprintjs/core';
 import { useState } from 'react';
 import { useResource } from '../api';
 import { countries, date, regions } from '../data';
-import { Properties, State } from '../ui';
+import { Dropdown, Properties, State } from '../ui';
 import type { Source } from '../types';
 import catalog from './catalog.json';
 import type { CatalogTable } from './Workspace';
@@ -36,12 +36,15 @@ export default function PublicTableData({ table, pipeline, params, onClose }: {
   const sourceOnly = table.name === 'source_registry';
   const selectedSource = params.get('dbColumn') === 'source_id' ? params.get('dbValue') : null;
   const sources = resource.response?.meta.sources.filter((s) => !selectedSource || s.source_id === selectedSource) ?? [];
-  const edit = (key: keyof PublicQueryOptions, value: string) => setDraft((current) => ({ ...current, [key]: value }));
+  const edit = <K extends keyof PublicQueryOptions,>(
+    key: K,
+    value: PublicQueryOptions[K],
+  ) => setDraft((current) => ({ ...current, [key]: value }));
   return <section className="workspace-records">
     <div className="records-heading">
       <div><h2>{queries.length ? '관련 API 데이터' : '제공 지표'}</h2><span>{table.name === 'source_registry' ? '출처' : table.label}</span></div>
       <div className="records-heading-actions">
-        {!!queries.length && request.path && <Button variant="minimal" icon="refresh" onClick={resource.retry}>다시 조회</Button>}
+        {!!queries.length && request.path && <Button variant="minimal" icon="refresh" aria-label="다시 조회" onClick={resource.retry} />}
         <Button variant="minimal" icon="cross" aria-label="API 데이터 닫기" onClick={onClose} />
       </div>
     </div>
@@ -50,13 +53,13 @@ export default function PublicTableData({ table, pipeline, params, onClose }: {
       <Properties rows={table.columns.map((column) => [column.name, `${column.type}${column.primary_key ? ' · PK' : ''}${column.references.length ? ' · FK' : ''}`])} />
     </> : <>
       <form className="toolbar record-toolbar" onSubmit={(event) => { event.preventDefault(); setApplied({ ...draft }); if (JSON.stringify(applied) === JSON.stringify(draft)) resource.retry(); }}>
-        <HTMLSelect aria-label="조회 API" value={kind} options={queries.map((value) => ({ value, label: queryLabels[value] }))} onChange={(event) => {
-          const next = event.target.value as PublicQueryKind;
+        <Dropdown label="조회 API" value={kind} options={queries.map((value) => ({ value, label: queryLabels[value] }))} onChange={(value) => {
+          const next = value as PublicQueryKind;
           setKind(next); const options = { ...draft, period: next === 'markets' ? '12m' : '30d', country: next === 'trends' ? 'all' : draft.country === 'all' ? 'JP' : draft.country, area: next === 'trends' ? 'all' : draft.area === 'all' ? regions[0].code : draft.area }; setDraft(options); setApplied(options);
         }} />
-        {['insights', 'visitors', 'forecast', 'trends'].includes(kind) && <HTMLSelect aria-label="API 조회 지역" value={draft.area} options={[...(kind === 'trends' ? [{ value: 'all', label: '전체 지역' }] : []), ...regions.map((r) => ({ value: r.code, label: r.name }))]} onChange={(e) => edit('area', e.target.value)} />}
-        {['markets', 'trends'].includes(kind) && <HTMLSelect aria-label="API 조회 국가" value={draft.country} options={[...(kind === 'trends' ? [{ value: 'all', label: '전체 검색 지역' }] : []), ...countries.map((c) => ({ value: c.code, label: c.name }))]} onChange={(e) => edit('country', e.target.value)} />}
-        {['insights', 'visitors', 'trends', 'markets'].includes(kind) && <HTMLSelect aria-label="API 조회 기간" value={draft.period} options={(kind === 'markets' ? ['3m', '6m', '12m', '24m'] : ['7d', '30d', '90d']).map((value) => ({ value, label: `최근 ${value.slice(0, -1)}${value.endsWith('m') ? '개월' : '일'}` }))} onChange={(e) => edit('period', e.target.value)} />}
+        {['insights', 'visitors', 'forecast', 'trends', 'places'].includes(kind) && <Dropdown label="API 조회 지역" value={draft.area} options={[...(kind === 'trends' ? [{ value: 'all', label: '전체 지역' }] : []), ...regions.map((r) => ({ value: r.code, label: r.name }))]} onChange={(value) => edit('area', value)} />}
+        {['markets', 'alerts', 'trends'].includes(kind) && <Dropdown label="API 조회 국가" value={draft.country} options={[...(kind === 'trends' ? [{ value: 'all', label: '전체 검색 지역' }] : []), ...countries.map((c) => ({ value: c.code, label: c.name }))]} onChange={(value) => edit('country', value)} />}
+        {['insights', 'visitors', 'trends', 'markets'].includes(kind) && <Dropdown label="API 조회 기간" value={draft.period} options={(kind === 'markets' ? ['3m', '6m', '12m', '24m'] : ['7d', '30d', '90d']).map((value) => ({ value, label: `최근 ${value.slice(0, -1)}${value.endsWith('m') ? '개월' : '일'}` }))} onChange={(value) => edit('period', value)} />}
         {kind === 'trends' && <InputGroup aria-label="API 검색어" value={draft.keyword} onChange={(e) => edit('keyword', e.target.value)} required maxLength={200} />}
         {kind === 'place' && <InputGroup aria-label="장소 ID" placeholder="장소 ID 입력" value={draft.place} onChange={(e) => edit('place', e.target.value)} required />}
         <Button type="submit" icon="search">조회</Button>
@@ -70,10 +73,10 @@ export default function PublicTableData({ table, pipeline, params, onClose }: {
           {resource.response && (sources.length ? <PublicSources sources={sources} /> : <p className="inline-note">{selectedSource ? `${selectedSource}: 이 API 응답에 포함된 출처 정보가 없습니다.` : '이 API 응답에 포함된 출처 정보가 없습니다.'}</p>)}
         </> : <State resource={resource}>
           <Properties rows={[["자료 기준일", date(resource.response?.meta.as_of)]]} />
-          <pre aria-label="공개 API 응답 데이터" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', padding: '16px', fontSize: '12px', lineHeight: 1.65 }}>{JSON.stringify(resource.response?.data, null, 2)}</pre>
+          <pre className="records-payload" aria-label="공개 API 응답 데이터">{JSON.stringify(resource.response?.data, null, 2)}</pre>
           {!!sources.length && <details><summary>출처 {sources.length}개</summary><PublicSources sources={sources} /></details>}
         </State>}
-      </> : <p className="inline-note">{kind === 'place' ? '장소 ID를 입력하면 공개 API로 상세 정보를 조회합니다.' : '검색어를 입력해 주세요.'}</p>}
+      </> : <p className="inline-note">{kind === 'place' ? '장소 ID를 입력하면 공개 API로 상세 정보를 조회합니다.' : kind === 'places' ? '지역을 선택하면 관광지 목록을 조회합니다.' : kind === 'alerts' ? '국가를 선택하면 공식 공지를 조회합니다.' : '검색어를 입력해 주세요.'}</p>}
     </>}
   </section>;
 }

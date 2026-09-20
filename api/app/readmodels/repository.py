@@ -328,6 +328,53 @@ def _selected_snapshot_as_of(
     return min(fallback) if fallback else None
 
 
+def _selected_block_watermarks(
+    snapshot: ReadModelSnapshot,
+    blocks: Sequence[str],
+    source_ids: Sequence[str],
+) -> dict[str, datetime]:
+    selected_sources = set(source_ids)
+    metadata = snapshot.metadata_json or {}
+    raw_blocks = metadata.get("block_watermarks")
+    selected: dict[str, datetime] = {}
+    if isinstance(raw_blocks, dict):
+        for block in blocks:
+            raw_watermarks = raw_blocks.get(block)
+            if not isinstance(raw_watermarks, dict):
+                continue
+            for source_id, value in raw_watermarks.items():
+                if source_id not in selected_sources:
+                    continue
+                parsed = _as_aware_utc(datetime.fromisoformat(str(value)))
+                current = selected.get(source_id)
+                selected[source_id] = parsed if current is None else min(current, parsed)
+    if selected:
+        return selected
+    for source_id, value in (snapshot.input_watermarks or {}).items():
+        if source_id in selected_sources:
+            selected[source_id] = _as_aware_utc(datetime.fromisoformat(str(value)))
+    return selected
+
+
+def _single_selected_max_age(
+    session: Session,
+    source_ids: Sequence[str],
+    fallback: int | None,
+) -> int | None:
+    values = {
+        int(value)
+        for value in session.scalars(
+            select(RefreshPolicy.max_acceptable_age_seconds).where(
+                RefreshPolicy.source_id.in_(source_ids)
+            )
+        )
+        if value is not None
+    }
+    if not values:
+        return fallback
+    return next(iter(values)) if len(values) == 1 else None
+
+
 def _selected_max_age(
     session: Session,
     source_ids: Sequence[str],
@@ -608,13 +655,28 @@ class MariaDBReadRepository:
             )
         data, availability, reason = build_trend_view(snapshot.data, scope)
         metadata = snapshot.metadata_json or {}
+        observed_by_source: dict[str, datetime] = {}
+        if isinstance(data, dict):
+            source_ids = tuple(str(value) for value in data.get("sources", []))
+            for metric in data.get("source_metrics", []):
+                if not isinstance(metric, dict) or not metric.get("observed_at"):
+                    continue
+                observed_by_source[str(metric["source_id"])] = _as_aware_utc(
+                    datetime.fromisoformat(str(metric["observed_at"]))
+                )
+            source_rows = self._source_metadata(session, source_ids, observed_by_source)
+        as_of = (
+            min(observed_by_source.values())
+            if observed_by_source
+            else _selected_snapshot_as_of((snapshot,), source_ids)
+        )
         return ReadResult(
             data=data,
             availability=availability,
             reason=reason,
-            as_of=_selected_snapshot_as_of((snapshot,), source_ids),
+            as_of=as_of,
             calculated_at=_as_aware_utc(snapshot.calculated_at),
-            max_acceptable_age_seconds=_selected_max_age(
+            max_acceptable_age_seconds=_single_selected_max_age(
                 session,
                 source_ids,
                 metadata.get("max_acceptable_age_seconds"),
@@ -626,6 +688,7 @@ class MariaDBReadRepository:
             ),
             formula_versions=snapshot.formula_versions or {},
             sources=source_rows,
+            stale=any(bool(source["stale"]) for source in source_rows),
         )
 
 
@@ -1111,8 +1174,12 @@ class MariaDBReadRepository:
                 sources=source_rows,
             )
         data, availability, reason = build_forecast_view(snapshot.data, scope)
-        source_ids = tuple(data["sources"])
-        source_rows = self._source_metadata(session, source_ids)
+        selected_watermarks = {
+            source_id: _as_aware_utc(datetime.fromisoformat(str(value)))
+            for source_id, value in (snapshot.input_watermarks or {}).items()
+            if source_id in source_ids
+        }
+        source_rows = self._source_metadata(session, source_ids, selected_watermarks)
         return ReadResult(
             data=data,
             availability=availability,
@@ -1121,12 +1188,17 @@ class MariaDBReadRepository:
                 (snapshot,), source_ids
             ),
             calculated_at=_as_aware_utc(snapshot.calculated_at),
-            max_acceptable_age_seconds=18 * 3600,
+            max_acceptable_age_seconds=_single_selected_max_age(
+                session,
+                source_ids,
+                18 * 3600,
+            ),
             spatial_resolution=SpatialResolution(data_area.level if data_area else "none"),
             formula_versions={
                 "visitor_forecast": "official"
             },
             sources=source_rows,
+            stale=any(bool(source["stale"]) for source in source_rows),
         )
 
     def _fetch_inbound_markets(self, session: Session, key: str) -> ReadResult:
@@ -1142,6 +1214,7 @@ class MariaDBReadRepository:
         snapshots: list[ReadModelSnapshot] = []
         markets: list[dict[str, object]] = []
         block_states: list[Availability] = []
+        response_watermarks: dict[str, datetime] = {}
         source_ids = _request_source_ids("inbound_markets", scope)
         source_rows = self._source_metadata(
             session,
@@ -1245,27 +1318,17 @@ class MariaDBReadRepository:
                 }
                 block_states.append(block_availability)
 
-            market_sources = []
-            now = datetime.now(UTC)
-            policies = dict(
-                session.execute(
-                    select(RefreshPolicy.source_id, RefreshPolicy.max_acceptable_age_seconds).where(
-                        RefreshPolicy.source_id.in_(source_ids)
-                    )
-                ).all()
+            selected_watermarks = (
+                _selected_block_watermarks(snapshot, sorted(include), source_ids)
+                if snapshot is not None
+                else {}
             )
-            for source in source_rows:
-                item = dict(source)
-                stamp = (
-                    (snapshot.input_watermarks or {}).get(source["source_id"]) if snapshot else None
+            for source_id, instant in selected_watermarks.items():
+                current = response_watermarks.get(source_id)
+                response_watermarks[source_id] = (
+                    instant if current is None else min(current, instant)
                 )
-                if stamp:
-                    instant = _as_aware_utc(datetime.fromisoformat(str(stamp)))
-                    item["data_as_of"] = instant
-                    item["stale"] = (now - instant).total_seconds() > policies.get(
-                        source["source_id"], 86400
-                    )
-                market_sources.append(item)
+            market_sources = self._source_metadata(session, source_ids, selected_watermarks)
             market: dict[str, object] = {
                 "country": country,
                 "visitors": visitor_data.get("visitors") if "visitors" in include else None,
@@ -1320,6 +1383,12 @@ class MariaDBReadRepository:
             if any(state != Availability.UNAVAILABLE for state in block_states)
             else Availability.UNAVAILABLE
         )
+        source_rows = self._source_metadata(session, source_ids, response_watermarks)
+        as_of = (
+            min(response_watermarks.values())
+            if response_watermarks
+            else _selected_snapshot_as_of(snapshots, source_ids)
+        )
         return ReadResult(
             data={"period": period, "markets": markets},
             availability=availability,
@@ -1330,9 +1399,9 @@ class MariaDBReadRepository:
                 if availability == Availability.UNAVAILABLE
                 else "요청한 일부 방한시장 데이터 제품을 아직 제공할 수 없습니다."
             ),
-            as_of=_selected_snapshot_as_of(snapshots, source_ids),
+            as_of=as_of,
             calculated_at=max(_as_aware_utc(snapshot.calculated_at) for snapshot in snapshots),
-            max_acceptable_age_seconds=_selected_max_age(
+            max_acceptable_age_seconds=_single_selected_max_age(
                 session,
                 source_ids,
                 min(
@@ -1344,7 +1413,7 @@ class MariaDBReadRepository:
             spatial_resolution=SpatialResolution.COUNTRY,
             formula_versions={},
             sources=source_rows,
-            stale=any(item["stale"] for market in markets for item in market["sources"]),
+            stale=any(bool(source["stale"]) for source in source_rows),
         )
 
     def _fetch_market_alerts(self, session: Session, key: str) -> ReadResult:
@@ -1558,7 +1627,11 @@ class MariaDBReadRepository:
         )
 
     @staticmethod
-    def _source_metadata(session: Session, source_ids: Sequence[str]) -> list[dict[str, object]]:
+    def _source_metadata(
+        session: Session,
+        source_ids: Sequence[str],
+        data_as_of_by_source: dict[str, datetime] | None = None,
+    ) -> list[dict[str, object]]:
         rows = session.execute(
             select(SourceRegistry, RefreshPolicy, SourceState)
             .outerjoin(
@@ -1581,9 +1654,18 @@ class MariaDBReadRepository:
                 status = SourceStatus(raw_status)
             except ValueError:
                 status = SourceStatus.UNAVAILABLE
-            data_as_of = _as_aware_utc(state.data_as_of) if state else None
+            has_selected_watermark = bool(
+                data_as_of_by_source and registry.source_id in data_as_of_by_source
+            )
+            data_as_of = (
+                data_as_of_by_source[registry.source_id]
+                if has_selected_watermark and data_as_of_by_source is not None
+                else _as_aware_utc(state.data_as_of) if state else None
+            )
             freshness_basis = (
-                _as_aware_utc(state.last_success_at)
+                data_as_of
+                if has_selected_watermark
+                else _as_aware_utc(state.last_success_at)
                 if state
                 and registry.source_id in {"SRC_EMBASSY_NOTICE", "SRC_KETA", "SRC_KTO_MARKET_TREND"}
                 else data_as_of

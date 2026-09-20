@@ -11,6 +11,7 @@ __pycache__/
 *.py[cod]
 .ruff_cache/
 .pytest_cache/
+*.tsbuildinfo
 dist/
 build/
 *.egg-info/

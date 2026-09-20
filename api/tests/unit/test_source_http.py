@@ -1,3 +1,4 @@
+import json
 from collections.abc import Callable
 
 import httpx
@@ -249,6 +250,41 @@ def test_credential_backed_adapter_exposes_stable_rejection_reason(
     assert result.status is SourceStatus.UNAVAILABLE
     assert result.reason_code is FetchReasonCode.CREDENTIAL_REJECTED
     assert result.items == ()
+
+
+def test_naver_matches_documented_keywords_and_skips_only_invalid_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = NaverTrendAdapter(
+        "https://source.example/data",
+        SecretStr("client-id"),
+        SecretStr("client-secret"),
+        2,
+        4096,
+    )
+    payload = json.dumps({
+        "results": [{
+            "title": "source-normalized-title",
+            "keywords": ["서울 여행"],
+            "data": [
+                {"period": "2026-09-19", "ratio": 42.5},
+                {"period": "invalid", "ratio": 3},
+            ],
+        }],
+    }).encode()
+    monkeypatch.setattr(
+        adapter.client,
+        "post_json",
+        lambda *_args, **_kwargs: (payload, "application/json", "https://source.example/data"),
+    )
+
+    result = adapter.fetch({"targets": [{"country": "KR", "keyword": "서울 여행"}]})
+    adapter.client.close()
+
+    assert result.status is SourceStatus.DEGRADED
+    assert len(result.items) == 1
+    assert result.items[0].body["search_ratio"] == 42.5
+    assert result.partial_errors == ("invalid_rows:1",)
 
 
 def test_youtube_does_not_publish_partial_statistics_as_complete_aggregate(

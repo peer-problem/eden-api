@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from datetime import UTC, datetime, timedelta
 from subprocess import CompletedProcess
@@ -8,7 +9,13 @@ from urllib.parse import parse_qs, urlsplit
 
 import app.operations.phase1_soak as phase1_soak
 from app.api.v1.routes import InboundSocialSource, TrendSocialSource
-from app.observability.soak import PHASE1_SOAK_REQUIRED_SECONDS, evaluate_samples
+from app.observability.soak import (
+    PHASE1_SOAK_REQUIRED_SECONDS,
+    SOAK_MAX_STORED_SAMPLES,
+    append_sample,
+    evaluate_samples,
+    load_samples,
+)
 
 
 def test_database_disconnects_include_api_and_scheduler_journals(monkeypatch: Any) -> None:
@@ -31,6 +38,32 @@ def test_database_disconnects_include_api_and_scheduler_journals(monkeypatch: An
 
     monkeypatch.setattr(phase1_soak.subprocess, "run", run)
     assert phase1_soak.recent_database_disconnects() == 3
+
+
+def test_soak_evidence_is_compacted_without_losing_the_required_tail(
+    tmp_path,
+    monkeypatch: Any,
+) -> None:
+    evidence = tmp_path / "soak.jsonl"
+    rows = [
+        {"sampled_at": f"2026-09-{index // 100 + 1:02d}T00:00:00+00:00", "index": index}
+        for index in range(SOAK_MAX_STORED_SAMPLES + 5)
+    ]
+    evidence.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("app.observability.soak.SOAK_COMPACT_AFTER_BYTES", 1)
+
+    append_sample(
+        evidence,
+        {"sampled_at": "2026-10-01T00:00:00+00:00", "index": len(rows)},
+    )
+
+    loaded = load_samples(evidence)
+    assert len(loaded) == SOAK_MAX_STORED_SAMPLES
+    assert loaded[-1]["index"] == len(rows)
+    assert loaded[0]["index"] == 6
 
 
 def test_public_probes_only_request_supported_social_sources(monkeypatch: Any) -> None:

@@ -28,7 +28,35 @@ def test_weather_pivot_preserves_zero_and_only_source_horizon_dates() -> None:
     assert first["temperature_c"] == 0.0
     assert first["precipitation_probability_pct"] == 0.0
     assert first["condition"] == "clear"
+    assert first["forecast_time"] == "1200"
     assert normalized[datetime(2026, 8, 30)]["condition"] == "rain"
+
+
+def test_weather_uses_one_best_covered_instant_nearest_noon() -> None:
+    rows = [
+        {
+            "fcstDate": "20260829",
+            "fcstTime": time,
+            "nx": "60",
+            "ny": "127",
+            "category": category,
+            "fcstValue": value,
+        }
+        for time, category, value in [
+            ("0900", "TMP", "20"),
+            ("1200", "TMP", "24"),
+            ("1200", "POP", "30"),
+            ("1200", "SKY", "3"),
+            ("2300", "TMP", "10"),
+        ]
+    ]
+
+    day = forecast.normalize_weather_rows(rows)[datetime(2026, 8, 29)]
+
+    assert day["forecast_time"] == "1200"
+    assert day["temperature_c"] == 24.0
+    assert day["precipitation_probability_pct"] == 30.0
+    assert day["condition"] == "cloudy"
 
 
 def test_weather_schema_drift_is_rejected() -> None:
@@ -111,6 +139,74 @@ def test_older_independent_festival_is_retained_without_rewinding_audit(forecast
     assert {item["name"] for item in row.festivals} == {"new", "old"}
     assert len(row.festivals) == 2
     assert row.source_updated_at == now.replace(tzinfo=None)
+
+
+def test_revised_festival_schedule_clears_dates_removed_by_the_source(forecast_session):
+    first_time = datetime.now(UTC) - timedelta(hours=2)
+    revised_time = first_time + timedelta(hours=1)
+    event_key = forecast._festival_event_key("area-11", "가을 축제")
+    for day in (12, 13, 14):
+        raw = SimpleNamespace(
+            raw_record_id=1,
+            observed_at=first_time,
+            source_updated_at=first_time,
+            ingested_at=first_time,
+        )
+        forecast._upsert_forecast_input(
+            forecast_session,
+            raw,
+            source_id=forecast.FESTIVAL_SOURCE,
+            area_id="area-11",
+            place_id=None,
+            forecast_date=datetime(2026, 9, day),
+            festivals=[{
+                "event_key": event_key,
+                "name": "가을 축제",
+                "start_date": "2026-09-12",
+                "end_date": "2026-09-14",
+            }],
+        )
+
+    revised = SimpleNamespace(
+        raw_record_id=2,
+        observed_at=revised_time,
+        source_updated_at=revised_time,
+        ingested_at=revised_time,
+    )
+    active_dates = {datetime(2026, 9, 12), datetime(2026, 9, 13)}
+    forecast._replace_festival_schedule(
+        forecast_session,
+        revised,
+        area_id="area-11",
+        event_key=event_key,
+        name="가을 축제",
+    )
+    for day in active_dates:
+        forecast._upsert_forecast_input(
+            forecast_session,
+            revised,
+            source_id=forecast.FESTIVAL_SOURCE,
+            area_id="area-11",
+            place_id=None,
+            forecast_date=day,
+            festivals=[{
+                "event_key": event_key,
+                "name": "가을 축제",
+                "start_date": "2026-09-12",
+                "end_date": "2026-09-13",
+            }],
+        )
+
+    rows = {
+        row.forecast_date: row
+        for row in forecast_session.scalars(select(ForecastInput)).all()
+    }
+    assert rows[datetime(2026, 9, 14)].festivals == []
+    assert all(
+        row.festivals[0]["end_date"] == "2026-09-13"
+        for day, row in rows.items()
+        if day in active_dates
+    )
 
 
 def test_weather_rejects_multiple_grids_for_one_area_date() -> None:

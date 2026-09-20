@@ -2,8 +2,62 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { LineChart, State } from './ui';
+import { currentDate } from './data';
+import { chartTickIndexes, filterComboboxOptions, LineChart, State } from './ui';
 import { registerExplorerTools, validateNavigation } from './webmcp';
+
+test('combobox examples match the typed name or id', () => {
+  const options = [
+    { value: 'eden_place_a', label: '경복궁' },
+    { value: 'eden_place_b', label: '해운대' },
+  ];
+  assert.deepEqual(
+    filterComboboxOptions(options, '경복').map((item) => item.value),
+    ['eden_place_a'],
+  );
+  assert.deepEqual(
+    filterComboboxOptions(options, 'place_b').map((item) => item.value),
+    ['eden_place_b'],
+  );
+});
+
+test('current date uses the Seoul calendar date', () => {
+  assert.equal(currentDate(new Date('2026-09-19T15:30:00Z')), '2026.09.20');
+});
+
+test('chart tick density follows width and keeps the ends', () => {
+  assert.deepEqual(chartTickIndexes(0, 800), []);
+  assert.deepEqual(chartTickIndexes(1, 800), [0]);
+  assert.deepEqual(chartTickIndexes(2, 800), [0, 1]);
+  const wide = chartTickIndexes(30, 1480);
+  assert.equal(wide[0], 0);
+  assert.equal(wide.at(-1), 29);
+  assert.ok(wide.length > 3);
+  assert.ok(
+    wide.every((index, position) => position === 0 || index - wide[position - 1] >= 2),
+  );
+  const narrow = chartTickIndexes(30, 320);
+  assert.equal(narrow[0], 0);
+  assert.equal(narrow.at(-1), 29);
+  assert.ok(narrow.length < wide.length);
+});
+
+test('wide charts label more than the first, middle, and last dates', () => {
+  const points = Array.from({ length: 30 }, (_, index) => ({
+    date: `2026-07-${String(index + 1).padStart(2, '0')}`,
+    value: 100 + index,
+  }));
+  const html = renderToStaticMarkup(
+    createElement(LineChart, {
+      label: '방문 추이',
+      unit: '명',
+      height: 188,
+      points,
+    }),
+  );
+  const axisDates = html.match(/<text[^>]*>2026\.[0-9.]+<\/text>/g) ?? [];
+  assert.ok(axisDates.length > 3);
+});
 
 test('chart leaves a gap for a missing observation instead of connecting across it', () => {
   const html = renderToStaticMarkup(
