@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { currentDate } from './data';
-import { chartTickIndexes, filterComboboxOptions, LineChart, State } from './ui';
+import {
+  chartTickIndexes,
+  filterComboboxOptions,
+  LineChart,
+  nearestChartPointIndex,
+  State,
+} from './ui';
 import { registerExplorerTools, validateNavigation } from './webmcp';
 
 test('combobox examples match the typed name or id', () => {
@@ -57,6 +63,15 @@ test('wide charts label more than the first, middle, and last dates', () => {
   );
   const axisDates = html.match(/<text[^>]*>2026\.[0-9.]+<\/text>/g) ?? [];
   assert.ok(axisDates.length > 3);
+  assert.doesNotMatch(html, / · /);
+  assert.doesNotMatch(html, /chart-hover-card/);
+});
+
+test('chart hover picks the nearest observed point and skips gaps', () => {
+  assert.equal(nearestChartPointIndex([100, null, 200], [0, 10, 20], 1), 0);
+  assert.equal(nearestChartPointIndex([100, null, 200], [0, 10, 20], 19), 2);
+  assert.equal(nearestChartPointIndex([null, null], [0, 10], 4), null);
+  assert.equal(nearestChartPointIndex([], [], 4), null);
 });
 
 test('chart leaves a gap for a missing observation instead of connecting across it', () => {
@@ -73,6 +88,51 @@ test('chart leaves a gap for a missing observation instead of connecting across 
   );
   assert.equal((html.match(/class="chart-line"/g) ?? []).length, 2);
   assert.equal((html.match(/class="chart-point"/g) ?? []).length, 2);
+});
+
+test('chart draws the unpublished gap and outlook as a separate orange series', () => {
+  const html = renderToStaticMarkup(
+    createElement(LineChart, {
+      label: '방문 추이',
+      unit: '명',
+      points: [
+        { date: '2026-08-21', value: 100, kind: 'observed' },
+        { date: '2026-08-22', value: 110, kind: 'gap' },
+        { date: '2026-08-23', value: 120, kind: 'outlook' },
+      ],
+    }),
+  );
+  assert.match(html, /chart-line-gap/);
+  assert.match(html, /chart-line-outlook/);
+  assert.match(html, /chart-point-outlook/);
+  assert.doesNotMatch(html, /chart-point-gap/);
+});
+
+test('chart keeps observed points and dashes to outlook when unpublished days are omitted', () => {
+  const points = [
+    ...Array.from({ length: 30 }, (_, index) => ({
+      date: `2026-07-${String(index + 1).padStart(2, '0')}`,
+      value: 100 + index,
+      kind: 'observed' as const,
+    })),
+    ...Array.from({ length: 7 }, (_, index) => ({
+      date: `2026-09-${String(21 + index).padStart(2, '0')}`,
+      value: 140,
+      kind: 'outlook' as const,
+    })),
+  ];
+  const html = renderToStaticMarkup(
+    createElement(LineChart, {
+      label: '방문 추이',
+      unit: '명',
+      height: 188,
+      points,
+    }),
+  );
+  assert.equal((html.match(/class="chart-point"/g) ?? []).length, 30);
+  assert.equal((html.match(/chart-point-outlook/g) ?? []).length, 7);
+  assert.match(html, /chart-line-gap/);
+  assert.match(html, /chart-line-outlook/);
 });
 test('unavailable responses render the actual reason, not their child values', () => {
   const html = renderToStaticMarkup(

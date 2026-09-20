@@ -73,7 +73,7 @@ console.log(data, meta.availability, meta.as_of);
 
 
 - YouTube 지표는 검색 결과 영상의 공개 지표입니다. 검색 국가 조건은 시청자 국적을 뜻하지 않습니다.
-- Instagram과 Facebook 및 Reddit은 승인된 데이터가 없어 `unavailable`로 표시될 수 있습니다.
+- Instagram과 Facebook 및 Reddit은 수집하지 않으며 `social_sources`에도 없습니다.
   NAVER 검색 추세는 운영자가 저장 및 재제공 정책을 승인하고 자격 증명을 설정한 환경에서만
   수집합니다. 현재 가용성과 마지막 성공 시각은 응답의 `meta.sources`를 확인하세요.
 - X와 TikTok은 수집 대상이 아닙니다.
@@ -169,7 +169,9 @@ PARAMETER_DESCRIPTIONS = {
     "area_code": (
         "행정구역 코드 또는 EDEN 지역 ID. 요청 지역의 자료가 없으면 unavailable입니다."
     ),
-    "social_sources": ("선택 SNS만 조회합니다. 생략 시 youtube. 미승인 원천은 unavailable입니다."),
+    "social_sources": (
+        "트렌드는 youtube와 naver. 방한 시장은 youtube만. 생략 시 youtube입니다."
+    ),
     "period": "최신 확보 관측을 끝점으로 하는 조회 기간. 미수집 구간은 결측으로 표시합니다.",
     "time_unit": ("트렌드 관측의 집계 간격. day/week/month이며 고유 영상 수를 뜻하지 않습니다."),
     "limit": "반환 항목 수. 기본값과 최대값은 schema에 표시됩니다.",

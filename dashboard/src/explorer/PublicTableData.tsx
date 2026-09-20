@@ -25,9 +25,18 @@ export default function PublicTableData({ table, pipeline, params, onClose }: {
 }) {
   const queries = publicQueriesFor(table.name, pipeline);
   const [kind, setKind] = useState<PublicQueryKind>(queries[0] ?? 'insights');
+  const requestedCountry = params.get('country');
+  const requestedPeriod = params.get('period');
   const initial: PublicQueryOptions = {
     area: kind === 'trends' ? 'all' : regions.some((r) => r.code === params.get('area')) ? params.get('area')! : regions[0].code,
-    country: kind === 'trends' ? 'all' : 'JP', period: kind === 'markets' ? '12m' : '30d', keyword: params.get('keyword') || 'Korea travel', place: params.get('place') || '',
+    country: countries.some((item) => item.code === requestedCountry)
+      ? requestedCountry!
+      : kind === 'trends' ? 'all' : 'JP',
+    period: kind === 'markets'
+      ? ['3m', '6m', '12m', '24m'].includes(requestedPeriod || '') ? requestedPeriod! : '12m'
+      : ['7d', '30d', '90d'].includes(requestedPeriod || '') ? requestedPeriod! : '30d',
+    keyword: params.get('keyword') || 'Korea travel',
+    place: params.get('place') || params.get('content_id') || '',
   };
   const [draft, setDraft] = useState(initial);
   const [applied, setApplied] = useState(initial);
@@ -70,7 +79,7 @@ export default function PublicTableData({ table, pipeline, params, onClose }: {
         {sourceOnly ? <>
           {resource.loading && <p role="status">출처를 불러오는 중</p>}
           {resource.error && <p role="alert" className="inline-note">{resource.error}</p>}
-          {resource.response && (sources.length ? <PublicSources sources={sources} /> : <p className="inline-note">{selectedSource ? `${selectedSource}: 이 API 응답에 포함된 출처 정보가 없습니다.` : '이 API 응답에 포함된 출처 정보가 없습니다.'}</p>)}
+          {resource.response && !!sources.length && <PublicSources sources={sources} />}
         </> : <State resource={resource}>
           <Properties rows={[["자료 기준일", date(resource.response?.meta.as_of)]]} />
           <pre className="records-payload" aria-label="공개 API 응답 데이터">{JSON.stringify(resource.response?.data, null, 2)}</pre>

@@ -216,7 +216,7 @@ export default function Workspace({
     : catalog.tables.find((item) => item.name === requestedName) ?? catalog.tables[0];
   const pipeline =
     catalog.pipelines.find((item) => item.id === pipelineId) ?? catalog.pipelines[0];
-  const [recordsOpen, setRecordsOpen] = useState(false);
+  const [recordsOpen, setRecordsOpen] = useState(() => params.get("records") === "1");
   const pipelineTables = useMemo(() => {
     const stepIds = new Set(pipeline.steps);
     const names = new Set<string>();

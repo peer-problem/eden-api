@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.domain.enums import Availability
-from app.products.trend_views import _sum_optional, build_trend_view
+from app.products.trend_views import _single_source_sum, _sum_optional, build_trend_view
 
 
 def test_optional_sum_preserves_all_missing_but_not_numeric_zero() -> None:
@@ -122,38 +122,85 @@ def test_rising_keywords_use_equal_windows_and_minimum_observations() -> None:
 
 
 def test_trend_view_never_sums_raw_mentions_across_platforms() -> None:
+    rows = [
+        {"source_id": "SRC_INSTAGRAM", "post_count": 10},
+        {"source_id": "SRC_FACEBOOK", "post_count": 20},
+    ]
+
+    assert (
+        _single_source_sum(
+            rows,
+            "post_count",
+            excluded_sources={"SRC_YOUTUBE", "SRC_NAVER_TREND", "SRC_KTO_RESOURCE_DEMAND"},
+        )
+        is None
+    )
+
+
+def test_trend_view_ignores_disabled_social_source_requests() -> None:
     product = {
         "observations": [
             {
-                "source_id": source_id,
+                "source_id": "SRC_INSTAGRAM",
                 "keyword": "서울",
                 "country": "KR",
                 "bucket_start": "2026-08-29T00:00:00+00:00",
-                "post_count": count,
+                "post_count": 10,
             }
-            for source_id, count in (
-                ("SRC_INSTAGRAM", 10),
-                ("SRC_FACEBOOK", 20),
-            )
         ]
     }
     scope = {
         "keyword": "서울",
         "country": "all",
         "area_code": None,
-        "social_sources": ["instagram", "facebook"],
+        "social_sources": ["instagram"],
         "period": "7d",
         "time_unit": "day",
     }
 
-    data, _availability, _reason = build_trend_view(product, scope)
+    data, availability, reason = build_trend_view(product, scope)
+
+    assert data is None
+    assert availability == Availability.UNAVAILABLE
+    assert reason == "요청 범위와 일치하는 social signal이 없습니다."
+
+
+def test_trend_view_answers_explicit_naver_source() -> None:
+    product = {
+        "observations": [
+            {
+                "source_id": "SRC_NAVER_TREND",
+                "keyword": "서울 여행",
+                "country": None,
+                "bucket_start": "2026-08-29T00:00:00+00:00",
+                "search_ratio": 42.0,
+                "source_score": 42.0,
+            },
+            {
+                "source_id": "SRC_YOUTUBE",
+                "keyword": "서울 여행",
+                "country": "KR",
+                "bucket_start": "2026-08-29T00:00:00+00:00",
+                "view_count": 99,
+            },
+        ]
+    }
+    scope = {
+        "keyword": "서울 여행",
+        "country": "all",
+        "area_code": None,
+        "social_sources": ["naver"],
+        "period": "7d",
+        "time_unit": "day",
+    }
+
+    data, availability, reason = build_trend_view(product, scope)
 
     assert data is not None
-    assert data["series"][0]["sns_mentions"] is None
-    assert {row["source_id"]: row["posts"] for row in data["source_metrics"]} == {
-        "SRC_INSTAGRAM": 10,
-        "SRC_FACEBOOK": 20,
-    }
+    assert reason is None and availability == Availability.AVAILABLE
+    assert data["sources"] == ["SRC_NAVER_TREND"]
+    assert data["series"][0]["search_ratio"] == 42.0
+    assert all(row["source_id"] != "SRC_YOUTUBE" for row in data["source_metrics"])
 
 
 def test_trend_view_filters_excluded_observations_from_stale_snapshots() -> None:

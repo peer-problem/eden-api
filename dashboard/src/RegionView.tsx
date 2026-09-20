@@ -1,8 +1,16 @@
 import { Button, Tab, Tabs } from '@blueprintjs/core';
 import { createPortal } from 'react-dom';
 import { useResource, type Resource } from './api';
-import { currentDate, date, number, regionName, regions } from './data';
+import { currentDate, date, number, regionName, regions, seoulIsoDate } from './data';
 import PlaceList from './PlaceList';
+import {
+  FORECAST_LOOKAHEAD_DAYS,
+  TREND_OUTLOOK_LABEL,
+  buildVisitorOutlook,
+  demandRowsForDisplay,
+  fillDemandOutlook,
+  outlookPackFor,
+} from './regionAnalysis';
 import { RegionMap } from './RegionMap';
 import { sigunguFor, sigunguName } from './sigungu';
 import type { Forecast, Insights, Meta, Timeseries } from './types';
@@ -47,6 +55,16 @@ export default function RegionView({
     `/visitors/timeseries?area_code=${encodeURIComponent(area)}&period=${period}&granularity=day`,
   );
   const meta = seriesResource.response?.meta ?? insightsResource.response?.meta;
+  const today = seoulIsoDate();
+  const outlook = buildVisitorOutlook(
+    (seriesResource.response?.data?.series ?? []).map((point) => ({
+      date: point.period_start,
+      value: point.total,
+    })),
+    today,
+    7,
+    outlookPackFor(area),
+  );
   const refresh = () => {
     insightsResource.retry();
     seriesResource.retry();
@@ -71,7 +89,6 @@ export default function RegionView({
         )}
       <div className="toolbar region-toolbar">
         <div className="region-picker" role="group" aria-label="지역 선택">
-          <span className="region-picker-label">지역</span>
           <div className="region-buttons">
             {regions.map((region) => (
               <Button
@@ -107,6 +124,7 @@ export default function RegionView({
         <div className="region-overview-main">
           <RegionTrend
             resource={seriesResource}
+            points={outlook.points}
             regionLabel={regionName(area)}
           />
           <RegionMetrics resource={insightsResource} showSources={showSources} />
@@ -124,13 +142,24 @@ export default function RegionView({
           id="history"
           title="일별 자료"
           panel={
-            <History resource={seriesResource} showSources={showSources} />
+            <History
+              resource={seriesResource}
+              outlook={outlook.outlook}
+              showSources={showSources}
+            />
           }
         />
         <Tab
           id="outlook"
           title="방문 수요 참고"
-          panel={<Outlook area={area} params={params} update={update} showSources={showSources} />}
+          panel={
+            <Outlook
+              area={area}
+              params={params}
+              update={update}
+              showSources={showSources}
+            />
+          }
         />
         <Tab
           id="places"
@@ -152,20 +181,24 @@ export default function RegionView({
 
 function RegionTrend({
   resource,
+  points,
   regionLabel,
 }: {
   resource: Resource<Timeseries>;
+  points: { date: string; value: number | null; kind?: 'observed' | 'gap' | 'outlook' }[];
   regionLabel: string;
 }) {
-  const points =
-    resource.response?.data?.series?.map((point) => ({
-      date: point.period_start,
-      value: point.total,
-    })) ?? [];
-
+  const hasOutlook = points.some((point) => point.kind === 'outlook' || point.kind === 'gap');
   return (
     <section className="region-trend" aria-labelledby="region-trend-title">
       <h2 id="region-trend-title">{regionLabel} 방문 추이</h2>
+      {hasOutlook && (
+        <p className="region-trend-legend">
+          <span>실측</span>
+          <span className="is-gap">미발표</span>
+          <span className="is-outlook">{TREND_OUTLOOK_LABEL}</span>
+        </p>
+      )}
       {resource.loading ? (
         <div className="region-trend-state" role="status">
           {regionLabel} 추이를 불러오는 중
@@ -175,7 +208,7 @@ function RegionTrend({
       ) : (
         <LineChart
           label={`${regionLabel} 방문 추이`}
-          points={points}
+          points={points.filter((point) => point.kind !== 'gap')}
           unit="명"
           height={188}
         />
@@ -243,9 +276,11 @@ function RegionMetrics({ resource, showSources }: {
 
 function History({
   resource,
+  outlook,
   showSources,
 }: {
   resource: Resource<Timeseries>;
+  outlook: { date: string; value: number }[];
   showSources: ViewProps['showSources'];
 }) {
   const series = resource.response?.data?.series ?? [];
@@ -253,6 +288,7 @@ function History({
   const latestFirst = [...series].sort((a, b) =>
     b.period_start.localeCompare(a.period_start),
   );
+  const outlookFirst = [...outlook].sort((a, b) => b.date.localeCompare(a.date));
   return (
     <Section
       title={`${resource.response?.data?.area.name ?? '선택 지역'} 일별 자료`}
@@ -266,19 +302,32 @@ function History({
       }
     >
       <State resource={resource} empty={!series.length}>
-        {summary && (
+        {(summary || outlookFirst.length > 0) && (
           <p className="section-note">
-            <span>기간 합계 {number(summary.total, '명')}</span>
-            <span>최고 방문 {number(summary.peak_visitors, '명')}</span>
-            <span>
-              완결률 {summary.completeness_ratio == null ? '—' : number(summary.completeness_ratio * 100, '%')}
-            </span>
+            {summary && (
+              <>
+                <span>기간 합계 {number(summary.total, '명')}</span>
+                <span>최고 방문 {number(summary.peak_visitors, '명')}</span>
+                <span>
+                  완결률 {summary.completeness_ratio == null ? '—' : number(summary.completeness_ratio * 100, '%')}
+                </span>
+              </>
+            )}
+            {outlookFirst.length > 0 && <span className="is-outlook">{TREND_OUTLOOK_LABEL}</span>}
           </p>
         )}
         <DataTable
           label="일별 방문 자료"
           headers={['기준일', '전체 방문', '내국인', '외국인']}
         >
+          {outlookFirst.map((point) => (
+            <tr key={`outlook-${point.date}`} className="is-outlook">
+              <td className="mono">{date(point.date)}</td>
+              <td>{number(point.value)}</td>
+              <td>—</td>
+              <td>—</td>
+            </tr>
+          ))}
           {latestFirst.map((point) => (
             <tr key={point.period_start}>
               <td className="mono">{date(point.period_start)}</td>
@@ -312,12 +361,21 @@ function Outlook({
     ? requestedArea!
     : area;
   const resource = useResource<Forecast>(
-    `/forecasts/visitors?area_code=${encodeURIComponent(forecastArea)}&days=7`,
+    `/forecasts/visitors?area_code=${encodeURIComponent(forecastArea)}&days=${FORECAST_LOOKAHEAD_DAYS}`,
   );
   const daily = resource.response?.data?.daily ?? [];
+  const rows = demandRowsForDisplay(
+    fillDemandOutlook(daily, outlookPackFor(area), {
+      today: seoulIsoDate(),
+      days: FORECAST_LOOKAHEAD_DAYS,
+    }),
+  );
+  const dayByDate = new Map(daily.map((day) => [day.date.slice(0, 10), day]));
+  const basis = daily.find((day) => day.basis)?.basis;
+  const hasOutlook = rows.some((row) => row.kind === 'outlook');
   return (
     <Section
-      title={`7일 방문 수요 참고 · ${forecastArea === area ? regionName(area) : sigunguName(forecastArea)}`}
+      title={`방문 수요 참고 · ${forecastArea === area ? regionName(area) : sigunguName(forecastArea)}`}
       extra={
         <MetaLine
           meta={resource.response?.meta}
@@ -338,10 +396,11 @@ function Outlook({
           />
         </label>
         <span className="section-note">
-          시도 전체는 소속 시군구 관광지의 공식 집중률 평균입니다.
+          <span>{basis ?? '시도 전체는 소속 시군구 관광지의 공식 집중률 평균입니다.'}</span>
+          {hasOutlook && <span className="is-outlook">{TREND_OUTLOOK_LABEL}</span>}
         </span>
       </div>
-      <State resource={resource} empty={!daily.length}>
+      <State resource={resource} empty={!rows.length} showReason={false}>
         {(resource.response?.data?.data_area_code
           || resource.response?.data?.spatial_resolution) && (
           <div className="compact-data-scope">
@@ -357,43 +416,41 @@ function Outlook({
           label="방문 수요 참고 자료"
           headers={[
             '날짜',
-            '공식 집중률',
+            '집중률',
             '계산 방식',
             '날씨',
             '축제 및 공휴일',
             '자료 상태',
           ]}
         >
-          {daily.map((day) => (
-            <tr key={day.date}>
-              <td className="mono">{date(day.date)}</td>
+          {rows.map((row) => {
+            const day = dayByDate.get(row.date);
+            return (
+            <tr key={row.date} className={row.kind === 'outlook' ? 'is-outlook' : undefined}>
+              <td className="mono">{date(row.date)}</td>
+              <td>{number(row.rate, '%')}</td>
+              <td>{row.kind === 'official' ? '공식 전망' : TREND_OUTLOOK_LABEL}</td>
               <td>
-                {day.method === 'official'
-                  ? number(day.source_concentration_rate, '%')
-                  : number(day.demand_score)}
-              </td>
-              <td>
-                {day.method === 'official' ? '공식 전망' : '자료 없음'}
-                {day.basis && <small className="cell-detail">{day.basis}</small>}
-              </td>
-              <td>
-                {day.weather?.availability === 'available'
+                {day?.weather?.availability === 'available'
                   ? `${number(day.weather.temperature_c, '°C')} / ${day.weather.condition ?? '상태 없음'} / 강수 ${number(day.weather.precipitation_probability_pct, '%')}`
-                  : '자료 없음'}
+                  : '—'}
               </td>
               <td>
-                {day.festivals === null ? '축제 자료 없음' : day.festivals.length ? (
+                {day == null || day.festivals === null ? '—' : day.festivals.length ? (
                   day.festivals.map((festival) => <small className="cell-detail" key={festival}>{festival}</small>)
                 ) : '등록된 축제 없음'}
-                <small className="cell-detail">
-                  {day.holiday === null ? '공휴일 자료 없음' : day.holiday ? '공휴일' : '공휴일 아님'}
-                </small>
+                {day != null && (
+                  <small className="cell-detail">
+                    {day.holiday === null ? '—' : day.holiday ? '공휴일' : '공휴일 아님'}
+                  </small>
+                )}
               </td>
               <td>
-                <Status value={day.availability} />
+                {row.kind === 'official' ? <Status value={day?.availability} /> : '—'}
               </td>
             </tr>
-          ))}
+            );
+          })}
         </DataTable>
       </State>
     </Section>

@@ -682,7 +682,7 @@ def test_inbound_absent_requested_currency_is_unavailable(pipeline: Pipeline) ->
     assert response.status_code == 200
     body = response.json()
     assert body["meta"]["availability"] == "unavailable"
-    assert body["meta"]["reason"]
+    assert body["meta"]["reason"] is None
     market = body["data"]["markets"][0]
     assert market["fx"] is None
     assert market["source_availability"]["fx"]["availability"] == "unavailable"
@@ -2135,6 +2135,58 @@ def test_empty_source_overview_is_served_as_not_provided(pipeline: Pipeline) -> 
     response = pipeline.client.get(f"/v1/places/{PLACE_ID}")
     assert response.status_code == 200
     assert response.json()["data"]["overview"] is None
+
+
+def test_missing_hub_and_related_are_not_reported_as_source_failures(
+    pipeline: Pipeline,
+) -> None:
+    palace = pipeline.client.get(f"/v1/places/{PLACE_ID}", params={"include": ["hub"]}).json()
+    assert palace["data"]["hub"] is None
+    assert palace["meta"]["reason"] is None
+
+    museum = pipeline.client.get(
+        f"/v1/places/{RELATED_PLACE_ID}", params={"include": ["related"]}
+    ).json()
+    assert museum["data"]["related_places"] is None
+    assert museum["meta"]["reason"] is None
+
+
+def test_missing_place_coordinates_are_not_explained_in_copy(pipeline: Pipeline) -> None:
+    with pipeline.session_factory.begin() as session:
+        place = session.get(Place, PLACE_ID)
+        assert place is not None
+        place.lat = None
+        place.lng = None
+
+    payload = pipeline.client.get(f"/v1/places/{PLACE_ID}").json()
+    assert payload["data"]["location"] is None
+    assert payload["data"]["location_availability"] == {
+        "availability": "unavailable",
+        "reason": None,
+    }
+    assert payload["data"]["nearby_shops"] is None
+    assert payload["meta"]["reason"] is None
+
+
+def test_missing_nearby_shops_are_not_reported_as_source_failures(pipeline: Pipeline) -> None:
+    with pipeline.session_factory.begin() as session:
+        for shop in session.scalars(select(NearbyShop)).all():
+            session.delete(shop)
+        state = session.scalar(
+            select(SourceState).where(
+                SourceState.source_id == "SRC_SEMAS_SHOPS",
+                SourceState.scope_key == "global",
+            )
+        )
+        assert state is not None
+        state.status = SourceStatus.UNAVAILABLE
+
+    payload = pipeline.client.get(
+        f"/v1/places/{PLACE_ID}", params={"include": ["shops"]}
+    ).json()
+    assert payload["data"]["nearby_shops"] is None
+    assert payload["meta"]["reason"] is None
+    assert payload["meta"]["availability"] == "available"
 
 
 def test_scheduler_start_syncs_registry_enablement_with_the_code(pipeline: Pipeline) -> None:

@@ -8,8 +8,16 @@ import {
   Tag,
 } from '@blueprintjs/core';
 import { Select } from '@blueprintjs/select';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from 'react';
 import { availabilityName, date, number } from './data';
+import { TREND_OUTLOOK_LABEL } from './regionAnalysis';
 import type { Meta, Source } from './types';
 import type { Resource } from './api';
 import catalog from './explorer/catalog.json';
@@ -163,7 +171,7 @@ export function Combobox({
   const filtered = exact ? options : filterComboboxOptions(options, value);
   useEffect(() => {
     if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
+    const onPointerDown = (event: globalThis.PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown);
@@ -274,10 +282,12 @@ export function Status({ value, stale }: { value?: string; stale?: boolean }) {
 export function State<T>({
   resource,
   empty,
+  showReason = true,
   children,
 }: {
   resource: Resource<T>;
   empty?: boolean;
+  showReason?: boolean;
   children: ReactNode;
 }) {
   if (resource.loading)
@@ -302,7 +312,11 @@ export function State<T>({
         />
       </div>
     );
-  if (!resource.response?.data || resource.response.meta.availability === 'unavailable' || empty)
+  if (
+    !resource.response?.data
+    || empty
+    || (resource.response.meta.availability === 'unavailable' && empty !== false)
+  )
     return (
       <p className="inline-note" role="status">
         {resource.response?.meta.reason ||
@@ -310,7 +324,7 @@ export function State<T>({
       </p>
     );
   return <>
-    {resource.response.meta.reason && (
+    {showReason && resource.response.meta.reason && (
       <p className="inline-note">{resource.response.meta.reason}</p>
     )}
     {children}
@@ -386,9 +400,6 @@ export function Sources({ sources }: { sources: Source[] }) {
   };
   return (
     <div className="source-list">
-      {sources.length === 0 && (
-        <p className="muted">제공된 출처 정보가 없습니다.</p>
-      )}
       {sources.map((s, i) => {
         const source = catalog.sources.find((entry) => entry.source_id === s.source_id);
         const tables = [...new Set(catalog.flow_steps
@@ -436,7 +447,7 @@ export function Metric({
         {value != null && unit && <small>{unit}</small>}
       </strong>
       {detail !== null && (
-        <span>{detail ?? (value == null ? '자료 없음' : '관측 지표')}</span>
+        <span>{detail ?? (value == null ? '—' : '관측 지표')}</span>
       )}
     </div>
   );
@@ -494,19 +505,41 @@ export function chartTickIndexes(
   return indexes;
 }
 
+export function nearestChartPointIndex(
+  values: (number | null)[],
+  positions: number[],
+  viewX: number,
+): number | null {
+  let best: number | null = null;
+  let bestDist = Infinity;
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] == null) continue;
+    const dist = Math.abs(positions[i] - viewX);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = i;
+    }
+  }
+  return best;
+}
+
+export type ChartSeriesKind = 'observed' | 'gap' | 'outlook';
+
 export function LineChart({
   points,
   unit,
   label,
   height,
 }: {
-  points: { date: string; value: number | null }[];
+  points: { date: string; value: number | null; kind?: ChartSeriesKind }[];
   unit: string;
   label: string;
   height?: number;
 }) {
   const chartRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
   const [measuredWidth, setMeasuredWidth] = useState(790);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const chartHeight = height ?? 270;
   useEffect(() => {
     if (!chartRef.current || typeof ResizeObserver === 'undefined') return;
@@ -540,18 +573,82 @@ export function LineChart({
   const plotBottom = chartHeight - 52;
   const plotHeight = plotBottom - 38;
   const y = (v: number) => plotBottom - ((v - min) / span) * plotHeight;
+  const kindOf = (point: (typeof points)[number]) => point.kind ?? 'observed';
   const segments: string[] = [];
   let segment = '';
   points.forEach((p, i) => {
-    if (p.value == null) {
+    if (p.value == null || kindOf(p) !== 'observed') {
       if (segment) segments.push(segment);
       segment = '';
     } else segment += `${segment ? ' L' : 'M'}${x(i)} ${y(p.value)}`;
   });
   if (segment) segments.push(segment);
+  const lastObserved = [...points]
+    .map((point, index) => ({ point, index }))
+    .reverse()
+    .find((item) => item.point.value != null && kindOf(item.point) === 'observed');
+  const lastGap = [...points]
+    .map((point, index) => ({ point, index }))
+    .reverse()
+    .find((item) => item.point.value != null && kindOf(item.point) === 'gap');
+  const firstOutlook = points
+    .map((point, index) => ({ point, index }))
+    .find((item) => item.point.value != null && kindOf(item.point) === 'outlook');
+  const seriesPath = (kind: ChartSeriesKind, start?: { point: (typeof points)[number]; index: number }) => {
+    const items = points
+      .map((point, index) => ({ point, index }))
+      .filter((item) => item.point.value != null && kindOf(item.point) === kind);
+    if (!items.length) return '';
+    const lead = start && start.point.value != null ? [start, ...items] : items;
+    return lead
+      .map((item, position) => {
+        const value = item.point.value;
+        if (value == null) return '';
+        return `${position ? ' L' : 'M'}${x(item.index)} ${y(value)}`;
+      })
+      .join('');
+  };
+  const gapPath = seriesPath('gap', lastObserved);
+  const outlookPath = seriesPath(
+    'outlook',
+    gapPath ? lastGap ?? lastObserved : undefined,
+  );
+  const unpublishedBridge =
+    !gapPath &&
+    lastObserved?.point.value != null &&
+    firstOutlook?.point.value != null
+      ? `M${x(lastObserved.index)} ${y(lastObserved.point.value)} L${x(firstOutlook.index)} ${y(firstOutlook.point.value)}`
+      : '';
+  const activeIndex =
+    hoverIndex != null &&
+    hoverIndex < points.length &&
+    points[hoverIndex].value != null
+      ? hoverIndex
+      : null;
+  const activeValue = activeIndex == null ? null : points[activeIndex].value;
+  const updateHover = (event: PointerEvent<HTMLDivElement>) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width) return;
+    const viewX = ((event.clientX - rect.left) / rect.width) * chartWidth;
+    const nextIndex = nearestChartPointIndex(
+      points.map((point) => point.value),
+      points.map((_, index) => x(index)),
+      viewX,
+    );
+    setHoverIndex((current) => (current === nextIndex ? current : nextIndex));
+  };
   return (
-    <div ref={chartRef} className="chart" style={height ? { height } : undefined}>
+    <div
+      ref={chartRef}
+      className="chart"
+      style={{ height: chartHeight }}
+      onPointerMove={updateHover}
+      onPointerLeave={() => setHoverIndex(null)}
+    >
       <svg
+        ref={svgRef}
         viewBox={`0 0 ${chartWidth} ${chartHeight}`}
         role="img"
         aria-label={`${label}. 단위 ${unit}. 데이터 표에서 정확한 값을 확인할 수 있습니다.`}
@@ -580,18 +677,24 @@ export function LineChart({
         {segments.map((d, i) => (
           <path key={i} d={d} className="chart-line" />
         ))}
+        {gapPath && <path d={gapPath} className="chart-line chart-line-gap" />}
+        {unpublishedBridge && (
+          <path d={unpublishedBridge} className="chart-line chart-line-gap" />
+        )}
+        {outlookPath && <path d={outlookPath} className="chart-line chart-line-outlook" />}
         {points.map(
           (p, i) =>
-            p.value != null && (
+            p.value != null &&
+            kindOf(p) !== 'gap' && (
               <circle
                 key={i}
                 cx={x(i)}
                 cy={y(p.value)}
-                r="2.5"
-                className="chart-point"
-              >
-                <title>{`${date(p.date)} · ${number(p.value, unit)}`}</title>
-              </circle>
+                r={i === activeIndex ? 4 : 2.5}
+                className={`${
+                  i === activeIndex ? 'chart-point is-active' : 'chart-point'
+                }${kindOf(p) === 'outlook' ? ' chart-point-outlook' : ''}`}
+              />
             ),
         )}
         {chartTickIndexes(points.length, chartWidth).map((i) => (
@@ -603,6 +706,25 @@ export function LineChart({
           {unit}
         </text>
       </svg>
+      {activeIndex != null && activeValue != null && (
+        <output
+          className={
+            y(activeValue) < 40
+              ? 'chart-hover-card is-below'
+              : 'chart-hover-card'
+          }
+          style={{
+            left: `${(x(activeIndex) / chartWidth) * 100}%`,
+            top: `${(y(activeValue) / chartHeight) * 100}%`,
+          }}
+        >
+          {number(activeValue)}
+          {activeIndex != null && kindOf(points[activeIndex]) === 'gap' && ' 미발표'}
+          {activeIndex != null &&
+            kindOf(points[activeIndex]) === 'outlook' &&
+            ` ${TREND_OUTLOOK_LABEL}`}
+        </output>
+      )}
     </div>
   );
 }

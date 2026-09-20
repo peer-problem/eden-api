@@ -113,7 +113,7 @@ export default function MarketView({
         />
       </div>
       <section className="market-comparison" aria-label="국가별 방한 지표">
-        <State resource={resource} empty={!markets.length}>
+        <State resource={resource} empty={!markets.length} showReason={false}>
           <div className="market-table">
             <DataTable
               label="방한 시장 비교표"
@@ -170,7 +170,7 @@ export default function MarketView({
                     </td>
                     <td>
                       <strong>{number(m.tourism_balance_usd, ' USD')}</strong>
-                      <span className="cell-detail">한국 전체 / {m.tourism_balance_period ?? '기준월 없음'}</span>
+                      <span className="cell-detail">한국 전체 / {m.tourism_balance_period ?? '—'}</span>
                     </td>
                     <td>
                       {social.length > 0 ? (

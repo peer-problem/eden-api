@@ -17,6 +17,70 @@ export const queryLabels: Record<PublicQueryKind, string> = {
   insights: '지역 지표', visitors: '방문 추이', forecast: '방문 예측', markets: '방한 시장',
   alerts: '공식 공지', trends: '관광 트렌드', places: '관광지 목록', place: '장소 상세',
 };
+export const endpointWorkspaceTargets: Record<string, { pipeline: string; table: string }> = {
+  '/v1/trends': { pipeline: 'trends', table: 'social_observation' },
+  '/v1/regions/{area_code}/insights': { pipeline: 'regional', table: 'regional_visit_observation' },
+  '/v1/visitors/timeseries': { pipeline: 'regional', table: 'regional_visit_observation' },
+  '/v1/forecasts/visitors': { pipeline: 'forecast', table: 'forecast_input' },
+  '/v1/places': { pipeline: 'places', table: 'place_list' },
+  '/v1/places/{content_id}': { pipeline: 'places', table: 'place' },
+  '/v1/markets/inbound': { pipeline: 'inbound', table: 'inbound_visitor_observation' },
+  '/v1/markets/{country}/alerts': { pipeline: 'inbound', table: 'market_alerts' },
+};
+
+export function workspaceTargetForPath(path: string) {
+  return endpointWorkspaceTargets[path] ?? null;
+}
+
+const workspaceParameterNames = new Set([
+  'area_code',
+  'country',
+  'countries',
+  'content_id',
+  'keyword',
+  'q',
+  'place_name',
+  'attraction_name',
+  'currency',
+]);
+
+export function isWorkspaceParameter(name: string) {
+  return workspaceParameterNames.has(name);
+}
+
+export interface WorkspaceLink {
+  pipeline: string;
+  table: string;
+  sources?: string[];
+  area?: string;
+  keyword?: string;
+  country?: string;
+  place?: string;
+  period?: string;
+}
+
+export function workspaceLinkForRequest(
+  path: string,
+  values: Record<string, string>,
+  sources: string[] = [],
+): WorkspaceLink | null {
+  const target = workspaceTargetForPath(path);
+  if (!target) return null;
+  const countries = (values.countries ?? '')
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return {
+    ...target,
+    sources,
+    area: values.area_code || undefined,
+    keyword: values.keyword || undefined,
+    country: values.country || countries[0] || undefined,
+    place: values.content_id || undefined,
+    period: values.period || undefined,
+  };
+}
+
 export function publicQueriesFor(table: string, pipeline: string): PublicQueryKind[] {
   if (pipeline === 'inbound' && table === 'social_observation') return ['markets', 'trends'];
   if (['source_registry', 'read_model_snapshot', 'read_model_payload'].includes(table)) return [pipelineQuery[pipeline] ?? 'insights'];

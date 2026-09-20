@@ -630,6 +630,22 @@ main {
   color: var(--param-fg);
   font-weight: 600;
 }
+button.docs-url-token,
+button.docs-field-key {
+  margin: 0;
+  border: 0;
+  appearance: none;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+button.docs-url-token:hover,
+button.docs-field-key:hover {
+  box-shadow: inset 0 0 0 1px var(--param-line);
+}
+button.docs-url-token:hover {
+  filter: brightness(0.97);
+}
 [data-param-tone="pink"] { --param-fg: #9d174d; --param-bg: #fce7f3; --param-line: #ec4899; }
 [data-param-tone="rose"] { --param-fg: #9f1239; --param-bg: #ffe4e6; --param-line: #f43f5e; }
 [data-param-tone="blue"] { --param-fg: #1e40af; --param-bg: #dbeafe; --param-line: #3b82f6; }
@@ -970,6 +986,21 @@ main {
   font-size: 0.78rem;
   line-height: 1.5;
 }
+.docs-detail-nav {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #dce0e5;
+}
+.docs-detail-nav .docs-tabs {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+.docs-detail-nav > .bp6-button {
+  margin-bottom: 6px;
+}
 .docs-tabs {
   display: flex;
   gap: 24px;
@@ -1030,6 +1061,9 @@ main {
   gap: 7px;
   background: var(--param-bg);
   color: var(--param-fg);
+}
+button.docs-field-key:hover {
+  filter: brightness(0.97);
 }
 .docs-field-title {
   font-size: 0.8125rem;
@@ -1303,7 +1337,7 @@ main {
 .docs-response-read .table-scroll {
   max-height: 420px;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: auto;
 }
 .docs-response-group h2 {
   margin-bottom: 8px;
@@ -1569,11 +1603,6 @@ h3 {
   flex: 1 1 auto;
   min-width: 0;
 }
-.region-picker-label {
-  flex: 0 0 auto;
-  color: #5f6b7c;
-  font-size: 0.8125rem;
-}
 .region-buttons {
   display: flex;
   align-items: center;
@@ -1581,12 +1610,37 @@ h3 {
   min-width: 0;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.region-buttons::-webkit-scrollbar {
+  display: none;
+  height: 0;
 }
 .region-buttons .bp6-button {
   flex: 0 0 auto;
   padding-inline: 8px;
   white-space: nowrap;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #5f6b7c;
+  box-shadow: none;
+}
+.region-buttons .bp6-button:hover {
+  border-color: #dce0e5;
+  background: #f6f7f9;
+  color: #1c2127;
+}
+.region-buttons .bp6-button.bp6-active,
+.region-buttons .bp6-button[aria-pressed="true"] {
+  border-color: #1c2127;
+  background: #fff;
+  color: #1c2127;
+  font-weight: 600;
+}
+.region-buttons .bp6-button:focus-visible {
+  outline: 2px solid #1c2127 !important;
+  outline-offset: -1px !important;
 }
 .region-period-filter {
   flex: 0 0 auto;
@@ -1715,6 +1769,38 @@ h3 {
 .region-trend h2 {
   white-space: nowrap;
 }
+.region-trend-legend {
+  display: flex;
+  gap: 14px;
+  margin: 2px 0 0;
+  color: #738091;
+  font-size: 0.75rem;
+}
+.region-trend-legend .is-gap,
+.region-trend-legend .is-outlook {
+  color: #c4760e;
+}
+.region-trend-legend .is-gap::before,
+.region-trend-legend .is-outlook::before,
+.region-trend-legend span:first-child::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: #2d72d2;
+}
+.region-trend-legend .is-gap::before {
+  background: repeating-linear-gradient(
+    90deg,
+    #d9822b 0 5px,
+    transparent 5px 8px
+  );
+}
+.region-trend-legend .is-outlook::before {
+  background: #d9822b;
+}
 .region-trend .chart {
   min-width: 0;
   margin: 0;
@@ -1725,6 +1811,25 @@ h3 {
 }
 .region-trend .chart-point {
   fill: #2d72d2;
+}
+.chart-line-gap,
+.region-trend .chart-line-gap {
+  stroke: #d9822b;
+  stroke-dasharray: 5 4;
+}
+.chart-line-outlook,
+.region-trend .chart-line-outlook {
+  stroke: #d9822b;
+}
+.chart-point-gap,
+.chart-point-outlook,
+.region-trend .chart-point-gap,
+.region-trend .chart-point-outlook {
+  fill: #d9822b;
+}
+.region-trend .chart-point-gap.is-active,
+.region-trend .chart-point-outlook.is-active {
+  fill: #a35d0f;
 }
 .region-trend-state,
 .region-stat-state {
@@ -1816,11 +1921,15 @@ h3 {
 .region-tabs .section {
   margin-top: 8px;
 }
-.region-tabs .section > .section-note {
+.region-tabs .section > .section-note,
+.region-tabs .view-toolbar .section-note {
   display: flex;
   flex-wrap: wrap;
   gap: 2px 14px;
   margin: 0 0 10px;
+}
+.region-tabs .view-toolbar .section-note {
+  margin: 0;
 }
 .region-tabs .section-heading {
   margin-bottom: 7px;
@@ -1828,6 +1937,12 @@ h3 {
 .region-tabs .table-scroll {
   max-height: none;
   overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.region-tabs .table-scroll::-webkit-scrollbar {
+  display: none;
+  height: 0;
 }
 .region-tabs .data-table th {
   position: sticky;
@@ -1840,6 +1955,12 @@ h3 {
 .region-tabs .data-table td,
 .region-tabs .data-table th {
   padding-block: 7px !important;
+}
+.region-tabs .section-note .is-outlook {
+  color: #c4760e;
+}
+.region-tabs tr.is-outlook td {
+  color: #a35d0f;
 }
 .meta-line {
   display: flex;
@@ -2005,12 +2126,15 @@ h3 {
   max-width: 340px;
 }
 .chart {
+  position: relative;
+  overflow: hidden;
+  overflow-anchor: none;
   width: 100%;
   margin: 20px 0 26px;
 }
 .chart svg {
   width: 100%;
-  height: auto;
+  height: 100%;
   display: block;
 }
 .chart text {
@@ -2028,6 +2152,28 @@ h3 {
 }
 .chart-point {
   fill: #5f6b7c;
+}
+.chart-point.is-active {
+  fill: #1c2127;
+}
+.region-trend .chart-point.is-active {
+  fill: #164a8a;
+}
+.chart-hover-card {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, calc(-100% - 8px));
+  padding: 5px 8px;
+  border: 1px solid rgba(95, 107, 124, 0.4);
+  background: rgba(246, 247, 249, 0.94);
+  color: #252a31;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.chart-hover-card.is-below {
+  transform: translate(-50%, 10px);
 }
 .bp6-non-ideal-state {
   padding: 35px 16px;
@@ -3459,6 +3605,10 @@ main.database-main {
   .docs-route-line {
     margin-top: 0;
     justify-self: stretch;
+  }
+  .docs-detail-nav {
+    flex-wrap: wrap;
+    align-items: stretch;
   }
   .docs-tabs {
     gap: 20px;

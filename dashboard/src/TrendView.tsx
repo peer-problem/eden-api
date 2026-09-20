@@ -1,7 +1,16 @@
 import { Button, InputGroup } from '@blueprintjs/core';
 import { useEffect, useState } from 'react';
 import { useResource } from './api';
-import { countries, date, number, regions } from './data';
+import {
+  collectedTrendKeywordOptions,
+  countries,
+  date,
+  defaultCountryForTrendKeyword,
+  isCollectedTrendKeyword,
+  isOfficialTrendKeyword,
+  number,
+  regions,
+} from './data';
 import type { Trend } from './types';
 import {
   DataTable,
@@ -26,7 +35,7 @@ export default function TrendView({ params, update, showSources }: ViewProps) {
   const period = ['7d', '30d', '90d'].includes(params.get('trendPeriod') || '')
     ? params.get('trendPeriod')!
     : '30d';
-  const officialKeyword = ['관광서비스수요', '문화자연자원 수요'].includes(keyword);
+  const officialKeyword = isOfficialTrendKeyword(keyword);
   const area = regions.some((r) => r.code === params.get('trendArea'))
     ? params.get('trendArea')!
     : 'all';
@@ -57,13 +66,17 @@ export default function TrendView({ params, update, showSources }: ViewProps) {
       >
         <Dropdown
           label="수집된 키워드"
-          value={['Korea travel', '관광서비스수요', '문화자연자원 수요'].includes(keyword) ? keyword : ''}
-          onChange={(value) => update({ keyword: value, trendArea: '' })}
+          value={isCollectedTrendKeyword(keyword) ? keyword : ''}
+          onChange={(value) =>
+            update({
+              keyword: value,
+              trendArea: '',
+              trendCountry: defaultCountryForTrendKeyword(value) ?? '',
+            })
+          }
           options={[
             { label: '수집 키워드 선택', value: '', disabled: true },
-            { label: 'Korea travel (YouTube)', value: 'Korea travel' },
-            { label: '관광 서비스 수요 (KTO)', value: '관광서비스수요' },
-            { label: '문화 자연 자원 수요 (KTO)', value: '문화자연자원 수요' },
+            ...collectedTrendKeywordOptions(),
           ]}
         />
         <InputGroup

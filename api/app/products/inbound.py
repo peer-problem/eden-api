@@ -20,14 +20,14 @@ from app.repositories.models import (
     TourismBalanceObservation,
 )
 from app.sources.kto_inbound import SOURCE_ID
-from app.sources.social import REQUESTABLE_SOCIAL_SOURCES
+from app.sources.social import INBOUND_SOCIAL_SOURCES
 
 PERIOD_MONTHS = {"3m": 3, "6m": 6, "12m": 12, "24m": 24}
 INBOUND_HISTORY_MONTHS = max(PERIOD_MONTHS.values()) * 2
 SOCIAL_HISTORY_MONTHS = max(PERIOD_MONTHS.values())
 MAX_AGE_SECONDS = 38 * 24 * 3600
 SOCIAL_SOURCE_NAMES = {
-    source_id: source_name for source_name, source_id in REQUESTABLE_SOCIAL_SOURCES.items()
+    source_id: source_name for source_name, source_id in INBOUND_SOCIAL_SOURCES.items()
 }
 COUNTRY_PROXY_FLAGS = frozenset({"query_market_proxy", "query_language_market_proxy"})
 

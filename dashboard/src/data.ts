@@ -27,6 +27,43 @@ export const countries = [
   { code: 'US', name: '미국', currency: 'USD' },
   { code: 'PH', name: '필리핀', currency: 'PHP' },
 ];
+// Matches api/app/sources/plans.py SOCIAL_KEYWORDS. US and PH share the
+// English set. NAVER province keywords are collected only when that source
+// is approved, and they are not listed here while they stay unavailable.
+export const SOCIAL_TREND_KEYWORDS: Record<string, readonly string[]> = {
+  CN: ['韩国旅游', '首尔旅游', '济州岛旅游'],
+  JP: ['韓国旅行', 'ソウル旅行', '済州島旅行'],
+  TW: ['韓國旅遊', '首爾旅遊', '濟州島旅遊'],
+  US: ['Korea travel', 'Seoul travel', 'Jeju travel'],
+  PH: ['Korea travel', 'Seoul travel', 'Jeju travel'],
+};
+export const KTO_TREND_KEYWORDS = [
+  { value: '관광서비스수요', label: '관광 서비스 수요 (KTO)' },
+  { value: '문화자연자원 수요', label: '문화 자연 자원 수요 (KTO)' },
+] as const;
+const YOUTUBE_KEYWORD_ORDER = ['US', 'JP', 'CN', 'TW'] as const;
+export const collectedTrendKeywordOptions = () => {
+  const seen = new Set<string>();
+  const youtube = YOUTUBE_KEYWORD_ORDER.flatMap((country) =>
+    SOCIAL_TREND_KEYWORDS[country].flatMap((keyword) => {
+      if (seen.has(keyword)) return [];
+      seen.add(keyword);
+      return [{ value: keyword, label: `${keyword} (YouTube)` }];
+    }),
+  );
+  return [...youtube, ...KTO_TREND_KEYWORDS.map(({ value, label }) => ({ value, label }))];
+};
+export const isOfficialTrendKeyword = (keyword: string) =>
+  KTO_TREND_KEYWORDS.some((item) => item.value === keyword);
+export const isCollectedTrendKeyword = (keyword: string) =>
+  collectedTrendKeywordOptions().some((item) => item.value === keyword);
+export function defaultCountryForTrendKeyword(keyword: string): string | undefined {
+  const matches = Object.entries(SOCIAL_TREND_KEYWORDS)
+    .filter(([, words]) => words.includes(keyword))
+    .map(([code]) => code);
+  if (!matches.length) return undefined;
+  return matches.length === 1 ? matches[0] : 'all';
+}
 export const countryName = (code: string) =>
   countries.find((c) => c.code === code)?.name ?? code;
 export const currencyFor = (code: string) =>
@@ -50,11 +87,12 @@ export const currentDate = (value = new Date()) => {
     parts.find((item) => item.type === type)?.value ?? '';
   return `${part('year')}.${part('month')}.${part('day')}`;
 };
+export const seoulIsoDate = (value = new Date()) => currentDate(value).replaceAll('.', '-');
 export const availabilityName = (value?: string) =>
   ({
     available: '제공',
     partial: '일부 제공',
-    unavailable: '자료 없음',
+    unavailable: '—',
     degraded: '일부 제한',
     stale: '갱신 지연',
     disabled: '수집 중단',

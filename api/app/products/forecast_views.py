@@ -255,12 +255,7 @@ def build_forecast_view(
         if complete_days == days
         else (Availability.PARTIAL if available_days else Availability.UNAVAILABLE)
     )
-    if availability == Availability.AVAILABLE:
-        reason = None
-    elif available_days < days:
-        reason = f"요청 {days}일 중 {available_days}일의 전망만 있습니다."
-    else:
-        reason = "일부 날짜에서 요청한 참고 원천이 없습니다."
+    reason = None
     return (
         {
             "area_code": product["area_code"],

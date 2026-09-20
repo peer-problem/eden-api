@@ -47,18 +47,8 @@ router = APIRouter(
     },
 )
 RepositoryDep = Annotated[ReadRepository, Depends(get_read_repository)]
-TrendSocialSource = Literal[
-    "youtube",
-    "instagram",
-    "reddit",
-    "facebook",
-]
-InboundSocialSource = Literal[
-    "youtube",
-    "instagram",
-    "reddit",
-    "facebook",
-]
+TrendSocialSource = Literal["youtube", "naver"]
+InboundSocialSource = Literal["youtube"]
 
 
 def _resolve_area(repository: ReadRepository, identifier: str) -> str:

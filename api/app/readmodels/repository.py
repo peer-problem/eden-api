@@ -43,7 +43,7 @@ from app.repositories.models import (
     SourceRegistry,
     SourceState,
 )
-from app.sources.social import REQUESTABLE_SOCIAL_SOURCES
+from app.sources.social import INBOUND_SOCIAL_SOURCES, REQUESTABLE_SOCIAL_SOURCES
 
 ENDPOINT_SOURCES: dict[str, tuple[str, ...]] = {
     "trends": (
@@ -96,7 +96,6 @@ ENDPOINT_SOURCES: dict[str, tuple[str, ...]] = {
 }
 
 TREND_SOCIAL_SOURCES = REQUESTABLE_SOCIAL_SOURCES
-INBOUND_SOCIAL_SOURCES = dict(TREND_SOCIAL_SOURCES)
 PLACE_LANGUAGE_SOURCES = {
     "ko": "SRC_TOUR_KO",
     "en": "SRC_TOUR_EN",
@@ -795,10 +794,7 @@ class MariaDBReadRepository:
             selected = localizations[0]
         include = set(scope.get("include") or ["related", "shops", "hub"])
         source_status = {row["source_id"]: row["status"] for row in source_rows}
-        partial_reasons: list[str] = []
         has_location = place.lat is not None and place.lng is not None
-        if not has_location:
-            partial_reasons.append("관광지 좌표가 없어 위치 정보를 제공할 수 없습니다.")
         source_ids = [
             row.source_id
             for row in session.scalars(
@@ -831,8 +827,6 @@ class MariaDBReadRepository:
                     "score_as_of": _as_aware_utc(hub_row.source_updated_at),
                 }
                 source_ids.append("SRC_KTO_PLACE_HUB")
-            else:
-                partial_reasons.append("중심 관광지 원천을 사용할 수 없습니다.")
 
         related_data = None
         relation_rows: list[PlaceRelation] = []
@@ -883,98 +877,91 @@ class MariaDBReadRepository:
                         }
                     )
                 source_ids.append("SRC_KTO_PLACE_RELATED")
-            else:
-                partial_reasons.append("연관 관광지 원천을 사용할 수 없습니다.")
 
         nearby_data = None
         shop_rows: list[NearbyShop] = []
-        if "shops" in include:
-            if not has_location:
-                partial_reasons.append("좌표가 없어 주변 상권 거리를 계산할 수 없습니다.")
-            else:
-                radius_m = int(scope.get("radius_m", 1000))
-                lat_delta = radius_m / 111_320
-                longitude_scale = max(0.01, cos(radians(float(place.lat))))
-                lng_delta = radius_m / (111_320 * longitude_scale)
-                latest_shops = (
-                    select(
-                        NearbyShop.external_shop_id.label("external_shop_id"),
-                        func.max(NearbyShop.observed_at).label("observed_at"),
+        if "shops" in include and has_location:
+            radius_m = int(scope.get("radius_m", 1000))
+            lat_delta = radius_m / 111_320
+            longitude_scale = max(0.01, cos(radians(float(place.lat))))
+            lng_delta = radius_m / (111_320 * longitude_scale)
+            latest_shops = (
+                select(
+                    NearbyShop.external_shop_id.label("external_shop_id"),
+                    func.max(NearbyShop.observed_at).label("observed_at"),
+                )
+                .where(
+                    NearbyShop.area_id == place.area_id,
+                    NearbyShop.lat.between(
+                        float(place.lat) - lat_delta,
+                        float(place.lat) + lat_delta,
+                    ),
+                    NearbyShop.lng.between(
+                        float(place.lng) - lng_delta,
+                        float(place.lng) + lng_delta,
+                    ),
+                )
+                .group_by(NearbyShop.external_shop_id)
+                .order_by(NearbyShop.external_shop_id)
+                .limit(500)
+                .subquery()
+            )
+            candidates = list(
+                session.scalars(
+                    select(NearbyShop)
+                    .join(
+                        latest_shops,
+                        (NearbyShop.external_shop_id == latest_shops.c.external_shop_id)
+                        & (NearbyShop.observed_at == latest_shops.c.observed_at),
                     )
-                    .where(
-                        NearbyShop.area_id == place.area_id,
-                        NearbyShop.lat.between(
-                            float(place.lat) - lat_delta,
-                            float(place.lat) + lat_delta,
-                        ),
-                        NearbyShop.lng.between(
-                            float(place.lng) - lng_delta,
-                            float(place.lng) + lng_delta,
-                        ),
-                    )
-                    .group_by(NearbyShop.external_shop_id)
+                    .where(NearbyShop.area_id == place.area_id)
                     .order_by(NearbyShop.external_shop_id)
                     .limit(500)
-                    .subquery()
+                ).all()
+            )
+            with_distance = [
+                (
+                    shop,
+                    self._distance_m(
+                        float(place.lat),
+                        float(place.lng),
+                        float(shop.lat),
+                        float(shop.lng),
+                    ),
                 )
-                candidates = list(
-                    session.scalars(
-                        select(NearbyShop)
-                        .join(
-                            latest_shops,
-                            (NearbyShop.external_shop_id == latest_shops.c.external_shop_id)
-                            & (NearbyShop.observed_at == latest_shops.c.observed_at),
-                        )
-                        .where(NearbyShop.area_id == place.area_id)
-                        .order_by(NearbyShop.external_shop_id)
-                        .limit(500)
-                    ).all()
-                )
-                with_distance = [
-                    (
-                        shop,
-                        self._distance_m(
-                            float(place.lat),
-                            float(place.lng),
-                            float(shop.lat),
-                            float(shop.lng),
+                for shop in candidates
+            ]
+            shop_rows = [shop for shop, distance in with_distance if distance <= radius_m]
+            if candidates or source_status.get("SRC_SEMAS_SHOPS") == SourceStatus.AVAILABLE:
+                nearby_data = [
+                    {
+                        "shop_id": shop.eden_shop_id,
+                        "name": shop.name,
+                        "category": shop.category,
+                        "distance_m": round(
+                            self._distance_m(
+                                float(place.lat),
+                                float(place.lng),
+                                float(shop.lat),
+                                float(shop.lng),
+                            ),
+                            3,
+                        ),
+                    }
+                    for shop in sorted(
+                        shop_rows,
+                        key=lambda item: (
+                            self._distance_m(
+                                float(place.lat),
+                                float(place.lng),
+                                float(item.lat),
+                                float(item.lng),
+                            ),
+                            item.eden_shop_id,
                         ),
                     )
-                    for shop in candidates
                 ]
-                shop_rows = [shop for shop, distance in with_distance if distance <= radius_m]
-                if candidates or source_status.get("SRC_SEMAS_SHOPS") == SourceStatus.AVAILABLE:
-                    nearby_data = [
-                        {
-                            "shop_id": shop.eden_shop_id,
-                            "name": shop.name,
-                            "category": shop.category,
-                            "distance_m": round(
-                                self._distance_m(
-                                    float(place.lat),
-                                    float(place.lng),
-                                    float(shop.lat),
-                                    float(shop.lng),
-                                ),
-                                3,
-                            ),
-                        }
-                        for shop in sorted(
-                            shop_rows,
-                            key=lambda item: (
-                                self._distance_m(
-                                    float(place.lat),
-                                    float(place.lng),
-                                    float(item.lat),
-                                    float(item.lng),
-                                ),
-                                item.eden_shop_id,
-                            ),
-                        )
-                    ]
-                    source_ids.append("SRC_SEMAS_SHOPS")
-                else:
-                    partial_reasons.append("주변 상권 원천을 사용할 수 없습니다.")
+                source_ids.append("SRC_SEMAS_SHOPS")
 
         audit_times = [place.updated_at, selected.updated_at]
         audit_times.extend(row.source_updated_at for row in relation_rows)
@@ -994,7 +981,7 @@ class MariaDBReadRepository:
             ),
             "location_availability": {
                 "availability": "available" if has_location else "unavailable",
-                "reason": None if has_location else "관광지 좌표가 없습니다.",
+                "reason": None,
             },
             "overview": selected.overview or None,
             "hub": hub_data,
@@ -1006,8 +993,8 @@ class MariaDBReadRepository:
         }
         return ReadResult(
             data=data,
-            availability=(Availability.PARTIAL if partial_reasons else Availability.AVAILABLE),
-            reason=" ".join(partial_reasons) or None,
+            availability=Availability.AVAILABLE,
+            reason=None,
             as_of=as_of,
             calculated_at=as_of,
             max_acceptable_age_seconds=3 * 24 * 3600,
@@ -1392,13 +1379,7 @@ class MariaDBReadRepository:
         return ReadResult(
             data={"period": period, "markets": markets},
             availability=availability,
-            reason=(
-                None
-                if availability == Availability.AVAILABLE
-                else "요청한 모든 방한시장 데이터 제품을 제공할 수 없습니다."
-                if availability == Availability.UNAVAILABLE
-                else "요청한 일부 방한시장 데이터 제품을 아직 제공할 수 없습니다."
-            ),
+            reason=None,
             as_of=as_of,
             calculated_at=max(_as_aware_utc(snapshot.calculated_at) for snapshot in snapshots),
             max_acceptable_age_seconds=_single_selected_max_age(
